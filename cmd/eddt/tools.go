@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	sim "go.resystems.io/eddt/internal/simulation"
+	sim "go.resystems.io/eddt/simulation"
 )
 
 func init() {
