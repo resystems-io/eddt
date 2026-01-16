@@ -35,7 +35,7 @@ func kv_set_merge(a *assertion.Assertion, s *relationset.RelationSet) []byte {
 		builder = flatbuffers.NewBuilder(1024)
 	}
 
-	return kv_set_merge_builder(a,s,builder)
+	return kv_set_merge_builder(a, s, builder)
 }
 
 func kv_set_merge_builder(a *assertion.Assertion, s *relationset.RelationSet, builder *flatbuffers.Builder) []byte {

@@ -18,7 +18,7 @@ func init() {
 }
 
 type TransformationConfig struct {
-	SolutionIDs      []string
+	SolutionIDs []string
 }
 
 var transformCmd = &cobra.Command{
@@ -33,7 +33,7 @@ var transformCmd = &cobra.Command{
 var transformOverviewCmd = &cobra.Command{
 	Use:   "overview",
 	Short: "Overview explains how transform data is recorded and accessed.",
-	Long: `Overview explains how the event-drive digital twin domain is record in tables for bulk access.`,
+	Long:  `Overview explains how the event-drive digital twin domain is record in tables for bulk access.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, `# EDDT Table Management
 
@@ -45,7 +45,7 @@ var transformOverviewCmd = &cobra.Command{
 var transformInitialiseCmd = &cobra.Command{
 	Use:   "downsample",
 	Short: "Initialise any resources needed for transform dataset recording.",
-	Long: `Initialise provides the mechanisms to initialise database resources needed to store transform data.`,
+	Long:  `Initialise provides the mechanisms to initialise database resources needed to store transform data.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, `# EDDT Table Management
 
@@ -67,7 +67,7 @@ and aggregation instructions.`,
 var transformSynthesisCmd = &cobra.Command{
 	Use:   "synthesise",
 	Short: "Synthesise new event streams based on incoming payloads.",
-	Long: `Synthesise creates new payloads based on upstream event notification payloads.`,
+	Long:  `Synthesise creates new payloads based on upstream event notification payloads.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, "Not yet implemented.")
 	},
@@ -76,7 +76,7 @@ var transformSynthesisCmd = &cobra.Command{
 var transformComparisonCmd = &cobra.Command{
 	Use:   "compare",
 	Short: "Compare generates data diffs.",
-	Long: `Compare creates diffs of upstream datasets, relative to their predecessor history.`,
+	Long:  `Compare creates diffs of upstream datasets, relative to their predecessor history.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, "Not yet implemented.")
 	},

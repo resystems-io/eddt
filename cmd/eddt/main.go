@@ -27,9 +27,9 @@ func main() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "eddt",
-	Short: "eddt provides a model of the event-drive digital twin design.",
-	Long: `The event-driven digital twin that leverages NATS for information transport and communication.`,
+	Use:              "eddt",
+	Short:            "eddt provides a model of the event-drive digital twin design.",
+	Long:             `The event-driven digital twin that leverages NATS for information transport and communication.`,
 	TraverseChildren: true, // note traversal can only be set on the root
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Please select a subcommand.\n")

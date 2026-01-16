@@ -74,7 +74,6 @@ func (c *Clock) init_logger() {
 	}
 }
 
-
 func (c *Clock) Run(ready chan<- struct{}, end <-chan struct{}) {
 	c.init_logger()
 	done := make(chan struct{})

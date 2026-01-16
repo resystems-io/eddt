@@ -19,10 +19,10 @@ type GenericPool[T comparable] struct {
 	// Kind managed by the pool
 	Kind string
 
-	mutex  sync.Mutex
-	issued int
+	mutex   sync.Mutex
+	issued  int
 	visited map[T]bool
-	free []T
+	free    []T
 }
 
 type Pool interface {
@@ -46,7 +46,7 @@ func (p *GenericPool[T]) init() {
 		p.visited = make(map[T]bool)
 	}
 	if p.free == nil {
-		p.free = make([]T,0,128)
+		p.free = make([]T, 0, 128)
 	}
 }
 
@@ -102,7 +102,7 @@ func (p *GenericPool[T]) AcquireWithGenerator(generator RandomGeneric[T]) (T, er
 				var zero T
 				return zero, fmt.Errorf("%s pool limit [%d] reached (non free)", p.Kind, p.Limit)
 			}
-			l := len(p.free)-1
+			l := len(p.free) - 1
 			v := p.free[l]
 			p.free = p.free[:l]
 			return v, nil

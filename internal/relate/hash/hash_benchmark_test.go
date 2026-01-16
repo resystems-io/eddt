@@ -25,18 +25,18 @@ func BenchmarkSHA1(b *testing.B) {
 		{"large-½GiB", 500 * 1024 * 1024},
 	}
 
-			bootstrap := func(b *testing.B, s bench_size) []byte {
-				// Create a buffer of a fixed size (e.g., 1MB).
-				buf := make([]byte, s.size)
-				// Fill the buffer with random data.
-				if _, err := rand.Read(buf); err != nil {
-					b.Fatal(err)
-				}
-				b.SetBytes(int64(len(buf)))
-				b.ResetTimer()
+	bootstrap := func(b *testing.B, s bench_size) []byte {
+		// Create a buffer of a fixed size (e.g., 1MB).
+		buf := make([]byte, s.size)
+		// Fill the buffer with random data.
+		if _, err := rand.Read(buf); err != nil {
+			b.Fatal(err)
+		}
+		b.SetBytes(int64(len(buf)))
+		b.ResetTimer()
 
-				return buf
-			}
+		return buf
+	}
 
 	// SHA1 only
 	for _, s := range sizes {

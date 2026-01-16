@@ -9,9 +9,8 @@ import (
 	"go.resystems.io/eddt/internal/relate/assertion"
 )
 
-
 func Benchmark_kv_set_merge(b *testing.B) {
-	sizes := []int{1, 2, 4, 10, 100, 1000, 10000}
+	sizes := []int{1, 2, 4, 10, 100, 1000, 10000, 100000, 1000000}
 
 	reuse := flatbuffers.NewBuilder(1024)
 

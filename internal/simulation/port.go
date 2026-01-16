@@ -1,7 +1,6 @@
 package simulation
 
-import (
-)
+import ()
 
 // IP port (TCP or UDP)
 type Port uint16

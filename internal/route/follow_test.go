@@ -46,7 +46,7 @@ func TestRouterRelationFollower(t *testing.T) {
 
 	// 3. Create a RouterRelationFollower instance.
 	follower := &route.RouterRelationFollower{
-		NC: nc,
+		NC:     nc,
 		Logger: log.New(common.NewTestWriter(t), "[FOLLOWER-TESTLOG]: ", log.LstdFlags),
 	}
 

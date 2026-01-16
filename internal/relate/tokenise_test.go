@@ -17,6 +17,6 @@ func ExampleCompilerRule() {
 
 	// Output:
 	// 4 [one two three four.five.and-more]
-    // 6 [one two three four five and-more]
+	// 6 [one two three four five and-more]
 	// 6 [one two three four five and-more]
 }

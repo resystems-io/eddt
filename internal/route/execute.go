@@ -113,8 +113,8 @@ func (r *CompiledRoute) execute(subject string, relations RelationSetSource) ([]
 		}
 	}
 
-	text := make([]string,len(expansion))
-	for i,e := range expansion {
+	text := make([]string, len(expansion))
+	for i, e := range expansion {
 		text[i] = e.String()
 	}
 
@@ -211,7 +211,7 @@ func (r *CompiledRoute) execute_concat(subject string, relations RelationSetSour
 					for _, v := range expansion {
 						rvok := s.R(rv, si)
 						if rvok {
-							crossprod = append(crossprod, v + string(rv.Di()))
+							crossprod = append(crossprod, v+string(rv.Di()))
 						}
 					}
 				}

@@ -6,8 +6,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"go.resystems.io/eddt/internal/common"
 	"go.resystems.io/eddt/contract"
+	"go.resystems.io/eddt/internal/common"
 )
 
 // DomainRouter reroutes domain notifications by applying subject expansion or elision relative to relation-sets.

@@ -18,7 +18,7 @@ func init() {
 }
 
 type TabulationConfig struct {
-	SolutionIDs      []string
+	SolutionIDs []string
 }
 
 var tabulateCmd = &cobra.Command{
@@ -33,7 +33,7 @@ var tabulateCmd = &cobra.Command{
 var tabulateOverviewCmd = &cobra.Command{
 	Use:   "overview",
 	Short: "Overview explains how tabular data is recorded and accessed.",
-	Long: `Overview explains how the event-drive digital twin domain is record in tables for bulk access.`,
+	Long:  `Overview explains how the event-drive digital twin domain is record in tables for bulk access.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, `# EDDT Table Management
 
@@ -45,7 +45,7 @@ var tabulateOverviewCmd = &cobra.Command{
 var tabulateInitialiseCmd = &cobra.Command{
 	Use:   "initialise",
 	Short: "Initialise any resources needed for tabular dataset recording.",
-	Long: `Initialise provides the mechanisms to initialise database resources needed to store tabular data.`,
+	Long:  `Initialise provides the mechanisms to initialise database resources needed to store tabular data.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stdout, `# EDDT Table Management
 
