@@ -1,22 +1,20 @@
-# Event-Driven Digital Twin Model
+# Event-Driven Digital Twin
 
-This model aims to demonstrate how we can build a fully event-driven digital
-twi
-
-- System Requirements
-- System Design
+This system provides mechanisms and patterns needed to build a fully
+event-driven digital twin.
 
 ## System Requirements
 
 ### Architectural Requirements
 
-The key principles are:
+The key high-level principles are:
 - continuous processing of digital twin state as events
 - eventual consistency through decoupled assertion and correction streams
   - separate corrections through constraint enforcement
   - many separate constraints e.g. `1→* ⋀ *→1 ⇒ 1→1`
 - horizontal scaling of mutators
 - only track relationships that affect dataflow routing
+- separately support analytics through columnar and relational storage
 
 ### Decomposition
 
@@ -33,10 +31,12 @@ The key principles are:
 
 ## System Design
 
-We start by building a model, `eddt`. This model will provide simulated load for
-the key observable data, and then demonstrate the critical path through the data
-flow from relationship mapping, through routing and onto tabular views.
-
+The `eddt` system is designed by modelling the functional decomposition required
+in order to continuously ingest event notifications from an external observation
+layer, and then usher that information through a processing pathway that
+includes: relationship extraction, relationship mapping, payload routing,
+payload transformation and synthesis, and finally onto data tabulation with
+supported access views.
 
 ### Functional Decomposition
 
@@ -55,54 +55,23 @@ functions:
 - `F10`: construct suitable SQL views via JOIN and @> contains leveraging GIN indices.
 - `F11`: change detection based on revision comparison for select streams/subjects and their payloads.
 
-See the [flow diagram][functional-decomposition-diagram].
+#### Flow Diagram
 
-### Refinement Process
+![Flow Diagram][functional-decomposition-diagram]
 
-Once the model has been implemented we want to support the following story:
-
-We will run one or more simulator processes. The Ⓢ simulators will generate both
-relationship events and entity/element events. The relationship events simply
-encode a directional mapping from one identity to another. Whereas, the element
-events will encode a range of fields (or structures) associated with a single
-element.
-
-Each event source will be mapped to telemetry counters in order to show the
-event rates at the source.
-
-Once the simulators are running we can start manage the domain. This consists of
-Ⓐ managing the life-cycle and consistency of the relationships, and then using
-the relationships to Ⓑ perform mirroring and routing. Following this we we
-perform Ⓒ aggregations and transformations. Finally, we Ⓓ record selected events
-in tabular formats for analytics.
-
-Our critical path consists first of Ⓑ , followed by Ⓓ . After that we can return
-to manage life-cycle Ⓐ and more details via Ⓒ .
-
-As part of aggregations and downsampling in Ⓒ we may need to coalesce multiple
-subjects into a single mapping. Note, this is not just additive, but potentially
-also subtractive. Further, for some mappings it may be the case that the
-tracking is lossy, and that we need to maintain TTLs as part of the management.
-The final output from the internal coalescence step is an accurate (modulo
-eventual consistency) map from an element to a set of data.
-
-Once we have basic ingestion, with realtime domain subjects and tabular storage
-we can drive further Ⓔ enrichment and view Ⓣ tabular data or track Ⓡ realtime
-data.
-
-Therefore, to refine our minimal critical path we need:
-1. Ⓢ  + Ⓑ  + Ⓡ
-2. Ⓢ  + Ⓑ  + Ⓓ  + Ⓣ
-3. Ⓢ  + Ⓑ  + Ⓡ  + Ⓔ 
-4. Ⓐ
-5. Ⓒ
+[functional-decomposition-diagram]:docs/assets/Event_Driven_Digital_Twin_-_Functional_Decomposition.png
 
 ### Simulation
 
-Before attaching the digital twin to real-world systems, it is useful to develop
-against simulations. While the EDDT pipeline is general purpose, the simulations
-are domain specific. As such, simulations are maintained separately from the
-EDDT system.
+In order facilitate development of digital twin processing pathways, using EDDT,
+event simulation tooling enables the creation of simulators that can induce
+representative load with realistic event characteristics. These simulators can
+be used to refine a given digital twin, together with the compiled rules and
+routing definitions, before attaching a given digital twin realisation to
+real-world systems.
+
+However, while the EDDT pipeline is general purpose, the simulations are domain
+specific. As such, simulations are maintained separately from the EDDT system.
 
 ### Data life-cycle
 
@@ -132,5 +101,17 @@ In addition to the life-cycle definition, the element data definition schema
 This might include: protobuf, json-schemai, arrow or it might be less well typed
 and designate the use of JSON, CBOR.
 
+## Vision and Future
 
-[functional-decomposition-diagram]:https://docs.google.com/drawings/d/1IUiV0ovTnqy8t4agOTi-EapfF1i8ygY2L422jbkJ80w/edit "(original source)"
+Ultimately, the intention of EDDT to is to provide a performant, reliable and
+scalable structure for building event-driven data processing that targets
+maintaining eventually consistent relationships across complex domain models,
+while enabling (soft) realtime observation of the digital twin together with
+facilitating analytics pipelines and data access.
+
+Please see the:
+- [future plans][future-plans] in a window into the features that we aim to add.
+- [release notes][release-notes] for a summary of features that have been added.
+
+[future-plans]:docs/future-plans.md "EDDT Future Plans"
+[release-notes]:docs/release-notes.md "EDDT Release Notes"
