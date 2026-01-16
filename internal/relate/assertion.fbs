@@ -1,0 +1,18 @@
+// assertion.fbs
+
+// we don't use a deep hierarchy and expect to generate from this directory
+namespace assertion;
+
+attribute "unit";
+
+table Assertion {
+	ttl:long = 0 (unit:"milliseconds");
+	exp:long = 0 (unit:"milliseconds");
+	sid:string;
+	si:string;
+	di:string;
+	st:string;
+	dt:string;
+}
+
+root_type Assertion;

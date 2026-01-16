@@ -1,0 +1,29 @@
+// relationset.fbs
+
+// we don't use a deep hierarchy and expect to generate from this directory
+namespace relationset;
+
+file_identifier "DTRS"; // digital twin relation set
+
+attribute "unit";
+
+table Relation {
+	di:string (key);
+	ttl:long (unit:"milliseconds"); // normally all entries of the same type of edge
+									// use the same TTL, but it is not a requirement.
+	exp:long (unit:"milliseconds"); // absolute, computed relative to ts.
+}
+
+table RelationSet {
+	sid:string; // solution identifier
+	st:string; // source type
+	si:string; // source identifier
+	dt:string; // destination type
+	ts:long (unit:"milliseconds"); // last modififed timestamp
+
+	// The vector holds a set of (destination) edges for relations which is always sorted by 'di'.
+	// (Since the set is always kept sorted it is suitable for use with a binary search.)
+	r:[Relation];
+}
+
+root_type RelationSet;
