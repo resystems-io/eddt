@@ -11,7 +11,6 @@ type RelateAssertionConfig struct {
 	Group string
 }
 
-
 func RunAssertionProcessing(end <-chan struct{}, cfg RelateAssertionConfig) error {
 
 	// connect to NATS

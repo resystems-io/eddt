@@ -41,9 +41,9 @@ func ExampleInfluxLinePoint_mixed() {
 		},
 		Fields: map[string]any{
 			"free_gb":  uint64(250),
-			"offset":  int64(-33),
+			"offset":   int64(-33),
 			"used_pct": 75.5,
-			"blocks": 75.5e+78,
+			"blocks":   75.5e+78,
 			"online":   true,
 			"message":  "disk \"full\" warning!", // String with quote
 		},

@@ -8,9 +8,9 @@ import (
 )
 
 type RelationT struct {
-	Di string `json:"di"`
-	Ttl int64 `json:"ttl"`
-	Exp int64 `json:"exp"`
+	Di  string `json:"di"`
+	Ttl int64  `json:"ttl"`
+	Exp int64  `json:"exp"`
 }
 
 func (t *RelationT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

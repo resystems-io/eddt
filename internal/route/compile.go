@@ -34,7 +34,7 @@ type RouteOpCode int
 const (
 	Unknown               RouteOpCode = iota
 	Tokenise                          // split the input subject into tokens and populate the token set
-	FetchRelSet                          // fetch a relation-set buffer based on a referenced computed key
+	FetchRelSet                       // fetch a relation-set buffer based on a referenced computed key
 	AppendRelLiteral                  // append the referenced string from the literal set to a relation key
 	AppendRelToken                    // append the referenced string from the token set to a relation key
 	AppendEgressLiteral               // append the referenced string from the literal set to the each subject in the egress working batch

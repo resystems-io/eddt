@@ -7,12 +7,12 @@ import (
 )
 
 type RelationSetT struct {
-	Sid string `json:"sid"`
-	St string `json:"st"`
-	Si string `json:"si"`
-	Dt string `json:"dt"`
-	Ts int64 `json:"ts"`
-	R []*RelationT `json:"r"`
+	Sid string       `json:"sid"`
+	St  string       `json:"st"`
+	Si  string       `json:"si"`
+	Dt  string       `json:"dt"`
+	Ts  int64        `json:"ts"`
+	R   []*RelationT `json:"r"`
 }
 
 func (t *RelationSetT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -23,13 +23,13 @@ func init() {
 	routeMonitorCmd.Flags().StringVarP(&route_config.RouteFile, "routes", "r", "", "File containing JSON route definitions.")
 	routeMonitorCmd.Flags().StringVarP(&route_config.Group, "group", "g", "", "Router queue group to join (blank to remain independent of any group).")
 	routeMonitorCmd.Flags().BoolVar(&route_config.Verbose, "verbose", false, "Log all relation set activity.")
-	routeMonitorCmd.Flags().DurationVar(&route_config.ReadyTimeout, "ready", 5 * time.Second, "Timeout waiting for start-up readiness.")
+	routeMonitorCmd.Flags().DurationVar(&route_config.ReadyTimeout, "ready", 5*time.Second, "Timeout waiting for start-up readiness.")
 }
 
 type RouteConfig struct {
-	RouteFile string
-	Group     string
-	Verbose   bool
+	RouteFile    string
+	Group        string
+	Verbose      bool
 	ReadyTimeout time.Duration
 }
 

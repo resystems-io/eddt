@@ -7,13 +7,13 @@ import (
 )
 
 type AssertionT struct {
-	Ttl int64 `json:"ttl"`
-	Exp int64 `json:"exp"`
+	Ttl int64  `json:"ttl"`
+	Exp int64  `json:"exp"`
 	Sid string `json:"sid"`
-	Si string `json:"si"`
-	Di string `json:"di"`
-	St string `json:"st"`
-	Dt string `json:"dt"`
+	Si  string `json:"si"`
+	Di  string `json:"di"`
+	St  string `json:"st"`
+	Dt  string `json:"dt"`
 }
 
 func (t *AssertionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

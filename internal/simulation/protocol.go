@@ -1,4 +1,4 @@
-package simulation;
+package simulation
 
 type Protocol string
 
