@@ -21,6 +21,11 @@ type DomainRouter struct {
 	Relations RelationSetSource
 	Routes    chan<- contract.Route
 
+	// Define the shared NATS queue group when multiple routers are running.
+	//
+	// Leave blank if the router should not join a group.
+	Group string
+
 	// -- internals
 
 	active_routes sync.Map // map[RouteID]*route_state
@@ -148,7 +153,7 @@ func (r *DomainRouter) Launch(end <-chan struct{}, ready chan<- struct{}) error 
 
 					// subscribe with the new route
 					route_handler, close_handler := process_factory(incoming_route)
-					sub, err := r.NC.Subscribe(route.Match, route_handler)
+					sub, err := r.NC.QueueSubscribe(route.Match, r.Group, route_handler)
 					if err != nil {
 						r.Logger.Printf("Unable to subscribe relative to route [%v] <%v>: %v", route.ID, route, err)
 						continue reconfigure

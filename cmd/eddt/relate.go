@@ -1,13 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
-	"go.resystems.io/eddt/contract"
 )
 
 // The relationship commands will manage the process of recording relationships between elements.
@@ -25,13 +22,12 @@ func init() {
 	relateCmd.AddCommand(relateEncodeCmd)
 
 	relateCompileCmd.Flags().StringVarP(&relate_compiler_config.RulesFile, "rules", "r", "", "File containing JSON rules definitions.")
-}
-
-type RelateCompilerConfig struct {
-	RulesFile string
+	relateCompileCmd.Flags().StringVarP(&relate_compiler_config.Group, "group", "g", "", "Compiler queue group to join (blank to remain independent of any group).")
+	relateAssertCmd.Flags().StringVarP(&relate_assertion_config.Group, "group", "g", "", "Assertion queue group to join (blank to remain independent of any group).")
 }
 
 var relate_compiler_config RelateCompilerConfig
+var relate_assertion_config RelateAssertionConfig
 
 var relateCmd = &cobra.Command{
 	Use:   "relate",
@@ -138,27 +134,7 @@ var relateCompileCmd = &cobra.Command{
 	Long:  `Observation messages are compiled into a stream of simple relationship assertions.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		end := end_on_interrupt()
-
-		// load rules from file
-		var rules []contract.CompilerRule
-
-		if relate_compiler_config.RulesFile != "" {
-			jsonFile, err := os.Open(relate_compiler_config.RulesFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v", err)
-				os.Exit(1)
-			}
-			defer jsonFile.Close()
-
-			byteValue, err := io.ReadAll(jsonFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v", err)
-				os.Exit(1)
-			}
-			json.Unmarshal(byteValue, &rules)
-		}
-
-		err := RunObservationCompilations(rules, end)
+		err := RunObservationCompilations(end, relate_compiler_config)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v", err)
 			os.Exit(1)
@@ -173,7 +149,7 @@ var relateAssertCmd = &cobra.Command{
 Relationships are encoded as sets stored in NATS K-V.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		end := end_on_interrupt()
-		err := RunAssertionProcessing(end)
+		err := RunAssertionProcessing(end, relate_assertion_config)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v", err)
 			os.Exit(1)

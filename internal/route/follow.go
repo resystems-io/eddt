@@ -30,6 +30,9 @@ type RouterRelationFollower struct {
 
 	Updates <-chan Relations
 
+	// If true the log each update to a relation set
+	Noisy bool
+
 	// relations holds *relationset.RelationSet flatbuffers keyed by the relevant domain twin identifier.
 	relations sync.Map
 
@@ -191,7 +194,9 @@ func (r *RouterRelationFollower) absorb(
 
 	// simply pick up the payload and wrap the flatbuffer
 	rkey := ent.Key()
-	defer r.Logger.Printf("stored set for [%v]", rkey)
+	if r.Noisy {
+		defer r.Logger.Printf("stored set for [%v]", rkey)
+	}
 	if len(ent.Value()) == 0 {
 		return fmt.Errorf("empty value for key [%s]", rkey)
 	}
@@ -206,7 +211,6 @@ func (r *RouterRelationFollower) absorb(
 	default:
 		// no reader... ignore
 	}
-
 
 	return nil
 }

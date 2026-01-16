@@ -16,6 +16,7 @@ var (
 func init() {
 	rootCmd.Flags().BoolVarP(&root_verbose, "verbose", "v", false, "verbose output to stderr")
 	rootCmd.Flags().StringVarP(&nats_config.URLS, "nats-urls", "n", "", "NATS server URLs")
+	rootCmd.Flags().StringVarP(&nats_config.Creds, "nats-creds", "c", "", "NATS credentials")
 }
 
 func main() {

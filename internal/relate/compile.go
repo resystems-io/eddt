@@ -42,6 +42,8 @@ type RelationCompiler struct {
 
 	Logger *log.Logger
 
+	Group string
+
 	sol_cache sync.Map // Note, this cache is logically unbounded and will grow with the number of solutions
 }
 
@@ -157,7 +159,7 @@ func (c *RelationCompiler) compile(end <-chan struct{}, ready chan<- struct{}, e
 
 	// Subscribe to NATS using the match filter.
 	// (Note, we are not using a channel subscription, so NATS will create a go routine for us.)
-	sub, err := c.NC.Subscribe(rule.Match, process)
+	sub, err := c.NC.QueueSubscribe(rule.Match, c.Group, process)
 	if err != nil {
 		return err
 	}

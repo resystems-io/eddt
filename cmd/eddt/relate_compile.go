@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -9,7 +12,39 @@ import (
 	"go.resystems.io/eddt/internal/relate"
 )
 
-func RunObservationCompilations(rules []contract.CompilerRule, end <-chan struct{}) error {
+type RelateCompilerConfig struct {
+	RulesFile string
+	Group     string
+}
+
+func (cfg *RelateCompilerConfig) LoadRules() ([]contract.CompilerRule, error) {
+	// load rules from file
+	var rules []contract.CompilerRule
+
+	if relate_compiler_config.RulesFile != "" {
+		jsonFile, err := os.Open(relate_compiler_config.RulesFile)
+		if err != nil {
+			return nil, err
+		}
+		defer jsonFile.Close()
+
+		byteValue, err := io.ReadAll(jsonFile)
+		if err != nil {
+			return nil, err
+		}
+		json.Unmarshal(byteValue, &rules)
+	}
+
+	return rules, nil
+}
+
+func RunObservationCompilations(end <-chan struct{}, cfg RelateCompilerConfig) error {
+
+	// fetch the rules
+	rules, err := cfg.LoadRules()
+	if err != nil {
+		return err
+	}
 
 	// connect to NATS
 	nats_config.URLS = nats.DefaultURL
@@ -27,6 +62,7 @@ func RunObservationCompilations(rules []contract.CompilerRule, end <-chan struct
 	compiler := &relate.RelationCompiler{
 		NC:    nc,
 		Rules: rules,
+		Group: cfg.Group,
 	}
 	ready := make(chan struct{})
 	go compiler.Launch(end, ready)
