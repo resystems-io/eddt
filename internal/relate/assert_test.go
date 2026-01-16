@@ -8,6 +8,7 @@ import (
 
 	"github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"go.resystems.io/eddt/internal/common"
 	"go.resystems.io/eddt/internal/common/assert"
@@ -22,18 +23,57 @@ const (
 func TestRelationAsserter(t *testing.T) {
 	// start a NATS test server
 	s := test.RunRandClientPortServer()
+	s.EnableJetStream(nil)
 	defer s.Shutdown()
 
 	// NATS connection
-	// nc, err := nats.Connect(s.ClientURL())
-	// nats kv add EDDT-R-SETS --history=10 --storage=file --ttl=24h --marker-ttl=1h --replicas=1 --max-value-size=100KiB --max-bucket-size=1GiB
-	// FIXME we need to initialise the K-V store
-	t.Log("WARNING using external NATS for testing, rather than an embedded server.")
-	nc, err := nats.Connect(nats.DefaultURL)
+	const useExternalNATS = false
+	var url string
+	if useExternalNATS {
+		t.Log("WARNING using external NATS for testing, rather than an embedded server.")
+		url = nats.DefaultURL
+	} else {
+		url = s.ClientURL()
+	}
+	nc, err := nats.Connect(url)
 	if err != nil {
 		t.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
+
+	if !useExternalNATS {
+		// nats kv add EDDT-R-SETS --history=10 --storage=file --ttl=24h --marker-ttl=1h --replicas=1 --max-value-size=100KiB --max-bucket-size=1GiB
+		js, err := nc.JetStream()
+		if err != nil {
+			t.Fatalf("failed to get JetStream context: %v", err)
+		}
+		_, err = js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:       RELATIONSET_BUCKET,
+			Description:  "created by test",
+			MaxValueSize: 100 * 1024,
+			History:      10,
+			TTL:          24 * time.Hour,
+			MaxBytes:     1 * 1024 * 1024 * 1024,
+			Replicas:     1,
+			Storage:      nats.MemoryStorage, // overrides --storage=file
+		})
+		if err != nil {
+			t.Fatalf("failed to create key-value store: %v", err)
+		}
+
+		// Enable AllowMsgTTL on the underlying stream to support per-key TTL assertions.
+		sname := "KV_" + RELATIONSET_BUCKET
+		si, err := js.StreamInfo(sname)
+		if err != nil {
+			t.Fatalf("failed to get stream info for %s: %v", sname, err)
+		}
+		cfg := si.Config
+		cfg.AllowMsgTTL = true
+		_, err = js.UpdateStream(&cfg)
+		if err != nil {
+			t.Fatalf("failed to update stream config for %s: %v", sname, err)
+		}
+	}
 
 	// create a relation asserter
 	asserter := &RelationAsserter{
@@ -76,17 +116,38 @@ func TestRelationAsserter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to watch key %s: %v", key, err)
 	}
-	select {
-	case <-watcher.Updates():
-	case <-time.After(1 * time.Second):
-		t.Errorf("timeout waiting for relation set to update")
+	var entry jetstream.KeyValueEntry
+	var ok bool
+	timeout := time.After(5 * time.Second)
+Loop:
+	for {
+		select {
+		case entry, ok = <-watcher.Updates():
+			if !ok {
+				// Watcher channel closed unexpectedly.
+				t.Log("Watcher channel closed. Attempting fallback verification.")
+				break Loop
+			} else if entry == nil {
+				t.Log("Watcher received nil entry, ignoring...")
+				continue Loop
+			} else {
+				t.Logf("Watcher received update for key %s, op: %v", entry.Key(), entry.Operation())
+				break Loop
+			}
+		case <-timeout:
+			t.Errorf("timeout waiting for relation set to update")
+			break Loop
+		}
 	}
 
-	// fetch the key
-	entry, err := kv.Get(ctx, key)
-	t.Logf("Is key not found error: %v", nats_helper.NatsIsErrKeyNotFound(err))
-	if err != nil {
-		t.Fatalf("failed to get key %s: %v", key, err)
+	// Double check with direct Get if we didn't get a valid entry from watcher
+	if entry == nil {
+		var err error
+		entry, err = kv.Get(ctx, key)
+		t.Logf("Is key not found error: %v", nats_helper.NatsIsErrKeyNotFound(err))
+		if err != nil {
+			t.Fatalf("failed to get key %s: %v", key, err)
+		}
 	}
 
 	// check the value of the entry

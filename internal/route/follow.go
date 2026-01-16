@@ -158,6 +158,7 @@ func (r *RouterRelationFollower) follow(
 	close(ready)
 
 	// process the K-V entries and update the map with wrapped flatbuffers
+	// TODO spawn multiple watchers...
 	initialised := false
 process:
 	for {
@@ -197,19 +198,32 @@ func (r *RouterRelationFollower) absorb(
 	if r.Noisy {
 		defer r.Logger.Printf("stored set for [%v]", rkey)
 	}
-	if len(ent.Value()) == 0 {
-		return fmt.Errorf("empty value for key [%s]", rkey)
-	}
-	rset := relationset.GetRootAsRelationSet(ent.Value(), 0)
+	switch ent.Operation() {
+	case jetstream.KeyValuePut:
+		if len(ent.Value()) == 0 {
+			return fmt.Errorf("empty value for key [%s]", rkey)
+		}
+		rset := relationset.GetRootAsRelationSet(ent.Value(), 0)
 
-	// TODO decide if we need to check the revision and perform CAS updates?
-	r.relations.Store(rkey, rset)
+		// TODO decide if we need to check the revision and perform CAS updates?
+		r.relations.Store(rkey, rset)
 
-	// echo the update to the update channel
-	select {
-	case updates <- Relations{rkey, rset}:
-	default:
-		// no reader... ignore
+		// echo the update to the update channel
+		select {
+		case updates <- Relations{rkey, rset}:
+		default:
+			// no reader... ignore
+		}
+	case jetstream.KeyValueDelete:
+		if r.Noisy {
+			r.Logger.Printf("removing deleted %v", rkey)
+		}
+		r.relations.Delete(rkey)
+	case jetstream.KeyValuePurge:
+		if r.Noisy {
+			r.Logger.Printf("removing purged %v", rkey)
+		}
+		r.relations.Delete(rkey)
 	}
 
 	return nil
