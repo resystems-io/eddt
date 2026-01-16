@@ -21,10 +21,16 @@ func init() {
 	routeCmd.AddCommand(routeOverviewCmd)
 	routeCmd.AddCommand(routeMonitorCmd)
 	routeMonitorCmd.Flags().StringVarP(&route_config.RouteFile, "routes", "r", "", "File containing JSON route definitions.")
+	routeMonitorCmd.Flags().StringVarP(&route_config.Group, "group", "g", "", "Router queue group to join (blank to remain independent of any group).")
+	routeMonitorCmd.Flags().BoolVar(&route_config.Verbose, "verbose", false, "Log all relation set activity.")
+	routeMonitorCmd.Flags().DurationVar(&route_config.ReadyTimeout, "ready", 5 * time.Second, "Timeout waiting for start-up readiness.")
 }
 
 type RouteConfig struct {
 	RouteFile string
+	Group     string
+	Verbose   bool
+	ReadyTimeout time.Duration
 }
 
 var route_config RouteConfig
@@ -89,7 +95,8 @@ func RunFollowAndRoute(end <-chan struct{}) error {
 
 	// start up the relationship follower
 	follower := &route.RouterRelationFollower{
-		NC: nc,
+		NC:    nc,
+		Noisy: route_config.Verbose,
 	}
 	fready := make(chan struct{})
 	err = follower.Launch(end, fready)
@@ -100,7 +107,7 @@ func RunFollowAndRoute(end <-chan struct{}) error {
 	select {
 	case <-fready:
 	case <-end:
-	case <-time.After(time.Second * 5):
+	case <-time.After(route_config.ReadyTimeout):
 		panic("Timed out waiting for the RouterRelationFollower to become ready.")
 	}
 
@@ -108,6 +115,7 @@ func RunFollowAndRoute(end <-chan struct{}) error {
 	router := &route.DomainRouter{
 		NC:        nc,
 		Relations: follower,
+		Group:     route_config.Group,
 	}
 	rready := make(chan struct{})
 	err = router.Launch(end, rready)
@@ -120,7 +128,7 @@ func RunFollowAndRoute(end <-chan struct{}) error {
 	select {
 	case <-rready:
 	case <-end:
-	case <-time.After(time.Second * 5):
+	case <-time.After(route_config.ReadyTimeout):
 		panic("Timed out waiting for the DomainRouter to become ready.")
 	}
 
@@ -142,7 +150,7 @@ func RunFollowAndRoute(end <-chan struct{}) error {
 	}
 
 	// load the routes into the router
-	for _,r := range routes {
+	for _, r := range routes {
 		router.Routes <- r
 	}
 

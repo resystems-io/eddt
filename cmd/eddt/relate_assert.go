@@ -7,7 +7,12 @@ import (
 	"go.resystems.io/eddt/internal/relate"
 )
 
-func RunAssertionProcessing(end <-chan struct{}) error {
+type RelateAssertionConfig struct {
+	Group string
+}
+
+
+func RunAssertionProcessing(end <-chan struct{}, cfg RelateAssertionConfig) error {
 
 	// connect to NATS
 	nats_config.URLS = nats.DefaultURL
@@ -24,6 +29,7 @@ func RunAssertionProcessing(end <-chan struct{}) error {
 	// create the asserter
 	asserter := &relate.RelationAsserter{
 		NC:    nc,
+		Group: cfg.Group,
 	}
 	ready := make(chan struct{})
 	go asserter.Launch(end, ready)
