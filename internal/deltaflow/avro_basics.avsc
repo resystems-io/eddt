@@ -1,0 +1,9 @@
+{
+	"type": "record",
+	"name": "SimpleRecord",
+	"namespace": "org.hamba.avro",
+	"fields" : [
+		{"name": "a", "type": "long"},
+		{"name": "b", "type": "string"}
+	]
+}

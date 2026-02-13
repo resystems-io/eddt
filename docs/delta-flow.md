@@ -286,6 +286,19 @@ sufficient state in order to produce delta commands for specific elements within
 the digital twin representation. Whereas, the _Orient_ process step is
 responsible for collecting and coallating the deltas into a coherent state.
 
+#### Medallion Architecture
+
+Note, the above aligns with the so-called medallion architecture:
+- __Bronze:__ raw data
+  - (general event notifications; instruments and observe)
+    - (output: delta notifications)
+- __Silver:__ cleaned, enriched and conformed data
+  - (delta notifications; orient)
+    - (output: coalesced deltas)
+- __Gold:__ aggregated, business-ready data
+  - (coalesced deltas; orient and views)
+    - (output: coalesced tables and views)
+
 ### Delta Commands
 
 In order to implement our delta flow we will define delta commands generally.
