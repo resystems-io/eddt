@@ -1,12 +1,16 @@
 package deltaflow
 
 import (
+	"database/sql"
 	_ "embed"
 	"fmt"
 	"log"
+	"path/filepath"
+	"testing"
 
 	"os"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/hamba/avro/v2"
 	"github.com/hamba/avro/v2/ocf"
 )
@@ -58,6 +62,8 @@ func Example_avro_basics() {
 // LOAD avro;
 // SELECT * FROM read_avro('testdata.avro');
 // ```
+//
+// See: https://duckdb.org/docs/stable/core_extensions/avro
 func Example_avro_ocf() {
 
 	// Create a new OCF file
@@ -110,4 +116,97 @@ func Example_avro_ocf() {
 	// {0 foo-0}
 	// {1 foo-1}
 	// {2 foo-2}
+}
+
+// Avro OCF to Parquet
+//
+// In this unit test we read an OCF file and write it to a Parquet file using duckdb
+// and database/sql.
+func Test_avro_ocf_to_parquet(t *testing.T) {
+	// Create a temp directory
+	tmpDir := t.TempDir()
+	avroPath := filepath.Join(tmpDir, "simple-record.avro")
+	parquetPath := filepath.Join(tmpDir, "simple-record.parquet")
+
+	// Create a simple Avro OCF file
+	f, err := os.Create(avroPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	enc, err := ocf.NewEncoder(string(avro_basics_schema), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		in := SimpleRecord{A: int64(i), B: fmt.Sprintf("foo-%d", i)}
+		if err := enc.Encode(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// Open DuckDB connection
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Bootstrap
+	if _, err := db.Exec("INSTALL avro;"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("LOAD avro;"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Convert Avro to Parquet
+	// Note: We need to use Query/Exec with string formatting because parameter substitution
+	// might not be supported for the file paths in the COPY statement depending on the driver version.
+	query := fmt.Sprintf("COPY (SELECT * FROM read_avro('%s')) TO '%s' (FORMAT PARQUET)", avroPath, parquetPath)
+	if _, err := db.Exec(query); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify Parquet file exists
+	if _, err := os.Stat(parquetPath); os.IsNotExist(err) {
+		t.Fatalf("parquet file not found at %s", parquetPath)
+	}
+
+	// Query the Parquet file to verify contents
+	rows, err := db.Query(fmt.Sprintf("SELECT * FROM read_parquet('%s') ORDER BY A", parquetPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	i := 0
+	for rows.Next() {
+		var a int64
+		var b string
+		if err := rows.Scan(&a, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expectedA := int64(i)
+		expectedB := fmt.Sprintf("foo-%d", i)
+
+		if a != expectedA {
+			t.Errorf("expected A=%d, got %d", expectedA, a)
+		}
+		if b != expectedB {
+			t.Errorf("expected B=%s, got %s", expectedB, b)
+		}
+		i++
+	}
+
+	if i != 3 {
+		t.Errorf("expected 3 records, got %d", i)
+	}
 }
