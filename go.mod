@@ -3,6 +3,7 @@ module go.resystems.io/eddt
 go 1.25.0
 
 require (
+	github.com/apache/arrow/go/v18 v18.0.0-20241007013041-ab95a4d25142
 	github.com/duckdb/duckdb-go/v2 v2.5.5
 	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/google/go-cmp v0.7.0
