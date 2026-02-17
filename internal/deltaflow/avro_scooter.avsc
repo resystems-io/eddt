@@ -1,0 +1,61 @@
+{
+  "type": "record",
+  "name": "ScooterUpdate",
+  "namespace": "deltaflow",
+  "fields": [
+    {
+      "name": "activity_state",
+      "type": [ "io.resystems.eddt.types.DeltaOp", "string" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "pitch",
+      "type": ["io.resystems.eddt.types.DeltaOp", "float" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "roll",
+      "type": ["io.resystems.eddt.types.DeltaOp", "float" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "speedometer_speed",
+      "type": ["io.resystems.eddt.types.DeltaOp", "float" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "motor_speed",
+      "type": ["io.resystems.eddt.types.DeltaOp", "float"],
+      "default": "IGNORE"
+    },
+    {
+      "name": "motor_temperature",
+      "type": ["io.resystems.eddt.types.DeltaOp", "float" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "serial_number",
+      "type": ["io.resystems.eddt.types.DeltaOp", "string" ],
+      "default": "IGNORE"
+    },
+    {
+      "name": "assigned_rider",
+      "type": ["io.resystems.eddt.types.DeltaOp", "string"],
+      "default": "IGNORE"
+    },
+    {
+      "name": "connected_battery_serial",
+      "type": ["io.resystems.eddt.types.DeltaOp", "string"],
+      "default": "IGNORE"
+    },
+    {
+      "name": "location",
+      "type": [
+        "io.resystems.eddt.types.DeltaOp",
+        "io.resystems.eddt.types.GeoPoint",
+        "null"
+      ],
+      "default": "IGNORE"
+    }
+  ]
+}

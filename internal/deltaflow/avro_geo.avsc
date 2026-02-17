@@ -1,0 +1,9 @@
+{
+  "type": "record",
+  "name": "GeoPoint",
+  "namespace": "io.resystems.eddt.types",
+  "fields": [
+    {"name": "lat", "type": "double"},
+    {"name": "lon", "type": "double"}
+  ]
+}

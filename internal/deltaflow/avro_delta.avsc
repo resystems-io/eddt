@@ -1,0 +1,7 @@
+{
+  "type": "enum",
+  "name": "DeltaOp",
+  "namespace": "io.resystems.eddt.types",
+  "symbols": ["IGNORE", "RETRACT", "RESET"],
+  "default": "IGNORE"
+}
