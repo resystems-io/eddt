@@ -353,9 +353,27 @@ performance questions:
 > many base deltas and overlay deltas can be queried per second to form result?
 
 
+## Findings
+
+### Unions
+
+A critical issue is that whie Arrow and Avro both natively support _union_
+types, and the unions should convert cleanly to Parquet for use via DuckDB or
+other tools, it seems that this conversion is quite fiddly. The handling is
+different and confusing.
+
+Ultimately, the items are being rolled into a columnar representation.
+Additionally, the use of the union is between an op-code and a value.
+
+Therefore, the actuall value of the union type is questionable.
+
+Instead, we will consider using an explicit tuple:
+- `(op-code, value)` where the value is nullable.
+
 ## See Also
 
 - duckdb
+- Arrow
 - Avro
 - Parquet
 - Columnar DB

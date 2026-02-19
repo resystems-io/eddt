@@ -5,6 +5,7 @@ type DeltaOp string
 
 const (
 	DeltaOpIgnore  DeltaOp = "IGNORE"
+	DeltaOpAssert  DeltaOp = "ASSERT"
 	DeltaOpRetract DeltaOp = "RETRACT"
 	DeltaOpReset   DeltaOp = "RESET"
 )

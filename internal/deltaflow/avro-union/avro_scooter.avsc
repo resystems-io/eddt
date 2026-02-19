@@ -1,8 +1,20 @@
 {
   "type": "record",
   "name": "ScooterUpdate",
-  "namespace": "deltaflow",
+  "namespace": "avrounion",
   "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "The unique identifier of the scooter.",
+      "logicalType": "uuid"
+    },
+    {
+      "name": "transaction_id",
+      "type": "string",
+      "doc": "The unique identifier of the transaction.",
+      "logicalType": "uuid"
+    },
     {
       "name": "activity_state",
       "type": [ "io.resystems.eddt.types.DeltaOp", "string" ],
