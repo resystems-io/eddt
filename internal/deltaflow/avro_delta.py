@@ -5,8 +5,9 @@
 # Used manually to confirm the behaviour of hamba/avro and duckdb avro.
 #
 
-import json
+import argparse
 import fastavro
+import json
 import pandas as pd
 import sys
 
@@ -88,7 +89,7 @@ def convert_avro_to_parquet_using_fastavro(input_path: str, output_path: str):
 
     print("Converted to parquet using fastavro", file=sys.stderr)
 
-def convert_avro_to_parquet(avro_path, parquet_path):
+def convert_avro_to_parquet_using_polars(avro_path, parquet_path):
     import polars as pl
     # read the avro into a Polars Dataframe
     df = pl.read_avro(avro_path)
@@ -96,10 +97,32 @@ def convert_avro_to_parquet(avro_path, parquet_path):
     # write the dataframe to parquet
     df.write_parquet(parquet_path)
 
-    print("Converted to parquet using fastavro", file=sys.stderr)
+    print("Converted to parquet using polars", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Tools for working with Deltaflow.")
+    parser.add_argument("--avro-deltaflow-path", help="Path to the avro delta file.")
+    parser.add_argument("--parquet-deltaflow-path", help="Path to the parquet delta file.")
+    parser.add_argument("--mode", choices=[
+        "check-schema",
+        "convert-to-parquet",
+        "convert-to-parquet-polars"
+        ], default="convert-to-parquet", help="Mode of operation.")
+
+    args = parser.parse_args()
+
+    if args.mode == "check-schema":
+        check_avro_schema()
+    elif args.mode == "convert-to-parquet":
+        convert_avro_to_parquet_using_fastavro(args.avro_deltaflow_path, args.parquet_deltaflow_path)
+    elif args.mode == "convert-to-parquet-polars":
+        convert_avro_to_parquet_using_polars(args.avro_deltaflow_path, args.parquet_deltaflow_path)
+    else:
+        print(f"Unknown mode: {args.mode}", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
 
 # main
 if __name__ == "__main__":
-    check_avro_schema()
-    # check_reading()
-    convert_avro_to_parquet_using_fastavro("/tmp/updates.avro", "/tmp/updates.fastavro.parquet")
+    main()
