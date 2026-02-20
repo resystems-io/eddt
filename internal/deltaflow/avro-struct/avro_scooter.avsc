@@ -1,0 +1,189 @@
+{
+  "type": "record",
+  "name": "ScooterUpdate",
+  "namespace": "avrostruct",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "logicalType": "uuid",
+      "doc": "The unique identifier of the scooter."
+    },
+    {
+      "name": "transaction_id",
+      "type": "string",
+      "doc": "The unique identifier of the transaction.",
+      "logicalType": "uuid"
+    },
+    {
+      "name": "activity_state",
+      "type": {
+        "name": "activity_state_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pitch",
+      "type": {
+        "name": "pitch_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "float"
+          }
+        ]
+      }
+    },
+    {
+      "name": "roll",
+      "type": {
+        "name": "roll_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "float"
+          }
+        ]
+      }
+    },
+    {
+      "name": "speedometer_speed",
+      "type": {
+        "name": "speedometer_speed_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "float"
+          }
+        ]
+      }
+    },
+    {
+      "name": "motor_speed",
+      "type": {
+        "name": "motor_speed_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "float"
+          }
+        ]
+      }
+    },
+    {
+      "name": "motor_temperature",
+      "type": {
+        "name": "motor_temperature_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "float"
+          }
+        ]
+      }
+    },
+    {
+      "name": "serial_number",
+      "type": {
+        "name": "serial_number_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assigned_rider",
+      "type": {
+        "name": "assigned_rider_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "connected_battery_serial",
+      "type": {
+        "name": "connected_battery_serial_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "location",
+      "type": {
+        "name": "location_update",
+        "type": "record",
+        "fields": [
+          {
+            "name": "op",
+            "type": "io.resystems.eddt.types.DeltaOp"
+          },
+          {
+            "name": "value",
+            "type": "io.resystems.eddt.types.GeoPoint"
+          }
+        ]
+      }
+    }
+  ]
+}
