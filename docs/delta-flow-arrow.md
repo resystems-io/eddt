@@ -67,6 +67,8 @@ This is necessary because Arrow IPC streams require the reader to possess the ex
 
 Once the schema is established, the ingress provider takes the finalised Arrow `RecordBatch` (containing multiple rows of telemetry), serialises it via Arrow IPC (Inter-Process Communication), and publishes the resulting byte payload to the appropriate NATS data subject.
 
+Every `RecordBatch` message **must** include a NATS header named `EDDT-Schema-ID` which holds the content-address (hash) of the schema used to encode the batch. This header allows the receiver to perform rapid schema lookups without needing to inspect the payload or maintain stateful knowledge of the stream's previous messages.
+
 ## 5. EDDT Receiver Responsibilities
 
 The EDDT Receiver acts as the primary consumer of the delta streams. It subscribes to the NATS subjects and is responsible for both durable archiving and live-view maintenance.
@@ -74,7 +76,7 @@ The EDDT Receiver acts as the primary consumer of the delta streams. It subscrib
 ### Schema Resolution and Storage
 
 When the receiver consumes an Arrow IPC stream, it requires the corresponding schema.
-1.  Schemas are uniquely identified via a content-addressed hash derived from the schema itself.
+1.  The receiver extracts the schema content-address from the `EDDT-Schema-ID` NATS header.
 2.  The receiver looks up the required schema from a centralised NATS Key-Value (K-V) store using this content address.
 3.  If the schema is newly published via a `SchemaMessage`, the receiver is responsible for persisting it to the NATS K-V store under its derived content address, making it available for recovery and subsequent consumers.
 
