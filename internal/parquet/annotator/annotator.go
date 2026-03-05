@@ -21,7 +21,8 @@ type Task struct {
 
 // ParquetAnnotator is a utility that can be parameterized by setting config parameters.
 type ParquetAnnotator struct {
-	Verbose bool `parquet:"name=Verbose, type=BOOLEAN"` // Example config
+	Verbose       bool     `parquet:"name=Verbose, type=BOOLEAN"` // Example config
+	TargetStructs []string `parquet:"name=TargetStructs, type=LIST"`
 }
 
 // NewParquetAnnotator creates a new ParquetAnnotator.
@@ -61,6 +62,19 @@ func (a *ParquetAnnotator) Start(end <-chan struct{}) chan<- Task {
 	return in
 }
 
+// isTargetStruct checks if the given type name is in the TargetStructs list.
+func (a *ParquetAnnotator) isTargetStruct(name string) bool {
+	if len(a.TargetStructs) == 0 {
+		return true // No filter specified, annotate all
+	}
+	for _, ts := range a.TargetStructs {
+		if ts == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Annotate reads Go source from In, adds Parquet tags to structs, and writes to Out.
 func (a *ParquetAnnotator) Annotate(in io.Reader, out io.Writer) error {
 	buf := new(bytes.Buffer)
@@ -78,9 +92,15 @@ func (a *ParquetAnnotator) Annotate(in io.Reader, out io.Writer) error {
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
-		case *ast.StructType:
-			for _, field := range node.Fields.List {
-				a.addParquetTag(field)
+		case *ast.TypeSpec:
+			// Check if this type specification is a struct
+			if structType, ok := node.Type.(*ast.StructType); ok {
+				// If TargetStructs is provided, only process matching structs
+				if a.isTargetStruct(node.Name.Name) {
+					for _, field := range structType.Fields.List {
+						a.addParquetTag(field)
+					}
+				}
 			}
 		}
 		return true

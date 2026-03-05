@@ -13,20 +13,28 @@ import (
 )
 
 var (
-	targetDir   string
-	targetFiles []string
-	verbose     bool
+	targetDir     string
+	targetFiles   []string
+	targetStructs []string
+	verbose       bool
 )
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "parquet-annotator",
 		Short: "Annotate Go structs with Parquet metadata tags",
-		RunE:  runAnnotator,
+		Long: `A tool to automatically annotate Go structs with Parquet metadata tags.
+It parses Go source files, finds structs, and adds appropriate 'parquet' tags
+to the fields based on their types.
+
+Example usage via go:generate:
+  //go:generate go run go.resystems.io/eddt/cmd/parquet-annotator -d .`,
+		RunE: runAnnotator,
 	}
 
 	cmd.Flags().StringVarP(&targetDir, "dir", "d", "", "Directory to walk and annotate Go files")
 	cmd.Flags().StringSliceVarP(&targetFiles, "file", "f", nil, "Specific Go file(s) to annotate")
+	cmd.Flags().StringSliceVarP(&targetStructs, "struct", "s", nil, "Specific struct(s) to annotate. If omitted, all in the file are annotated")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 
 	return cmd
@@ -39,6 +47,7 @@ func runAnnotator(cmd *cobra.Command, args []string) error {
 
 	app := annotator.NewParquetAnnotator()
 	app.Verbose = verbose
+	app.TargetStructs = targetStructs
 
 	end := make(chan struct{})
 	defer close(end)

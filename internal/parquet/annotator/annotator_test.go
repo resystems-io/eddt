@@ -11,9 +11,10 @@ import (
 
 func TestAnnotator_Annotate(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name          string
+		input         string
+		expected      string
+		targetStructs []string
 	}{
 		{
 			name: "No Existing Tags",
@@ -91,11 +92,36 @@ type Complex struct {
 }
 `,
 		},
+		{
+			name:          "With TargetStructs set",
+			targetStructs: []string{"User"},
+			input: `package test
+
+type User struct {
+	ID string
+}
+
+type Device struct {
+	ID string
+}
+`,
+			expected: `package test
+
+type User struct {
+	ID	string	` + "`parquet:\"name=ID, type=BYTE_ARRAY, logicaltype=String\"`" + `
+}
+
+type Device struct {
+	ID string
+}
+`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := NewParquetAnnotator()
+			a.TargetStructs = tt.targetStructs
 			in := strings.NewReader(tt.input)
 			var out bytes.Buffer
 
