@@ -52,14 +52,40 @@ func (w *{{.Name}}ArrowWriter) Release() {
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
 func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 {{- range $i, $field := .Fields}}
-{{- if .IsList}}
+{{- if .IsStruct}}
+	{{- if .IsPointer}}
+	if row.{{$field.Name}} == nil {
+		w.b.Field({{$i}}).(*array.StructBuilder).AppendNull()
+	} else {
+		Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), *row.{{$field.Name}})
+	}
+	{{- else}}
+	Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+	{{- end}}
+{{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
 		w.b.Field({{$i}}).(*array.ListBuilder).AppendNull()
 	} else {
 		w.b.Field({{$i}}).(*array.ListBuilder).Append(true)
+		{{- if $field.ValIsStruct}}
+		valBldr := w.b.Field({{$i}}).(*array.ListBuilder).ValueBuilder().(*array.StructBuilder)
+		{{- else}}
 		valBldr := w.b.Field({{$i}}).(*array.ListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
+		{{- end}}
 		for _, v := range row.{{$field.Name}} {
+			{{- if $field.ValIsStruct}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				Append{{$field.ValStructName}}Struct(valBldr, *v)
+			}
+			{{- else}}
+			Append{{$field.ValStructName}}Struct(valBldr, v)
+			{{- end}}
+			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
 		}
 	}
 {{- else if .IsMap}}
@@ -68,14 +94,105 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 	} else {
 		w.b.Field({{$i}}).(*array.MapBuilder).Append(true)
 		keyBldr := w.b.Field({{$i}}).(*array.MapBuilder).KeyBuilder().({{$field.KeyArrowBuilder}})
+		{{- if $field.ValIsStruct}}
+		valBldr := w.b.Field({{$i}}).(*array.MapBuilder).ItemBuilder().(*array.StructBuilder)
+		{{- else}}
 		valBldr := w.b.Field({{$i}}).(*array.MapBuilder).ItemBuilder().({{$field.ValArrowBuilder}})
+		{{- end}}
 		for k, v := range row.{{$field.Name}} {
 			keyBldr.Append({{$field.KeyCastType}}(k))
+			{{- if $field.ValIsStruct}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				Append{{$field.ValStructName}}Struct(valBldr, *v)
+			}
+			{{- else}}
+			Append{{$field.ValStructName}}Struct(valBldr, v)
+			{{- end}}
+			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
 		}
 	}
 {{- else}}
 	w.b.Field({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(row.{{$field.Name}}))
+{{- end}}
+{{- end}}
+}
+
+// Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
+// This is used for writing nested structs.
+func Append{{.Name}}Struct(b *array.StructBuilder, row {{.Name}}) {
+	b.Append(true)
+{{- range $i, $field := .Fields}}
+{{- if .IsStruct}}
+	{{- if .IsPointer}}
+	if row.{{$field.Name}} == nil {
+		b.FieldBuilder({{$i}}).(*array.StructBuilder).AppendNull()
+	} else {
+		Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), *row.{{$field.Name}})
+	}
+	{{- else}}
+	Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+	{{- end}}
+{{- else if .IsList}}
+	if row.{{$field.Name}} == nil {
+		b.FieldBuilder({{$i}}).(*array.ListBuilder).AppendNull()
+	} else {
+		b.FieldBuilder({{$i}}).(*array.ListBuilder).Append(true)
+		{{- if $field.ValIsStruct}}
+		valBldr := b.FieldBuilder({{$i}}).(*array.ListBuilder).ValueBuilder().(*array.StructBuilder)
+		{{- else}}
+		valBldr := b.FieldBuilder({{$i}}).(*array.ListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
+		{{- end}}
+		for _, v := range row.{{$field.Name}} {
+			{{- if $field.ValIsStruct}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				Append{{$field.ValStructName}}Struct(valBldr, *v)
+			}
+			{{- else}}
+			Append{{$field.ValStructName}}Struct(valBldr, v)
+			{{- end}}
+			{{- else}}
+			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
+		}
+	}
+{{- else if .IsMap}}
+	if row.{{$field.Name}} == nil {
+		b.FieldBuilder({{$i}}).(*array.MapBuilder).AppendNull()
+	} else {
+		b.FieldBuilder({{$i}}).(*array.MapBuilder).Append(true)
+		keyBldr := b.FieldBuilder({{$i}}).(*array.MapBuilder).KeyBuilder().({{$field.KeyArrowBuilder}})
+		{{- if $field.ValIsStruct}}
+		valBldr := b.FieldBuilder({{$i}}).(*array.MapBuilder).ItemBuilder().(*array.StructBuilder)
+		{{- else}}
+		valBldr := b.FieldBuilder({{$i}}).(*array.MapBuilder).ItemBuilder().({{$field.ValArrowBuilder}})
+		{{- end}}
+		for k, v := range row.{{$field.Name}} {
+			keyBldr.Append({{$field.KeyCastType}}(k))
+			{{- if $field.ValIsStruct}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				Append{{$field.ValStructName}}Struct(valBldr, *v)
+			}
+			{{- else}}
+			Append{{$field.ValStructName}}Struct(valBldr, v)
+			{{- end}}
+			{{- else}}
+			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
+		}
+	}
+{{- else}}
+	b.FieldBuilder({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(row.{{$field.Name}}))
 {{- end}}
 {{- end}}
 }

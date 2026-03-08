@@ -3,6 +3,7 @@ package writergen
 import (
 	"fmt"
 	"go/ast"
+	"go/types"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -15,11 +16,17 @@ type FieldInfo struct {
 	GoType          string // The original Go type string
 	IsList          bool
 	IsMap           bool
+	IsStruct        bool   // True if the field itself is a struct or pointer-to-struct
+	IsPointer       bool   // True if the field is a pointer
+	StructName      string // If IsStruct=true, the name of the struct
 	KeyArrowBuilder string // Used for the map keys builder type
 	ValArrowBuilder string // Used for the list items and map values builder type
 	CastType        string // The Go type used when appending to the builder
 	KeyCastType     string // The Go type used when appending a map key
 	ValCastType     string // The Go type used when appending a map value or list item
+	ValIsStruct		bool   // True if list value or map value is a struct
+	ValIsPointer    bool   // True if list value or map value is a pointer
+	ValStructName   string // If ValIsStruct is true, the name of that struct
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -60,52 +67,68 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 		return nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
 	}
 
-	targets := make(map[string]bool)
-	for _, t := range g.TargetStructs {
-		targets[t] = true
-	}
-
+	queue := make([]string, len(g.TargetStructs))
+	copy(queue, g.TargetStructs)
+	processed := make(map[string]bool)
 	var results []StructInfo
 
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Syntax {
-			ast.Inspect(file, func(n ast.Node) bool {
-				ts, ok := n.(*ast.TypeSpec)
-				if !ok {
-					return true
-				}
+	for len(queue) > 0 {
+		target := queue[0]
+		queue = queue[1:]
 
-				if !targets[ts.Name.Name] {
-					return true
-				}
+		if processed[target] {
+			continue
+		}
+		processed[target] = true
 
-				st, ok := ts.Type.(*ast.StructType)
-				if !ok {
-					return true
-				}
-
-				info := StructInfo{Name: ts.Name.Name}
-
-				for _, field := range st.Fields.List {
-					if len(field.Names) == 0 {
-						continue // Skip embedded fields for now
+		found := false
+		for _, pkg := range pkgs {
+			for _, file := range pkg.Syntax {
+				ast.Inspect(file, func(n ast.Node) bool {
+					ts, ok := n.(*ast.TypeSpec)
+					if !ok || ts.Name.Name != target {
+						return true
 					}
 
-					fieldName := field.Names[0].Name
-					fieldInfo, err := mapToFieldInfo(fieldName, field.Type)
-					if err != nil {
-						if g.Verbose {
-							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
+					st, ok := ts.Type.(*ast.StructType)
+					if !ok {
+						return true
+					}
+
+					found = true
+					info := StructInfo{Name: ts.Name.Name}
+
+					for _, field := range st.Fields.List {
+						if len(field.Names) == 0 {
+							continue // Skip embedded fields for now
 						}
-						continue
+
+						fieldName := field.Names[0].Name
+						fieldInfo, err := mapToFieldInfo(pkg, fieldName, field.Type, &queue, processed)
+						if err != nil {
+							if g.Verbose {
+								fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
+							}
+							continue
+						}
+
+						info.Fields = append(info.Fields, fieldInfo)
 					}
 
-					info.Fields = append(info.Fields, fieldInfo)
+					results = append(results, info)
+					return false
+				})
+				if found {
+					break
 				}
+			}
+			if found {
+				break
+			}
+		}
 
-				results = append(results, info)
-				return false // Don't traverse inside the struct
-			})
+		if !found && g.Verbose {
+			fmt.Printf("Warning: Could not find definition for targeted struct: %s\n", target)
 		}
 	}
 
@@ -113,9 +136,17 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 }
 
 // mapToFieldInfo maps an AST expression to a FieldInfo struct.
-func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
+func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
+		// Check for struct reference
+		obj := pkg.TypesInfo.ObjectOf(t)
+		if obj != nil {
+			if _, ok := obj.Type().Underlying().(*types.Struct); ok {
+				return mapStructField(name, obj.Name(), false, queue, processed), nil
+			}
+		}
+
 		// Primitive type
 		goType, arrowType, arrowBuilder, castType, err := mapToArrowType(t)
 		if err != nil {
@@ -129,48 +160,104 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 			CastType:     castType,
 		}, nil
 
+	case *ast.StarExpr:
+		// Pointer type - typically to a struct in our context
+		ident, ok := t.X.(*ast.Ident)
+		if ok {
+			obj := pkg.TypesInfo.ObjectOf(ident)
+			if obj != nil {
+				if _, isStruct := obj.Type().Underlying().(*types.Struct); isStruct {
+					return mapStructField(name, obj.Name(), true, queue, processed), nil
+				}
+			}
+		}
+		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
+
 	case *ast.ArrayType:
 		// Slice type
-		eltGoType, eltArrowType, eltArrowBuilder, eltCastType, err := mapToArrowType(t.Elt)
+		eltInfo, err := mapToFieldInfo(pkg, "", t.Elt, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
+
+		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
+		if eltInfo.IsStruct {
+			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
+		}
+
 		return FieldInfo{
 			Name:            name,
-			GoType:          "[]" + eltGoType,
-			ArrowType:       fmt.Sprintf("arrow.ListOf(%s)", eltArrowType),
+			GoType:          "[]" + eltInfo.GoType,
+			ArrowType:       arrowType,
 			ArrowBuilder:    "*array.ListBuilder",
 			IsList:          true,
-			ValArrowBuilder: eltArrowBuilder,
-			ValCastType:     eltCastType,
+			ValArrowBuilder: eltInfo.ArrowBuilder,
+			ValCastType:     eltInfo.CastType,
+			IsStruct:        false, // A slice itself is not a struct
+			ValIsStruct:     eltInfo.IsStruct,
+			ValIsPointer:    eltInfo.IsPointer,
+			ValStructName:   eltInfo.StructName,
 		}, nil
 
 	case *ast.MapType:
 		// Map type
-		keyGoType, keyArrowType, keyArrowBuilder, keyCastType, err := mapToArrowType(t.Key)
+		keyInfo, err := mapToFieldInfo(pkg, "", t.Key, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key %w", err)
 		}
+		if keyInfo.IsStruct {
+			return FieldInfo{}, fmt.Errorf("struct maps keys are not supported")
+		}
 
-
-		valGoType, valArrowType, valArrowBuilder, valCastType, err := mapToArrowType(t.Value)
+		valInfo, err := mapToFieldInfo(pkg, "", t.Value, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map value %w", err)
 		}
+
+		valArrowType := valInfo.ArrowType
+		if valInfo.IsStruct {
+			valArrowType = fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", valInfo.StructName)
+		}
+
 		return FieldInfo{
 			Name:            name,
-			GoType:          fmt.Sprintf("map[%s]%s", keyGoType, valGoType),
-			ArrowType:       fmt.Sprintf("arrow.MapOf(%s, %s)", keyArrowType, valArrowType),
+			GoType:          fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType),
+			ArrowType:       fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
 			ArrowBuilder:    "*array.MapBuilder",
 			IsMap:           true,
-			KeyArrowBuilder: keyArrowBuilder,
-			ValArrowBuilder: valArrowBuilder,
-			KeyCastType:     keyCastType,
-			ValCastType:     valCastType,
+			KeyArrowBuilder: keyInfo.ArrowBuilder,
+			ValArrowBuilder: valInfo.ArrowBuilder,
+			KeyCastType:     keyInfo.CastType,
+			ValCastType:     valInfo.CastType,
+			IsStruct:        false, // A map itself is not a struct
+			ValIsStruct:     valInfo.IsStruct,
+			ValIsPointer:    valInfo.IsPointer,
+			ValStructName:   valInfo.StructName,
 		}, nil
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
+}
+
+func mapStructField(name string, structName string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
+	if !processed[structName] {
+		*queue = append(*queue, structName)
+	}
+
+	goType := structName
+	if isPointer {
+		goType = "*" + structName
+	}
+
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", structName),
+		ArrowBuilder: "*array.StructBuilder",
+		IsStruct:     true,
+		IsPointer:    isPointer,
+		StructName:   structName,
+	}
 }
 
 // mapToArrowType maps a primitive Go AST expression to its primitive Arrow type representation
