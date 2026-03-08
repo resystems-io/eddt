@@ -24,7 +24,7 @@ type FieldInfo struct {
 	CastType        string // The Go type used when appending to the builder
 	KeyCastType     string // The Go type used when appending a map key
 	ValCastType     string // The Go type used when appending a map value or list item
-	ValIsStruct		bool   // True if list value or map value is a struct
+	ValIsStruct     bool   // True if list value or map value is a struct
 	ValIsPointer    bool   // True if list value or map value is a pointer
 	ValStructName   string // If ValIsStruct is true, the name of that struct
 }
@@ -53,18 +53,23 @@ func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbo
 	}
 }
 
-// Parse extracts StructInfo for the targeted structs.
-func (g *Generator) Parse() ([]StructInfo, error) {
+// Parse extracts StructInfo for the targeted structs and discovers the package name.
+func (g *Generator) Parse() (string, []StructInfo, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 		Dir:  g.InputPkg,
 	}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
+		return "", nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
 	}
 	if packages.PrintErrors(pkgs) > 0 {
-		return nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
+		return "", nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
+	}
+
+	var parsedPkgName string
+	if len(pkgs) > 0 {
+		parsedPkgName = pkgs[0].Name
 	}
 
 	queue := make([]string, len(g.TargetStructs))
@@ -132,7 +137,7 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 		}
 	}
 
-	return results, nil
+	return parsedPkgName, results, nil
 }
 
 // mapToFieldInfo maps an AST expression to a FieldInfo struct.

@@ -10,6 +10,7 @@ import (
 
 var (
 	inputPkg      string
+	outPkgName    string
 	targetStructs []string
 	outPath       string
 	verbose       bool
@@ -28,6 +29,7 @@ Example usage:
 	}
 
 	cmd.Flags().StringVarP(&inputPkg, "pkg", "p", ".", "Input package directory containing the structs")
+	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
 	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Specific struct(s) to generate writers for (comma-separated)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "arrow-writer-gen.go", "Output file path")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
@@ -47,14 +49,14 @@ func runGenerator(cmd *cobra.Command, args []string) error {
 	if verbose {
 		fmt.Printf("Generating Arrow writers for structs: %v\n", targetStructs)
 		fmt.Printf("Input package: %s\n", inputPkg)
+		if outPkgName != "" {
+			fmt.Printf("Output package override: %s\n", outPkgName)
+		}
 		fmt.Printf("Output file: %s\n", outPath)
 	}
 
 	gen := writergen.NewGenerator(inputPkg, targetStructs, outPath, verbose)
-	// We'll use a simple package name extraction or fallback to "main" or "arrowwriters"
-	// For simplicity, we just use a default "model" package name unless improved.
-	pkgName := "model" // TODO: Perhaps add a --pkgName flag, or extract from AST
-	if err := gen.Run(pkgName); err != nil {
+	if err := gen.Run(outPkgName); err != nil {
 		return err
 	}
 

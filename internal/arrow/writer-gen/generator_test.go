@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -39,9 +40,13 @@ type IgnoredStruct struct {
 
 	g := NewGenerator(tmpDir, []string{"SimpleStruct"}, "out.go", false)
 
-	structs, err := g.Parse()
+	pkgName, structs, err := g.Parse()
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	if pkgName != "testpkg" {
+		t.Errorf("Expected parsed package testpkg, got %s", pkgName)
 	}
 
 	if len(structs) != 1 {
@@ -123,5 +128,48 @@ func TestMapToArrowType(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTemplateOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+type Person struct {
+	Name string
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+	if !strings.Contains(outStr, "package mypkg") {
+		t.Errorf("Expected output to contain 'package mypkg'")
+	}
+	if !strings.Contains(outStr, "func NewPersonSchema() *arrow.Schema") {
+		t.Errorf("Expected output to contain 'func NewPersonSchema() *arrow.Schema'")
+	}
+	if !strings.Contains(outStr, "type PersonArrowWriter struct") {
+		t.Errorf("Expected output to contain 'type PersonArrowWriter struct'")
 	}
 }

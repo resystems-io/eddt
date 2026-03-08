@@ -213,13 +213,20 @@ type templateData struct {
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
 func (g *Generator) Run(packageName string) error {
-	structs, err := g.Parse()
+	parsedPkgName, structs, err := g.Parse()
 	if err != nil {
 		return err
 	}
 
 	if len(structs) == 0 {
 		return fmt.Errorf("no target structs found matching specifications")
+	}
+
+	if packageName == "" {
+		packageName = parsedPkgName
+		if packageName == "" {
+			packageName = "model" // fallback just in case
+		}
 	}
 
 	data := templateData{
