@@ -15,6 +15,9 @@ import (
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
+{{- if .ImportPkgPath}}
+	"{{.ImportPkgPath}}"
+{{- end}}
 )
 {{range .Structs}}
 // New{{.Name}}Schema returns the Apache Arrow schema for the {{.Name}} struct.
@@ -50,17 +53,17 @@ func (w *{{.Name}}ArrowWriter) Release() {
 }
 
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
-func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
+func (w *{{.Name}}ArrowWriter) Append(row {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
 {{- range $i, $field := .Fields}}
 {{- if .IsStruct}}
 	{{- if .IsPointer}}
 	if row.{{$field.Name}} == nil {
 		w.b.Field({{$i}}).(*array.StructBuilder).AppendNull()
 	} else {
-		Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), *row.{{$field.Name}})
+		Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(*row.{{$field.Name}}))
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+	Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(row.{{$field.Name}}))
 	{{- end}}
 {{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
@@ -78,10 +81,10 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, *v)
+				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -106,10 +109,10 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, *v)
+				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -124,7 +127,7 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 
 // Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
 // This is used for writing nested structs.
-func Append{{.Name}}Struct(b *array.StructBuilder, row {{.Name}}) {
+func Append{{.Name}}Struct(b *array.StructBuilder, row {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
 	b.Append(true)
 {{- range $i, $field := .Fields}}
 {{- if .IsStruct}}
@@ -132,10 +135,10 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{.Name}}) {
 	if row.{{$field.Name}} == nil {
 		b.FieldBuilder({{$i}}).(*array.StructBuilder).AppendNull()
 	} else {
-		Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), *row.{{$field.Name}})
+		Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(*row.{{$field.Name}}))
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+	Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(row.{{$field.Name}}))
 	{{- end}}
 {{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
@@ -153,10 +156,10 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{.Name}}) {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, *v)
+				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -181,10 +184,10 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{.Name}}) {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, *v)
+				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -207,19 +210,28 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 var writerTemplate = template.Must(template.New("writer").Parse(writerTemplateStr))
 
 type templateData struct {
-	PackageName string
-	Structs     []StructInfo
+	PackageName   string
+	ImportPkgPath string
+	ImportPkgName string
+	Structs       []StructInfo
 }
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
 func (g *Generator) Run(packageName string) error {
-	parsedPkgName, structs, err := g.Parse()
+	parsedPkgName, parsedPkgPath, structs, err := g.Parse()
 	if err != nil {
 		return err
 	}
 
 	if len(structs) == 0 {
 		return fmt.Errorf("no target structs found matching specifications")
+	}
+
+	importPkgPath := ""
+	importPkgName := ""
+	if packageName != "" && packageName != parsedPkgName {
+		importPkgPath = parsedPkgPath
+		importPkgName = parsedPkgName
 	}
 
 	if packageName == "" {
@@ -230,8 +242,10 @@ func (g *Generator) Run(packageName string) error {
 	}
 
 	data := templateData{
-		PackageName: packageName,
-		Structs:     structs,
+		PackageName:   packageName,
+		ImportPkgPath: importPkgPath,
+		ImportPkgName: importPkgName,
+		Structs:       structs,
 	}
 
 	var buf bytes.Buffer

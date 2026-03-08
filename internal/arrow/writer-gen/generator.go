@@ -54,22 +54,24 @@ func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbo
 }
 
 // Parse extracts StructInfo for the targeted structs and discovers the package name.
-func (g *Generator) Parse() (string, []StructInfo, error) {
+func (g *Generator) Parse() (string, string, []StructInfo, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 		Dir:  g.InputPkg,
 	}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
+		return "", "", nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
 	}
 	if packages.PrintErrors(pkgs) > 0 {
-		return "", nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
+		return "", "", nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
 	}
 
 	var parsedPkgName string
+	var parsedPkgPath string
 	if len(pkgs) > 0 {
 		parsedPkgName = pkgs[0].Name
+		parsedPkgPath = pkgs[0].PkgPath
 	}
 
 	queue := make([]string, len(g.TargetStructs))
@@ -137,7 +139,7 @@ func (g *Generator) Parse() (string, []StructInfo, error) {
 		}
 	}
 
-	return parsedPkgName, results, nil
+	return parsedPkgName, parsedPkgPath, results, nil
 }
 
 // mapToFieldInfo maps an AST expression to a FieldInfo struct.

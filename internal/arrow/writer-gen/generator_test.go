@@ -40,13 +40,16 @@ type IgnoredStruct struct {
 
 	g := NewGenerator(tmpDir, []string{"SimpleStruct"}, "out.go", false)
 
-	pkgName, structs, err := g.Parse()
+	pkgName, pkgPath, structs, err := g.Parse()
 	if err != nil {
 		t.Fatalf("Parse() failed: %v", err)
 	}
 
 	if pkgName != "testpkg" {
 		t.Errorf("Expected parsed package testpkg, got %s", pkgName)
+	}
+	if pkgPath != "testpkg" {
+		t.Errorf("Expected parsed package path testpkg, got %s", pkgPath)
 	}
 
 	if len(structs) != 1 {
@@ -171,5 +174,48 @@ type Person struct {
 	}
 	if !strings.Contains(outStr, "type PersonArrowWriter struct") {
 		t.Errorf("Expected output to contain 'type PersonArrowWriter struct'")
+	}
+}
+
+func TestTemplateOutputOverridePkg(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+type Person struct {
+	Name string
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+
+	err := g.Run("differentpkg")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+	if !strings.Contains(outStr, "package differentpkg") {
+		t.Errorf("Expected output to contain 'package differentpkg', got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "\"mypkg\"") {
+		t.Errorf("Expected output to import 'mypkg', got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "func (w *PersonArrowWriter) Append(row mypkg.Person)") {
+		t.Errorf("Expected output to use imported struct mypkg.Person, got:\n%s", outStr)
 	}
 }
