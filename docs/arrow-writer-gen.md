@@ -19,6 +19,8 @@ structs, lists and maps, and nested structs.
 
 - For each phase, the generator will be extended to support the features of that
 phase, together with unit tests verifying the generator's behaviour.
+- While the conversion to Arrow will be one-way, and we do not convert back from
+  Arrow to go yet, the unit tests must be able to verify the conversion.
 - Note, while the generator will be extended to cover the requirements of each
 phase, the CLI calling convention will remain the same, and the generated code
 will be placed in the same file.
