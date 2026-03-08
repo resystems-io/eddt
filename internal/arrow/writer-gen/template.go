@@ -59,7 +59,7 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 		w.b.Field({{$i}}).(*array.ListBuilder).Append(true)
 		valBldr := w.b.Field({{$i}}).(*array.ListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
 		for _, v := range row.{{$field.Name}} {
-			valBldr.Append(v)
+			valBldr.Append({{$field.ValCastType}}(v))
 		}
 	}
 {{- else if .IsMap}}
@@ -70,12 +70,12 @@ func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 		keyBldr := w.b.Field({{$i}}).(*array.MapBuilder).KeyBuilder().({{$field.KeyArrowBuilder}})
 		valBldr := w.b.Field({{$i}}).(*array.MapBuilder).ItemBuilder().({{$field.ValArrowBuilder}})
 		for k, v := range row.{{$field.Name}} {
-			keyBldr.Append(k)
-			valBldr.Append(v)
+			keyBldr.Append({{$field.KeyCastType}}(k))
+			valBldr.Append({{$field.ValCastType}}(v))
 		}
 	}
 {{- else}}
-	w.b.Field({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}})
+	w.b.Field({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(row.{{$field.Name}}))
 {{- end}}
 {{- end}}
 }

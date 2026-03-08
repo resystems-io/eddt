@@ -17,6 +17,9 @@ type FieldInfo struct {
 	IsMap           bool
 	KeyArrowBuilder string // Used for the map keys builder type
 	ValArrowBuilder string // Used for the list items and map values builder type
+	CastType        string // The Go type used when appending to the builder
+	KeyCastType     string // The Go type used when appending a map key
+	ValCastType     string // The Go type used when appending a map value or list item
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -114,7 +117,7 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		// Primitive type
-		goType, arrowType, arrowBuilder, err := mapToArrowType(t)
+		goType, arrowType, arrowBuilder, castType, err := mapToArrowType(t)
 		if err != nil {
 			return FieldInfo{}, err
 		}
@@ -123,11 +126,12 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 			GoType:       goType,
 			ArrowType:    arrowType,
 			ArrowBuilder: arrowBuilder,
+			CastType:     castType,
 		}, nil
 
 	case *ast.ArrayType:
 		// Slice type
-		eltGoType, eltArrowType, eltArrowBuilder, err := mapToArrowType(t.Elt)
+		eltGoType, eltArrowType, eltArrowBuilder, eltCastType, err := mapToArrowType(t.Elt)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
@@ -138,20 +142,18 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 			ArrowBuilder:    "*array.ListBuilder",
 			IsList:          true,
 			ValArrowBuilder: eltArrowBuilder,
+			ValCastType:     eltCastType,
 		}, nil
 
 	case *ast.MapType:
 		// Map type
-		keyGoType, keyArrowType, keyArrowBuilder, err := mapToArrowType(t.Key)
+		keyGoType, keyArrowType, keyArrowBuilder, keyCastType, err := mapToArrowType(t.Key)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key %w", err)
 		}
-		if keyGoType != "string" {
-			// Arrow map keys should generally be strings, although arrow supports others
-			return FieldInfo{}, fmt.Errorf("map key must be string, got: %s", keyGoType)
-		}
 
-		valGoType, valArrowType, valArrowBuilder, err := mapToArrowType(t.Value)
+
+		valGoType, valArrowType, valArrowBuilder, valCastType, err := mapToArrowType(t.Value)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map value %w", err)
 		}
@@ -163,6 +165,8 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 			IsMap:           true,
 			KeyArrowBuilder: keyArrowBuilder,
 			ValArrowBuilder: valArrowBuilder,
+			KeyCastType:     keyCastType,
+			ValCastType:     valCastType,
 		}, nil
 	}
 
@@ -171,56 +175,69 @@ func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
 
 // mapToArrowType maps a primitive Go AST expression to its primitive Arrow type representation
 // returning the Go type string, the Arrow type string, the Builder type string, and an error if unsupported.
-func mapToArrowType(expr ast.Expr) (string, string, string, error) {
+func mapToArrowType(expr ast.Expr) (string, string, string, string, error) {
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
-		return "", "", "", fmt.Errorf("complex types not supported in Phase 1 primitives list")
+		return "", "", "", "", fmt.Errorf("complex types not supported in Phase 1 primitives list")
 	}
 
 	goType := ident.Name
 	var arrowType string
 	var arrowBuilder string
+	var castType string
 
 	switch goType {
 	case "int8":
 		arrowType = "arrow.PrimitiveTypes.Int8"
 		arrowBuilder = "*array.Int8Builder"
+		castType = "int8"
 	case "int16":
 		arrowType = "arrow.PrimitiveTypes.Int16"
 		arrowBuilder = "*array.Int16Builder"
+		castType = "int16"
 	case "int32":
 		arrowType = "arrow.PrimitiveTypes.Int32"
 		arrowBuilder = "*array.Int32Builder"
+		castType = "int32"
 	case "int64", "int":
 		arrowType = "arrow.PrimitiveTypes.Int64"
 		arrowBuilder = "*array.Int64Builder"
+		castType = "int64"
 	case "uint8":
 		arrowType = "arrow.PrimitiveTypes.Uint8"
 		arrowBuilder = "*array.Uint8Builder"
+		castType = "uint8"
 	case "uint16":
 		arrowType = "arrow.PrimitiveTypes.Uint16"
 		arrowBuilder = "*array.Uint16Builder"
+		castType = "uint16"
 	case "uint32":
 		arrowType = "arrow.PrimitiveTypes.Uint32"
 		arrowBuilder = "*array.Uint32Builder"
+		castType = "uint32"
 	case "uint64", "uint":
 		arrowType = "arrow.PrimitiveTypes.Uint64"
 		arrowBuilder = "*array.Uint64Builder"
+		castType = "uint64"
 	case "float32":
 		arrowType = "arrow.PrimitiveTypes.Float32"
 		arrowBuilder = "*array.Float32Builder"
+		castType = "float32"
 	case "float64":
 		arrowType = "arrow.PrimitiveTypes.Float64"
 		arrowBuilder = "*array.Float64Builder"
+		castType = "float64"
 	case "string":
 		arrowType = "arrow.BinaryTypes.String"
 		arrowBuilder = "*array.StringBuilder"
+		castType = "string"
 	case "bool":
 		arrowType = "arrow.FixedWidthTypes.Boolean"
 		arrowBuilder = "*array.BooleanBuilder"
+		castType = "bool"
 	default:
-		return "", "", "", fmt.Errorf("unsupported primitive type: %s", goType)
+		return "", "", "", "", fmt.Errorf("unsupported primitive type: %s", goType)
 	}
 
-	return goType, arrowType, arrowBuilder, nil
+	return goType, arrowType, arrowBuilder, castType, nil
 }

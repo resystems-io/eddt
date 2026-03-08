@@ -43,7 +43,11 @@ The second phase of the implementation will focus on generating append writers
 for lists and maps. This will include the following features:
 
 - Support for lists of basic types
-- Support for maps of basic types
+- Support for maps of basic types with various key,value combinations
+  - map[int]string
+  - map[string]string
+  - map[string]int64
+  - etc.
 
 ### Phase 3: Nested Structs
 

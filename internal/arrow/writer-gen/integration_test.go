@@ -381,6 +381,267 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 			tarball(t, "/tmp/arrow-gen-list-and-map.tar.gz", tmpDir)
 		}
 	})
+
+	t.Run("int-map", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		dummyCode := `package dummy
+
+type IntMapUser struct {
+	ID   int32
+	Map1 map[int]string
+	Map2 map[int]int
+	Map3 map[int64]float64
+	Map4 map[int32]bool
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy.go: %v", err)
+		}
+
+		modContent := "module dummy\n\ngo 1.25.0\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("Failed to write go.mod: %v", err)
+		}
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator(tmpDir, []string{"IntMapUser"}, outPath, false)
+		if err := g.Run("dummy"); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		if _, err := os.Stat(outPath); os.IsNotExist(err) {
+			t.Fatalf("Expected output file %s was not generated", outPath)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/duckdb/duckdb-go/v2"
+)
+
+func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewIntMapUserArrowWriter(pool)
+	defer writer.Release()
+
+	u1 := IntMapUser{
+		ID:   1,
+		Map1: map[int]string{10: "ten", 20: "twenty"},
+		Map2: map[int]int{100: 1000, 200: 2000},
+		Map3: map[int64]float64{1000: 1.5, 2000: 2.5},
+		Map4: map[int32]bool{1: true, 2: false},
+	}
+	u2 := IntMapUser{
+		ID:   2,
+		Map1: map[int]string{30: "thirty"},
+		Map2: map[int]int{300: 3000},
+		Map3: map[int64]float64{3000: 3.5},
+		Map4: map[int32]bool{3: true},
+	}
+	u3 := IntMapUser{
+		ID:   3,
+		Map1: nil,
+		Map2: nil,
+		Map3: nil,
+		Map4: nil,
+	}
+
+	writer.Append(u1)
+	writer.Append(u2)
+	writer.Append(u3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "intmap_users.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+
+	err = pqWriter.Write(record)
+	if err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+
+	err = pqWriter.Close()
+	if err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB memory instance: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf("SELECT id, map1, map2, map3, map4 FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	var actualUsers []IntMapUser
+	for rows.Next() {
+		var u IntMapUser
+		var m1If *duckdb.Map
+		var m2If *duckdb.Map
+		var m3If *duckdb.Map
+		var m4If *duckdb.Map
+
+		if err := rows.Scan(&u.ID, &m1If, &m2If, &m3If, &m4If); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+
+		if m1If != nil && *m1If != nil {
+			u.Map1 = make(map[int]string)
+			for k, v := range *m1If {
+				var keyInt int
+				switch kv := k.(type) {
+				case int32:
+					keyInt = int(kv)
+				case int64:
+					keyInt = int(kv)
+				case int:
+					keyInt = kv
+				default:
+					t.Fatalf("unexpected type for Map1 key: %T", k)
+				}
+				u.Map1[keyInt] = v.(string)
+			}
+		}
+
+		if m2If != nil && *m2If != nil {
+			u.Map2 = make(map[int]int)
+			for k, v := range *m2If {
+				var keyInt int
+				switch kv := k.(type) {
+				case int32:
+					keyInt = int(kv)
+				case int64:
+					keyInt = int(kv)
+				case int:
+					keyInt = kv
+				default:
+					t.Fatalf("unexpected type for Map2 key: %T", k)
+				}
+				var valInt int
+				switch vv := v.(type) {
+				case int32:
+					valInt = int(vv)
+				case int64:
+					valInt = int(vv)
+				case int:
+					valInt = vv
+				default:
+					t.Fatalf("unexpected type for Map2 value: %T", v)
+				}
+				u.Map2[keyInt] = valInt
+			}
+		}
+
+		if m3If != nil && *m3If != nil {
+			u.Map3 = make(map[int64]float64)
+			for k, v := range *m3If {
+				var keyInt64 int64
+				switch kv := k.(type) {
+				case int32:
+					keyInt64 = int64(kv)
+				case int64:
+					keyInt64 = kv
+				case int:
+					keyInt64 = int64(kv)
+				default:
+					t.Fatalf("unexpected type for Map3 key: %T", k)
+				}
+				u.Map3[keyInt64] = v.(float64)
+			}
+		}
+
+		if m4If != nil && *m4If != nil {
+			u.Map4 = make(map[int32]bool)
+			for k, v := range *m4If {
+				var keyInt32 int32
+				switch kv := k.(type) {
+				case int32:
+					keyInt32 = kv
+				case int64:
+					keyInt32 = int32(kv)
+				case int:
+					keyInt32 = int32(kv)
+				default:
+					t.Fatalf("unexpected type for Map4 key: %T", k)
+				}
+				u.Map4[keyInt32] = v.(bool)
+			}
+		}
+		actualUsers = append(actualUsers, u)
+	}
+
+	if len(actualUsers) != 3 {
+		t.Fatalf("Expected 3 users from DuckDB, got %d", len(actualUsers))
+	}
+
+	if actualUsers[0].ID != u1.ID { t.Errorf("mismatch ID: %v != %v", actualUsers[0].ID, u1.ID) }
+	if !reflect.DeepEqual(actualUsers[0].Map1, u1.Map1) { t.Errorf("mismatch Map1: %v != %v", actualUsers[0].Map1, u1.Map1) }
+	if !reflect.DeepEqual(actualUsers[0].Map2, u1.Map2) { t.Errorf("mismatch Map2: %v != %v", actualUsers[0].Map2, u1.Map2) }
+	if !reflect.DeepEqual(actualUsers[0].Map3, u1.Map3) { t.Errorf("mismatch Map3: %v != %v", actualUsers[0].Map3, u1.Map3) }
+	if !reflect.DeepEqual(actualUsers[0].Map4, u1.Map4) { t.Errorf("mismatch Map4: %v != %v", actualUsers[0].Map4, u1.Map4) }
+
+	if actualUsers[1].ID != u2.ID { t.Errorf("mismatch ID: %v != %v", actualUsers[1].ID, u2.ID) }
+	if !reflect.DeepEqual(actualUsers[1].Map1, u2.Map1) { t.Errorf("mismatch Map1: %v != %v", actualUsers[1].Map1, u2.Map1) }
+	if !reflect.DeepEqual(actualUsers[1].Map2, u2.Map2) { t.Errorf("mismatch Map2: %v != %v", actualUsers[1].Map2, u2.Map2) }
+	if !reflect.DeepEqual(actualUsers[1].Map3, u2.Map3) { t.Errorf("mismatch Map3: %v != %v", actualUsers[1].Map3, u2.Map3) }
+	if !reflect.DeepEqual(actualUsers[1].Map4, u2.Map4) { t.Errorf("mismatch Map4: %v != %v", actualUsers[1].Map4, u2.Map4) }
+
+	if actualUsers[2].ID != u3.ID { t.Errorf("mismatch ID: %v != %v", actualUsers[2].ID, u3.ID) }
+	if len(actualUsers[2].Map1) != 0 { t.Errorf("expected empty Map1: %v", actualUsers[2].Map1) }
+	if len(actualUsers[2].Map2) != 0 { t.Errorf("expected empty Map2: %v", actualUsers[2].Map2) }
+	if len(actualUsers[2].Map3) != 0 { t.Errorf("expected empty Map3: %v", actualUsers[2].Map3) }
+	if len(actualUsers[2].Map4) != 0 { t.Errorf("expected empty Map4: %v", actualUsers[2].Map4) }
+}
+`
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy_test.go: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+
+		runCmd(t, tmpDir, "go", "test", "-v", ".")
+
+		if false {
+			tarball(t, "/tmp/arrow-gen-int-map.tar.gz", tmpDir)
+		}
+	})
 }
 
 // runCmd is a helper for running external commands during integration tests.

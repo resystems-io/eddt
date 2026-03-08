@@ -51,10 +51,10 @@ type IgnoredStruct struct {
 	expected := StructInfo{
 		Name: "SimpleStruct",
 		Fields: []FieldInfo{
-			{Name: "ID", GoType: "int32", ArrowType: "arrow.PrimitiveTypes.Int32", ArrowBuilder: "*array.Int32Builder"},
-			{Name: "Name", GoType: "string", ArrowType: "arrow.BinaryTypes.String", ArrowBuilder: "*array.StringBuilder"},
-			{Name: "Valid", GoType: "bool", ArrowType: "arrow.FixedWidthTypes.Boolean", ArrowBuilder: "*array.BooleanBuilder"},
-			{Name: "Value", GoType: "float64", ArrowType: "arrow.PrimitiveTypes.Float64", ArrowBuilder: "*array.Float64Builder"},
+			{Name: "ID", GoType: "int32", ArrowType: "arrow.PrimitiveTypes.Int32", ArrowBuilder: "*array.Int32Builder", CastType: "int32"},
+			{Name: "Name", GoType: "string", ArrowType: "arrow.BinaryTypes.String", ArrowBuilder: "*array.StringBuilder", CastType: "string"},
+			{Name: "Valid", GoType: "bool", ArrowType: "arrow.FixedWidthTypes.Boolean", ArrowBuilder: "*array.BooleanBuilder", CastType: "bool"},
+			{Name: "Value", GoType: "float64", ArrowType: "arrow.PrimitiveTypes.Float64", ArrowBuilder: "*array.Float64Builder", CastType: "float64"},
 			{
 				Name:            "Tags",
 				GoType:          "[]string",
@@ -62,6 +62,7 @@ type IgnoredStruct struct {
 				ArrowBuilder:    "*array.ListBuilder",
 				IsList:          true,
 				ValArrowBuilder: "*array.StringBuilder",
+				ValCastType:     "string",
 			},
 			{
 				Name:            "Scores",
@@ -71,6 +72,8 @@ type IgnoredStruct struct {
 				IsMap:           true,
 				KeyArrowBuilder: "*array.StringBuilder",
 				ValArrowBuilder: "*array.Float64Builder",
+				KeyCastType:     "string",
+				ValCastType:     "float64",
 			},
 		},
 	}
@@ -99,7 +102,7 @@ func TestMapToArrowType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.goType, func(t *testing.T) {
 			ident := &ast.Ident{Name: tt.goType}
-			gotGo, gotArr, gotBld, err := mapToArrowType(ident)
+			gotGo, gotArr, gotBld, _, err := mapToArrowType(ident)
 			if (err != nil) != tt.expectErr {
 				t.Errorf("mapToArrowType(%s) error = %v, expectErr %v", tt.goType, err, tt.expectErr)
 				return
