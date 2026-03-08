@@ -9,10 +9,14 @@ import (
 
 // FieldInfo contains information about a parsed struct field.
 type FieldInfo struct {
-	Name         string
-	ArrowType    string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
-	ArrowBuilder string // The Arrow array builder type (e.g., "*array.Int32Builder")
-	GoType       string // The original Go type string
+	Name            string
+	ArrowType       string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
+	ArrowBuilder    string // The Arrow array builder type (e.g., "*array.Int32Builder")
+	GoType          string // The original Go type string
+	IsList          bool
+	IsMap           bool
+	KeyArrowBuilder string // Used for the map keys builder type
+	ValArrowBuilder string // Used for the list items and map values builder type
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -85,7 +89,7 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 					}
 
 					fieldName := field.Names[0].Name
-					goType, arrowType, arrowBuilder, err := mapToArrowType(field.Type)
+					fieldInfo, err := mapToFieldInfo(fieldName, field.Type)
 					if err != nil {
 						if g.Verbose {
 							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
@@ -93,12 +97,7 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 						continue
 					}
 
-					info.Fields = append(info.Fields, FieldInfo{
-						Name:         fieldName,
-						GoType:       goType,
-						ArrowType:    arrowType,
-						ArrowBuilder: arrowBuilder,
-					})
+					info.Fields = append(info.Fields, fieldInfo)
 				}
 
 				results = append(results, info)
@@ -110,12 +109,72 @@ func (g *Generator) Parse() ([]StructInfo, error) {
 	return results, nil
 }
 
-// mapToArrowType maps a Go AST expression to its primitive Arrow type representation
+// mapToFieldInfo maps an AST expression to a FieldInfo struct.
+func mapToFieldInfo(name string, expr ast.Expr) (FieldInfo, error) {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		// Primitive type
+		goType, arrowType, arrowBuilder, err := mapToArrowType(t)
+		if err != nil {
+			return FieldInfo{}, err
+		}
+		return FieldInfo{
+			Name:         name,
+			GoType:       goType,
+			ArrowType:    arrowType,
+			ArrowBuilder: arrowBuilder,
+		}, nil
+
+	case *ast.ArrayType:
+		// Slice type
+		eltGoType, eltArrowType, eltArrowBuilder, err := mapToArrowType(t.Elt)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("slice element %w", err)
+		}
+		return FieldInfo{
+			Name:            name,
+			GoType:          "[]" + eltGoType,
+			ArrowType:       fmt.Sprintf("arrow.ListOf(%s)", eltArrowType),
+			ArrowBuilder:    "*array.ListBuilder",
+			IsList:          true,
+			ValArrowBuilder: eltArrowBuilder,
+		}, nil
+
+	case *ast.MapType:
+		// Map type
+		keyGoType, keyArrowType, keyArrowBuilder, err := mapToArrowType(t.Key)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("map key %w", err)
+		}
+		if keyGoType != "string" {
+			// Arrow map keys should generally be strings, although arrow supports others
+			return FieldInfo{}, fmt.Errorf("map key must be string, got: %s", keyGoType)
+		}
+
+		valGoType, valArrowType, valArrowBuilder, err := mapToArrowType(t.Value)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("map value %w", err)
+		}
+		return FieldInfo{
+			Name:            name,
+			GoType:          fmt.Sprintf("map[%s]%s", keyGoType, valGoType),
+			ArrowType:       fmt.Sprintf("arrow.MapOf(%s, %s)", keyArrowType, valArrowType),
+			ArrowBuilder:    "*array.MapBuilder",
+			IsMap:           true,
+			KeyArrowBuilder: keyArrowBuilder,
+			ValArrowBuilder: valArrowBuilder,
+		}, nil
+	}
+
+	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
+}
+
+// mapToArrowType maps a primitive Go AST expression to its primitive Arrow type representation
 // returning the Go type string, the Arrow type string, the Builder type string, and an error if unsupported.
 func mapToArrowType(expr ast.Expr) (string, string, string, error) {
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
-		return "", "", "", fmt.Errorf("complex types not supported in Phase 1")
+		return "", "", "", fmt.Errorf("complex types not supported in Phase 1 primitives list")
 	}
 
 	goType := ident.Name

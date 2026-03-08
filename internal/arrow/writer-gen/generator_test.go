@@ -19,7 +19,9 @@ type SimpleStruct struct {
 	ID    int32
 	Name  string
 	Valid bool
-	Value float64
+	Value  float64
+	Tags   []string
+	Scores map[string]float64
 }
 
 type IgnoredStruct struct {
@@ -53,6 +55,23 @@ type IgnoredStruct struct {
 			{Name: "Name", GoType: "string", ArrowType: "arrow.BinaryTypes.String", ArrowBuilder: "*array.StringBuilder"},
 			{Name: "Valid", GoType: "bool", ArrowType: "arrow.FixedWidthTypes.Boolean", ArrowBuilder: "*array.BooleanBuilder"},
 			{Name: "Value", GoType: "float64", ArrowType: "arrow.PrimitiveTypes.Float64", ArrowBuilder: "*array.Float64Builder"},
+			{
+				Name:            "Tags",
+				GoType:          "[]string",
+				ArrowType:       "arrow.ListOf(arrow.BinaryTypes.String)",
+				ArrowBuilder:    "*array.ListBuilder",
+				IsList:          true,
+				ValArrowBuilder: "*array.StringBuilder",
+			},
+			{
+				Name:            "Scores",
+				GoType:          "map[string]float64",
+				ArrowType:       "arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Float64)",
+				ArrowBuilder:    "*array.MapBuilder",
+				IsMap:           true,
+				KeyArrowBuilder: "*array.StringBuilder",
+				ValArrowBuilder: "*array.Float64Builder",
+			},
 		},
 	}
 

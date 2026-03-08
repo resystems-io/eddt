@@ -52,7 +52,31 @@ func (w *{{.Name}}ArrowWriter) Release() {
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
 func (w *{{.Name}}ArrowWriter) Append(row {{.Name}}) {
 {{- range $i, $field := .Fields}}
+{{- if .IsList}}
+	if row.{{$field.Name}} == nil {
+		w.b.Field({{$i}}).(*array.ListBuilder).AppendNull()
+	} else {
+		w.b.Field({{$i}}).(*array.ListBuilder).Append(true)
+		valBldr := w.b.Field({{$i}}).(*array.ListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
+		for _, v := range row.{{$field.Name}} {
+			valBldr.Append(v)
+		}
+	}
+{{- else if .IsMap}}
+	if row.{{$field.Name}} == nil {
+		w.b.Field({{$i}}).(*array.MapBuilder).AppendNull()
+	} else {
+		w.b.Field({{$i}}).(*array.MapBuilder).Append(true)
+		keyBldr := w.b.Field({{$i}}).(*array.MapBuilder).KeyBuilder().({{$field.KeyArrowBuilder}})
+		valBldr := w.b.Field({{$i}}).(*array.MapBuilder).ItemBuilder().({{$field.ValArrowBuilder}})
+		for k, v := range row.{{$field.Name}} {
+			keyBldr.Append(k)
+			valBldr.Append(v)
+		}
+	}
+{{- else}}
 	w.b.Field({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}})
+{{- end}}
 {{- end}}
 }
 
