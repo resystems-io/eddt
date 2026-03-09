@@ -157,66 +157,12 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
-		// Check for struct reference
-		obj := pkg.TypesInfo.ObjectOf(t)
-		if obj != nil {
-			if _, ok := obj.Type().Underlying().(*types.Struct); ok {
-				return mapStructField(name, obj.Name(), false, queue, processed), nil
-			}
-
-			// Check for named type over a primitive (e.g., type MyStates int)
-			if basic, ok := obj.Type().Underlying().(*types.Basic); ok {
-				syntheticIdent := &ast.Ident{Name: basic.Name()}
-				goType, arrowType, arrowBuilder, castType, err := mapToArrowType(syntheticIdent)
-				if err == nil {
-					return FieldInfo{
-						Name:         name,
-						GoType:       goType,
-						ArrowType:    arrowType,
-						ArrowBuilder: arrowBuilder,
-						CastType:     castType,
-					}, nil
-				}
-			}
-		}
-
-		// Primitive type
-		goType, arrowType, arrowBuilder, castType, err := mapToArrowType(t)
-		if err != nil {
-			return FieldInfo{}, err
-		}
-		return FieldInfo{
-			Name:         name,
-			GoType:       goType,
-			ArrowType:    arrowType,
-			ArrowBuilder: arrowBuilder,
-			CastType:     castType,
-		}, nil
+		return resolveIdent(pkg, name, t, false, queue, processed)
 
 	case *ast.StarExpr:
 		// Pointer type - this could be to a struct or a primitive
-		ident, ok := t.X.(*ast.Ident)
-		if ok {
-			obj := pkg.TypesInfo.ObjectOf(ident)
-			if obj != nil {
-				if _, isStruct := obj.Type().Underlying().(*types.Struct); isStruct {
-					return mapStructField(name, obj.Name(), true, queue, processed), nil
-				}
-			}
-
-			// If it's not a struct, try mapping it as a primitive
-			goType, arrowType, arrowBuilder, castType, err := mapToArrowType(ident)
-			if err != nil {
-				return FieldInfo{}, fmt.Errorf("unsupported pointer type: %w", err)
-			}
-			return FieldInfo{
-				Name:         name,
-				GoType:       "*" + goType,
-				ArrowType:    arrowType,
-				ArrowBuilder: arrowBuilder,
-				CastType:     castType,
-				IsPointer:    true,
-			}, nil
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return resolveIdent(pkg, name, ident, true, queue, processed)
 		}
 
 		// Check for selector expression (external package type like *netip.Addr)
@@ -323,6 +269,60 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
+}
+
+// resolveIdent handles unified type resolution for ast.Ident, tracking if it was accessed via a pointer.
+func resolveIdent(pkg *packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+	// Check for struct reference or named primitive
+	obj := pkg.TypesInfo.ObjectOf(ident)
+	if obj != nil {
+		if _, ok := obj.Type().Underlying().(*types.Struct); ok {
+			return mapStructField(name, obj.Name(), isPointer, queue, processed), nil
+		}
+
+		// Check for named type over a primitive (e.g., type MyStates int)
+		if basic, ok := obj.Type().Underlying().(*types.Basic); ok {
+			syntheticIdent := &ast.Ident{Name: basic.Name()}
+			_, arrowType, arrowBuilder, castType, err := mapToArrowType(syntheticIdent)
+			if err == nil {
+				goTypeName := obj.Name()
+				if isPointer {
+					goTypeName = "*" + goTypeName
+				}
+				return FieldInfo{
+					Name:         name,
+					GoType:       goTypeName,
+					ArrowType:    arrowType,
+					ArrowBuilder: arrowBuilder,
+					CastType:     castType,
+					IsPointer:    isPointer,
+				}, nil
+			}
+		}
+	}
+
+	// Primitive type
+	goType, arrowType, arrowBuilder, castType, err := mapToArrowType(ident)
+	if err != nil {
+		if isPointer {
+			return FieldInfo{}, fmt.Errorf("unsupported pointer type: %w", err)
+		}
+		return FieldInfo{}, err
+	}
+
+	goTypeName := goType
+	if isPointer {
+		goTypeName = "*" + goTypeName
+	}
+
+	return FieldInfo{
+		Name:         name,
+		GoType:       goTypeName,
+		ArrowType:    arrowType,
+		ArrowBuilder: arrowBuilder,
+		CastType:     castType,
+		IsPointer:    isPointer,
+	}, nil
 }
 
 // detectMarshalMethod checks if a type implements serialization interfaces.

@@ -616,3 +616,50 @@ type Device struct {
 		t.Errorf("Expected output to contain field State (named type MyStates over int), got:\n%s", outStr)
 	}
 }
+
+func TestGenerator_PointerToNamedPrimitiveType(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	// MyStates is a named type over int — this should be mapped like int
+	testCode := `package mypkg
+
+type MyStates int
+
+type Device struct {
+	ID    *int32
+	State *MyStates
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Device"}, outPath, true, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+
+	// ID should be present
+	if !strings.Contains(outStr, `{Name: "ID",`) {
+		t.Errorf("Expected output to contain field ID, got:\n%s", outStr)
+	}
+	// State should also be present — named type over int should resolve to int64
+	if !strings.Contains(outStr, `{Name: "State",`) {
+		t.Errorf("Expected output to contain field State (named type MyStates over int), got:\n%s", outStr)
+	}
+}
