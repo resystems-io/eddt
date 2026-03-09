@@ -53,6 +53,16 @@ func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbo
 	}
 }
 
+// collectPackageErrors counts the number of errors across loaded packages
+// without printing to stderr (unlike packages.PrintErrors).
+func collectPackageErrors(pkgs []*packages.Package) int {
+	count := 0
+	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		count += len(pkg.Errors)
+	})
+	return count
+}
+
 // Parse extracts StructInfo for the targeted structs and discovers the package name.
 func (g *Generator) Parse() (string, string, []StructInfo, error) {
 	cfg := &packages.Config{
@@ -63,8 +73,8 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
 	}
-	if packages.PrintErrors(pkgs) > 0 {
-		return "", "", nil, fmt.Errorf("package loading had errors in %q", g.InputPkg)
+	if errCount := collectPackageErrors(pkgs); errCount > 0 {
+		return "", "", nil, fmt.Errorf("package loading had %d error(s) in %q", errCount, g.InputPkg)
 	}
 
 	var parsedPkgName string

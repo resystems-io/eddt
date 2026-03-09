@@ -107,7 +107,7 @@ func BenchmarkArrowWriters(b *testing.B) {
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		g := NewGenerator(tmpDir, []string{structName}, outPath, false)
-		if err := g.Run("dummy"); err != nil {
+		if err := g.Run(""); err != nil {
 			b.Fatalf("Generator.Run() failed: %v", err)
 		}
 
