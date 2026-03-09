@@ -38,7 +38,7 @@ type IgnoredStruct struct {
 		t.Fatalf("Failed to write go.mod: %v", err)
 	}
 
-	g := NewGenerator(tmpDir, []string{"SimpleStruct"}, "out.go", false)
+	g := NewGenerator(tmpDir, []string{"SimpleStruct"}, "out.go", false, "")
 
 	pkgName, pkgPath, structs, err := g.Parse()
 	if err != nil {
@@ -149,7 +149,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
 
 	err := g.Run("")
 	if err != nil {
@@ -192,7 +192,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
 
 	err := g.Run("differentpkg")
 	if err != nil {
@@ -238,7 +238,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
 
 	for _, reserved := range []string{"arrow", "array", "memory"} {
 		t.Run(reserved, func(t *testing.T) {

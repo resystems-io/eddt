@@ -46,7 +46,7 @@ type User struct {
 
 		// 3. Initiate our Code Generator logic targeting "User"
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"User"}, outPath, false)
+		g := NewGenerator(tmpDir, []string{"User"}, outPath, false, "")
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -203,7 +203,7 @@ type ComplexUser struct {
 
 		// 3. Initiate our Code Generator logic targeting "ComplexUser"
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"ComplexUser"}, outPath, false)
+		g := NewGenerator(tmpDir, []string{"ComplexUser"}, outPath, false, "")
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -405,7 +405,7 @@ type IntMapUser struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"IntMapUser"}, outPath, false)
+		g := NewGenerator(tmpDir, []string{"IntMapUser"}, outPath, false, "")
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -675,7 +675,7 @@ type Profile struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"Profile"}, outPath, false)
+		g := NewGenerator(tmpDir, []string{"Profile"}, outPath, false, "")
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}

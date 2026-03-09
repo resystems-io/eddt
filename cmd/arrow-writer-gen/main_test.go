@@ -86,3 +86,57 @@ func TestCLI_InvalidPackage(t *testing.T) {
 		t.Errorf("Expected failed to load package error, got: %v", err)
 	}
 }
+
+func TestCLI_PkgAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	file1 := filepath.Join(tmpDir, "model.go")
+	content1 := `package dummy
+
+type Person struct {
+	Name string
+	Age  int32
+}
+`
+	err := os.WriteFile(file1, []byte(content1), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write to file1.go: %v", err)
+	}
+
+	modContent := "module dummy\n\ngo 1.25.0\n"
+	err = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write to go.mod: %v", err)
+	}
+
+	outFile := filepath.Join(tmpDir, "arrow-writer-gen.go")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", tmpDir,
+		"--pkg-name", "dummy",
+		"--pkg-alias", "mydummy",
+		"--structs", "Person",
+		"--out", outFile,
+	})
+
+	err = cmd.Execute()
+	if err != nil {
+		t.Fatalf("Cmd execute failed: %v", err)
+	}
+
+	out, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	got := string(out)
+
+	if !strings.Contains(got, `mydummy "dummy"`) {
+		t.Errorf("Expected aliased import mydummy \"dummy\", but got:\n%s", got)
+	}
+
+	if !strings.Contains(got, "func (w *PersonArrowWriter) Append(row mydummy.Person)") {
+		t.Errorf("Expected func (w *PersonArrowWriter) Append(row mydummy.Person), but got:\n%s", got)
+	}
+}

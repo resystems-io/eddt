@@ -41,15 +41,17 @@ type Generator struct {
 	TargetStructs []string
 	OutPath       string
 	Verbose       bool
+	PkgAlias      string
 }
 
 // NewGenerator initializes a new Generator.
-func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbose bool) *Generator {
+func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbose bool, pkgAlias string) *Generator {
 	return &Generator{
 		InputPkg:      inputPkg,
 		TargetStructs: targetStructs,
 		OutPath:       outPath,
 		Verbose:       verbose,
+		PkgAlias:      pkgAlias,
 	}
 }
 

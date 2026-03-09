@@ -12,6 +12,7 @@ func newRootCmd() *cobra.Command {
 	var (
 		inputPkg      string
 		outPkgName    string
+		pkgAlias      string
 		targetStructs []string
 		outPath       string
 		verbose       bool
@@ -39,7 +40,7 @@ Example usage:
 				fmt.Printf("Output file: %s\n", outPath)
 			}
 
-			gen := writergen.NewGenerator(inputPkg, targetStructs, outPath, verbose)
+			gen := writergen.NewGenerator(inputPkg, targetStructs, outPath, verbose, pkgAlias)
 			if err := gen.Run(outPkgName); err != nil {
 				return err
 			}
@@ -51,6 +52,7 @@ Example usage:
 
 	cmd.Flags().StringVarP(&inputPkg, "pkg", "p", ".", "Input package directory containing the structs")
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
+	cmd.Flags().StringVarP(&pkgAlias, "pkg-alias", "a", "", "Alias for the imported input package")
 	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Specific struct(s) to generate writers for (comma-separated)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "arrow-writer-gen.go", "Output file path")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")

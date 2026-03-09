@@ -32,7 +32,7 @@ import (
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
 {{- if .ImportPkgPath}}
-	"{{.ImportPkgPath}}"
+	{{if .ImportAlias}}{{.ImportAlias}} {{end}}"{{.ImportPkgPath}}"
 {{- end}}
 )
 {{range .Structs}}
@@ -172,6 +172,7 @@ type templateData struct {
 	PackageName   string
 	ImportPkgPath string
 	ImportPkgName string
+	ImportAlias   string
 	Structs       []StructInfo
 }
 
@@ -191,7 +192,13 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 
 	importPkgPath := ""
 	importPkgName := ""
-	if outPkgNameOverride != "" && outPkgNameOverride != parsedPkgName {
+	importAlias := ""
+
+	if g.PkgAlias != "" {
+		importPkgPath = parsedPkgPath
+		importPkgName = g.PkgAlias
+		importAlias = g.PkgAlias
+	} else if outPkgNameOverride != "" && outPkgNameOverride != parsedPkgName {
 		importPkgPath = parsedPkgPath
 		importPkgName = parsedPkgName
 	}
@@ -217,6 +224,7 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		PackageName:   packageName,
 		ImportPkgPath: importPkgPath,
 		ImportPkgName: importPkgName,
+		ImportAlias:   importAlias,
 		Structs:       structs,
 	}
 
