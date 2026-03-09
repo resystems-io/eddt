@@ -217,7 +217,10 @@ type templateData struct {
 }
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
-func (g *Generator) Run(packageName string) error {
+// If outPkgNameOverride is empty, the output package name is auto-detected from the input package.
+// If outPkgNameOverride is set and differs from the input, the generated code will import the
+// input package and qualify struct type references accordingly.
+func (g *Generator) Run(outPkgNameOverride string) error {
 	parsedPkgName, parsedPkgPath, structs, err := g.Parse()
 	if err != nil {
 		return err
@@ -229,11 +232,12 @@ func (g *Generator) Run(packageName string) error {
 
 	importPkgPath := ""
 	importPkgName := ""
-	if packageName != "" && packageName != parsedPkgName {
+	if outPkgNameOverride != "" && outPkgNameOverride != parsedPkgName {
 		importPkgPath = parsedPkgPath
 		importPkgName = parsedPkgName
 	}
 
+	packageName := outPkgNameOverride
 	if packageName == "" {
 		packageName = parsedPkgName
 		if packageName == "" {
