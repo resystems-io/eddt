@@ -219,3 +219,37 @@ type Person struct {
 		t.Errorf("Expected output to use imported struct mypkg.Person, got:\n%s", outStr)
 	}
 }
+
+func TestTemplateOutputPkgNameCollision(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+type Person struct {
+	Name string
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false)
+
+	for _, reserved := range []string{"arrow", "array", "memory"} {
+		t.Run(reserved, func(t *testing.T) {
+			err := g.Run(reserved)
+			if err == nil {
+				t.Fatalf("Expected error for reserved package name %q, got nil", reserved)
+			}
+			if !strings.Contains(err.Error(), "collides with an import") {
+				t.Errorf("Expected collision error, got: %v", err)
+			}
+		})
+	}
+}

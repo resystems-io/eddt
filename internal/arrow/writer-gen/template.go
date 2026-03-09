@@ -241,6 +241,15 @@ func (g *Generator) Run(packageName string) error {
 		}
 	}
 
+	// Validate that the output package name doesn't collide with imports used in generated code.
+	reservedNames := map[string]bool{"arrow": true, "array": true, "memory": true}
+	if importPkgName != "" {
+		reservedNames[importPkgName] = true
+	}
+	if reservedNames[packageName] {
+		return fmt.Errorf("output package name %q collides with an import used in generated code; choose a different --pkg-name", packageName)
+	}
+
 	data := templateData{
 		PackageName:   packageName,
 		ImportPkgPath: importPkgPath,
