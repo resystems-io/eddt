@@ -237,7 +237,7 @@ func (g *Generator) Run(packageName string) error {
 	if packageName == "" {
 		packageName = parsedPkgName
 		if packageName == "" {
-			packageName = "model" // fallback just in case
+			return fmt.Errorf("could not determine package name from input; use --pkg-name to specify one explicitly")
 		}
 	}
 
