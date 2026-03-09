@@ -411,3 +411,161 @@ type Person struct {
 		t.Errorf("Expected output to contain field DetailsList, got:\n%s", outStr)
 	}
 }
+
+// TestGenerator_IPAddressStruct tests the generation of Arrow writers for a struct containing IPAddress
+//
+// In particular, this tests the case where the referenced types are in a different package.
+// In this case, the AST returns `*ast.SelectorExpr` for the type, and we need to
+// resolve it to the actual type. When it is local, we get `*ast.Ident`.
+func TestGenerator_IPAddressStruct(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+import "net/netip"
+
+type IPAddress struct {
+	IPv4 *netip.Addr
+	IPv6 *netip.Addr
+}
+
+type Outer struct {
+	SGW IPAddress
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Outer"}, outPath, true, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+
+	// The Outer struct should contain the SGW field
+	if !strings.Contains(outStr, "{Name: \"SGW\",") {
+		t.Errorf("Expected output to contain field SGW, got:\n%s", outStr)
+	}
+
+	// The IPAddress struct should contain both IPv4 and IPv6 fields
+	if !strings.Contains(outStr, "{Name: \"IPv4\",") {
+		t.Errorf("Expected output to contain field IPv4, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "{Name: \"IPv6\",") {
+		t.Errorf("Expected output to contain field IPv6, got:\n%s", outStr)
+	}
+
+	// Verify MarshalText is used (netip.Addr implements encoding.TextMarshaler)
+	if !strings.Contains(outStr, ".MarshalText()") {
+		t.Errorf("Expected output to use MarshalText(), got:\n%s", outStr)
+	}
+}
+
+func TestGenerator_ExternalTypeStringFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	// url.URL has String() but NOT MarshalText, so String should be used
+	testCode := `package mypkg
+
+import "net/url"
+
+type WebLink struct {
+	Target *url.URL
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"WebLink"}, outPath, false, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+	if !strings.Contains(outStr, "{Name: \"Target\",") {
+		t.Errorf("Expected output to contain field Target, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, ".String()") {
+		t.Errorf("Expected output to use String() for url.URL, got:\n%s", outStr)
+	}
+	// Make sure MarshalText is NOT used (url.URL doesn't implement it)
+	if strings.Contains(outStr, "MarshalText") {
+		t.Errorf("Did not expect MarshalText for url.URL, got:\n%s", outStr)
+	}
+}
+
+func TestGenerator_ExternalTypeUnsupported(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	// sync.Mutex does not implement TextMarshaler, Stringer, or BinaryMarshaler
+	testCode := `package mypkg
+
+import "sync"
+
+type Container struct {
+	ID   int32
+	Lock *sync.Mutex
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Container"}, outPath, false, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+
+	// ID should still be present
+	if !strings.Contains(outStr, "{Name: \"ID\",") {
+		t.Errorf("Expected output to contain field ID, got:\n%s", outStr)
+	}
+	// Lock should be skipped (sync.Mutex has no marshal interface)
+	if strings.Contains(outStr, "Lock") {
+		t.Errorf("Expected Lock field to be skipped, but it was found in output:\n%s", outStr)
+	}
+}

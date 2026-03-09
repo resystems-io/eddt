@@ -167,6 +167,36 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			{{- end}}
 		}
 	}
+{{- else if .MarshalMethod}}
+	{{- if .IsPointer}}
+	if row.{{$field.Name}} == nil {
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).AppendNull()
+	} else {
+	{{- if eq .MarshalMethod "MarshalText"}}
+		marshalData, _ := row.{{$field.Name}}.MarshalText()
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(string(marshalData))
+	{{- else if eq .MarshalMethod "String"}}
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}}.String())
+	{{- else if eq .MarshalMethod "MarshalBinary"}}
+		marshalData, _ := row.{{$field.Name}}.MarshalBinary()
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(marshalData)
+	{{- end}}
+	}
+	{{- else}}
+	{{- if eq .MarshalMethod "MarshalText"}}
+	{
+		marshalData, _ := row.{{$field.Name}}.MarshalText()
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(string(marshalData))
+	}
+	{{- else if eq .MarshalMethod "String"}}
+	{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}}.String())
+	{{- else if eq .MarshalMethod "MarshalBinary"}}
+	{
+		marshalData, _ := row.{{$field.Name}}.MarshalBinary()
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(marshalData)
+	}
+	{{- end}}
+	{{- end}}
 {{- else}}
 	{{- if .IsPointer}}
 	if row.{{$field.Name}} == nil {
@@ -201,9 +231,19 @@ type templateData struct {
 }
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
+//
 // If outPkgNameOverride is empty, the output package name is auto-detected from the input package.
 // If outPkgNameOverride is set and differs from the input, the generated code will import the
 // input package and qualify struct type references accordingly.
+//
+// External package types (e.g., netip.Addr, time.Time) are handled through interface-based
+// serialization with the following priority:
+//  1. encoding.TextMarshaler — type is serialized to string via MarshalText()
+//  2. fmt.Stringer — type is serialized to string via String()
+//  3. encoding.BinaryMarshaler — type is serialized to binary via MarshalBinary()
+//
+// If the external type does not implement any of these interfaces, the field is skipped
+// and a warning is emitted during generation.
 func (g *Generator) Run(outPkgNameOverride string) error {
 	parsedPkgName, parsedPkgPath, structs, err := g.Parse()
 	if err != nil {

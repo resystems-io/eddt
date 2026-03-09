@@ -27,6 +27,7 @@ type FieldInfo struct {
 	ValIsStruct     bool   // True if list value or map value is a struct
 	ValIsPointer    bool   // True if list value or map value is a pointer
 	ValStructName   string // If ValIsStruct is true, the name of that struct
+	MarshalMethod   string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -125,9 +126,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 						fieldName := field.Names[0].Name
 						fieldInfo, err := mapToFieldInfo(pkg, fieldName, field.Type, &queue, processed)
 						if err != nil {
-							if g.Verbose {
-								fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
-							}
+							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
 							continue
 						}
 
@@ -204,6 +203,26 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 				IsPointer:    true,
 			}, nil
 		}
+
+		// Check for selector expression (external package type like *netip.Addr)
+		if _, ok := t.X.(*ast.SelectorExpr); ok {
+			typ := pkg.TypesInfo.TypeOf(t.X)
+			if typ != nil {
+				method := detectMarshalMethod(typ)
+				if method != "" {
+					arrowType, arrowBuilder := marshalMethodArrowType(method)
+					return FieldInfo{
+						Name:          name,
+						GoType:        "*" + typ.String(),
+						ArrowType:     arrowType,
+						ArrowBuilder:  arrowBuilder,
+						MarshalMethod: method,
+						IsPointer:     true,
+					}, nil
+				}
+				return FieldInfo{}, fmt.Errorf("external type *%s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
+			}
+		}
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 
 	case *ast.ArrayType:
@@ -267,9 +286,63 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 			ValIsPointer:    valInfo.IsPointer,
 			ValStructName:   valInfo.StructName,
 		}, nil
+
+	case *ast.SelectorExpr:
+		// External package type (e.g., netip.Addr, time.Time)
+		typ := pkg.TypesInfo.TypeOf(t)
+		if typ == nil {
+			return FieldInfo{}, fmt.Errorf("could not resolve type for selector expression")
+		}
+		method := detectMarshalMethod(typ)
+		if method == "" {
+			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
+		}
+		arrowType, arrowBuilder := marshalMethodArrowType(method)
+		return FieldInfo{
+			Name:          name,
+			GoType:        typ.String(),
+			ArrowType:     arrowType,
+			ArrowBuilder:  arrowBuilder,
+			MarshalMethod: method,
+		}, nil
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
+}
+
+// detectMarshalMethod checks if a type implements serialization interfaces.
+// Priority: MarshalText (encoding.TextMarshaler) > String (fmt.Stringer) > MarshalBinary (encoding.BinaryMarshaler).
+// Returns the method name to use, or "" if none is found.
+func detectMarshalMethod(typ types.Type) string {
+	// Use pointer method set to include both value and pointer receiver methods.
+	// This is safe because struct fields are always addressable.
+	var checkType types.Type
+	if _, isPtr := typ.(*types.Pointer); isPtr {
+		checkType = typ
+	} else {
+		checkType = types.NewPointer(typ)
+	}
+	mset := types.NewMethodSet(checkType)
+
+	if mset.Lookup(nil, "MarshalText") != nil {
+		return "MarshalText"
+	}
+	if mset.Lookup(nil, "String") != nil {
+		return "String"
+	}
+	if mset.Lookup(nil, "MarshalBinary") != nil {
+		return "MarshalBinary"
+	}
+	return ""
+}
+
+// marshalMethodArrowType returns the Arrow type and builder for a given marshal method.
+// MarshalText and String produce string columns; MarshalBinary produces binary columns.
+func marshalMethodArrowType(method string) (string, string) {
+	if method == "MarshalBinary" {
+		return "arrow.BinaryTypes.Binary", "*array.BinaryBuilder"
+	}
+	return "arrow.BinaryTypes.String", "*array.StringBuilder"
 }
 
 func mapStructField(name string, structName string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
