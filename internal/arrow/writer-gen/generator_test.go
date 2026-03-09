@@ -214,6 +214,9 @@ type Person struct {
 	if !strings.Contains(outStr, "func (w *PersonArrowWriter) Append(row mypkg.Person)") {
 		t.Errorf("Expected output to use imported struct mypkg.Person, got:\n%s", outStr)
 	}
+	if strings.Contains(outStr, "row Person)") {
+		t.Errorf("Expected no unqualified 'row Person)' in method signatures, got:\n%s", outStr)
+	}
 }
 
 func TestTemplateOutputPkgNameCollision(t *testing.T) {
