@@ -63,7 +63,7 @@ func (w *{{.Name}}ArrowWriter) Append(row {{if $.ImportPkgName}}{{$.ImportPkgNam
 		Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(*row.{{$field.Name}}))
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(row.{{$field.Name}}))
+	Append{{$field.StructName}}Struct(w.b.Field({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
 	{{- end}}
 {{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
@@ -84,7 +84,7 @@ func (w *{{.Name}}ArrowWriter) Append(row {{if $.ImportPkgName}}{{$.ImportPkgNam
 				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
+			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -112,7 +112,7 @@ func (w *{{.Name}}ArrowWriter) Append(row {{if $.ImportPkgName}}{{$.ImportPkgNam
 				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
+			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -138,7 +138,7 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{if $.ImportPkgName}}{{$
 		Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(*row.{{$field.Name}}))
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(row.{{$field.Name}}))
+	Append{{$field.StructName}}Struct(b.FieldBuilder({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
 	{{- end}}
 {{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
@@ -159,7 +159,7 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{if $.ImportPkgName}}{{$
 				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
+			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
@@ -187,7 +187,7 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row {{if $.ImportPkgName}}{{$
 				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(v))
+			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
