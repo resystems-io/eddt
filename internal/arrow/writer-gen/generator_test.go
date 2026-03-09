@@ -86,10 +86,6 @@ type IgnoredStruct struct {
 		},
 	}
 
-	if len(structs) != 1 {
-		t.Fatalf("Expected 1 struct, got %d", len(structs))
-	}
-
 	if diff := cmp.Diff([]StructInfo{expected}, structs); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
