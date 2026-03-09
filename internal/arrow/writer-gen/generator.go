@@ -180,7 +180,7 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 		}, nil
 
 	case *ast.StarExpr:
-		// Pointer type - typically to a struct in our context
+		// Pointer type - this could be to a struct or a primitive
 		ident, ok := t.X.(*ast.Ident)
 		if ok {
 			obj := pkg.TypesInfo.ObjectOf(ident)
@@ -189,6 +189,20 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 					return mapStructField(name, obj.Name(), true, queue, processed), nil
 				}
 			}
+
+			// If it's not a struct, try mapping it as a primitive
+			goType, arrowType, arrowBuilder, castType, err := mapToArrowType(ident)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("unsupported pointer type: %w", err)
+			}
+			return FieldInfo{
+				Name:         name,
+				GoType:       "*" + goType,
+				ArrowType:    arrowType,
+				ArrowBuilder: arrowBuilder,
+				CastType:     castType,
+				IsPointer:    true,
+			}, nil
 		}
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 

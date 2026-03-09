@@ -829,6 +829,159 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 			tarball(t, "/tmp/arrow-gen-nested-structs.tar.gz", tmpDir)
 		}
 	})
+
+	t.Run("pointer-to-primitive", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		dummyCode := `package dummy
+
+type PointMapUser struct {
+	ID    int32
+	Score *float64
+	Valid *bool
+	Name  *string
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy.go: %v", err)
+		}
+
+		modContent := "module dummy\n\ngo 1.25.0\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("Failed to write go.mod: %v", err)
+		}
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator(tmpDir, []string{"PointMapUser"}, outPath, false, "")
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		if _, err := os.Stat(outPath); os.IsNotExist(err) {
+			t.Fatalf("Expected output file %s was not generated", outPath)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+	
+	writer := NewPointMapUserArrowWriter(pool)
+	defer writer.Release()
+
+	scoreVal := 99.5
+	validVal := true
+	nameVal := "Alice"
+
+	u1 := PointMapUser{
+		ID:    1,
+		Score: &scoreVal,
+		Valid: &validVal,
+		Name:  &nameVal,
+	}
+	u2 := PointMapUser{
+		ID:    2,
+		Score: nil,
+		Valid: nil,
+		Name:  nil,
+	}
+
+	writer.Append(u1)
+	writer.Append(u2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "pointer_users.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+
+	err = pqWriter.Write(record)
+	if err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+
+	err = pqWriter.Close()
+	if err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB memory instance: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf("SELECT id, score, valid, name FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	var actualUsers []PointMapUser
+	for rows.Next() {
+		var u PointMapUser
+		if err := rows.Scan(&u.ID, &u.Score, &u.Valid, &u.Name); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+		actualUsers = append(actualUsers, u)
+	}
+
+	if len(actualUsers) != 2 {
+		t.Fatalf("Expected 2 users from DuckDB, got %d", len(actualUsers))
+	}
+
+	if actualUsers[0].ID != u1.ID { t.Errorf("mismatch ID: %v != %v", actualUsers[0].ID, u1.ID) }
+	if *actualUsers[0].Score != *u1.Score { t.Errorf("mismatch Score: %v != %v", *actualUsers[0].Score, *u1.Score) }
+	if *actualUsers[0].Valid != *u1.Valid { t.Errorf("mismatch Valid: %v != %v", *actualUsers[0].Valid, *u1.Valid) }
+	if *actualUsers[0].Name != *u1.Name { t.Errorf("mismatch Name: %v != %v", *actualUsers[0].Name, *u1.Name) }
+
+	if actualUsers[1].ID != u2.ID { t.Errorf("mismatch ID: %v != %v", actualUsers[1].ID, u2.ID) }
+	if actualUsers[1].Score != nil { t.Errorf("mismatch Score: expected nil got %v", actualUsers[1].Score) }
+	if actualUsers[1].Valid != nil { t.Errorf("mismatch Valid: expected nil got %v", actualUsers[1].Valid) }
+	if actualUsers[1].Name != nil { t.Errorf("mismatch Name: expected nil got %v", actualUsers[1].Name) }
+}
+`
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy_test.go: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+
+		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestArrowMemoryAndDuckDBPointerToPrimitive")
+	})
 }
 
 // runCmd is a helper for running external commands during integration tests.

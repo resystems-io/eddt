@@ -119,7 +119,15 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				valBldr.Append({{$field.ValCastType}}(*v))
+			}
+			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
 			{{- end}}
 		}
 	}
@@ -147,12 +155,28 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
 			{{- else}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				valBldr.Append({{$field.ValCastType}}(*v))
+			}
+			{{- else}}
 			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
 			{{- end}}
 		}
 	}
 {{- else}}
+	{{- if .IsPointer}}
+	if row.{{$field.Name}} == nil {
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(*row.{{$field.Name}}))
+	}
+	{{- else}}
 	{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(row.{{$field.Name}}))
+	{{- end}}
 {{- end}}
 {{- end}}
 {{- end}}
