@@ -163,6 +163,21 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 			if _, ok := obj.Type().Underlying().(*types.Struct); ok {
 				return mapStructField(name, obj.Name(), false, queue, processed), nil
 			}
+
+			// Check for named type over a primitive (e.g., type MyStates int)
+			if basic, ok := obj.Type().Underlying().(*types.Basic); ok {
+				syntheticIdent := &ast.Ident{Name: basic.Name()}
+				goType, arrowType, arrowBuilder, castType, err := mapToArrowType(syntheticIdent)
+				if err == nil {
+					return FieldInfo{
+						Name:         name,
+						GoType:       goType,
+						ArrowType:    arrowType,
+						ArrowBuilder: arrowBuilder,
+						CastType:     castType,
+					}, nil
+				}
+			}
 		}
 
 		// Primitive type
