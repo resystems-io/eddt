@@ -90,239 +90,97 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 {{end}}
 {{- define "appendFields" -}}
 {{- range $i, $field := .Fields}}
-{{- if .IsStruct}}
-	{{- if .IsPointer}}
-	if row.{{$field.Name}} == nil {
-		{{$.Bldr}}({{$i}}).(*array.StructBuilder).AppendNull()
+{{- $bldrExpr := printf "%s(%d)" $.Bldr $i -}}
+{{- template "appendValue" dict "Info" $field "Var" (printf "row.%s" $field.Name) "BldrExpr" $bldrExpr "Depth" 0}}
+{{- end}}
+{{- end}}
+
+{{- define "appendValue" -}}
+{{- $info := .Info -}}
+{{- $var := .Var -}}
+{{- $bldr := .BldrExpr -}}
+{{- $d := .Depth -}}
+{{- $vn := printf "v%d" $d -}}
+{{- if $info.IsStruct}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.(*array.StructBuilder).AppendNull()
 	} else {
-		Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+		Append{{$info.StructName}}Struct({{$bldr}}.(*array.StructBuilder), {{$var}})
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), &row.{{$field.Name}})
+	Append{{$info.StructName}}Struct({{$bldr}}.(*array.StructBuilder), &{{$var}})
 	{{- end}}
-{{- else if .IsList}}
-	if row.{{$field.Name}} == nil {
-		{{$.Bldr}}({{$i}}).(*array.ListBuilder).AppendNull()
+{{- else if $info.IsList}}
+	if {{$var}} == nil {
+		{{$bldr}}.(*array.ListBuilder).AppendNull()
 	} else {
-		{{$.Bldr}}({{$i}}).(*array.ListBuilder).Append(true)
-		{{- if $field.ValIsStruct}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.ListBuilder).ValueBuilder().(*array.StructBuilder)
-		{{- else}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.ListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
-		{{- end}}
-		for _, v := range row.{{$field.Name}} {
-			{{- if $field.ValIsStruct}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, v)
-			}
-			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, &v)
-			{{- end}}
-			{{- else if $field.ValMarshalMethod}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-			{{- if eq $field.ValMarshalMethod "MarshalText"}}
-				marshalData, _ := v.MarshalText()
-				valBldr.Append(string(marshalData))
-			{{- else if eq $field.ValMarshalMethod "String"}}
-				valBldr.Append(v.String())
-			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
-				marshalData, _ := v.MarshalBinary()
-				valBldr.Append(marshalData)
-			{{- end}}
-			}
-			{{- else}}
-			{{- if eq $field.ValMarshalMethod "MarshalText"}}
-			{
-				marshalData, _ := v.MarshalText()
-				valBldr.Append(string(marshalData))
-			}
-			{{- else if eq $field.ValMarshalMethod "String"}}
-			valBldr.Append(v.String())
-			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
-			{
-				marshalData, _ := v.MarshalBinary()
-				valBldr.Append(marshalData)
-			}
-			{{- end}}
-			{{- end}}
-			{{- else if $field.ValIsList}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				valBldr.Append(true)
-				innerBldr := valBldr.ValueBuilder().({{$field.ValValArrowBuilder}})
-				for _, iv := range v {
-					innerBldr.Append({{$field.ValValCastType}}(iv))
-				}
-			}
-			{{- else}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				valBldr.Append({{$field.ValCastType}}(*v))
-			}
-			{{- else}}
-			valBldr.Append({{$field.ValCastType}}(v))
-			{{- end}}
-			{{- end}}
+		{{$bldr}}.(*array.ListBuilder).Append(true)
+		{{$vn}}Bldr := {{$bldr}}.(*array.ListBuilder).ValueBuilder()
+		for _, {{$vn}} := range {{$var}} {
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1)}}
 		}
 	}
-{{- else if .IsFixedSizeList}}
+{{- else if $info.IsFixedSizeList}}
 	{
-		{{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).Append(true)
-		{{- if $field.ValIsStruct}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).ValueBuilder().(*array.StructBuilder)
-		{{- else}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
-		{{- end}}
-		for _, v := range row.{{$field.Name}} {
-			{{- if $field.ValIsStruct}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, v)
-			}
-			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, &v)
-			{{- end}}
-			{{- else if $field.ValMarshalMethod}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-			{{- if eq $field.ValMarshalMethod "MarshalText"}}
-				marshalData, _ := v.MarshalText()
-				valBldr.Append(string(marshalData))
-			{{- else if eq $field.ValMarshalMethod "String"}}
-				valBldr.Append(v.String())
-			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
-				marshalData, _ := v.MarshalBinary()
-				valBldr.Append(marshalData)
-			{{- end}}
-			}
-			{{- else}}
-			{{- if eq $field.ValMarshalMethod "MarshalText"}}
-			{
-				marshalData, _ := v.MarshalText()
-				valBldr.Append(string(marshalData))
-			}
-			{{- else if eq $field.ValMarshalMethod "String"}}
-			valBldr.Append(v.String())
-			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
-			{
-				marshalData, _ := v.MarshalBinary()
-				valBldr.Append(marshalData)
-			}
-			{{- end}}
-			{{- end}}
-			{{- else if $field.ValIsList}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				valBldr.Append(true)
-				innerBldr := valBldr.ValueBuilder().({{$field.ValValArrowBuilder}})
-				for _, iv := range v {
-					innerBldr.Append({{$field.ValValCastType}}(iv))
-				}
-			}
-			{{- else}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				valBldr.Append({{$field.ValCastType}}(*v))
-			}
-			{{- else}}
-			valBldr.Append({{$field.ValCastType}}(v))
-			{{- end}}
-			{{- end}}
+		{{$bldr}}.(*array.FixedSizeListBuilder).Append(true)
+		{{$vn}}Bldr := {{$bldr}}.(*array.FixedSizeListBuilder).ValueBuilder()
+		for _, {{$vn}} := range {{$var}} {
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1)}}
 		}
 	}
-{{- else if .IsMap}}
-	if row.{{$field.Name}} == nil {
-		{{$.Bldr}}({{$i}}).(*array.MapBuilder).AppendNull()
+{{- else if $info.IsMap}}
+	if {{$var}} == nil {
+		{{$bldr}}.(*array.MapBuilder).AppendNull()
 	} else {
-		{{$.Bldr}}({{$i}}).(*array.MapBuilder).Append(true)
-		keyBldr := {{$.Bldr}}({{$i}}).(*array.MapBuilder).KeyBuilder().({{$field.KeyArrowBuilder}})
-		{{- if $field.ValIsStruct}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.MapBuilder).ItemBuilder().(*array.StructBuilder)
-		{{- else}}
-		valBldr := {{$.Bldr}}({{$i}}).(*array.MapBuilder).ItemBuilder().({{$field.ValArrowBuilder}})
-		{{- end}}
-		for k, v := range row.{{$field.Name}} {
-			keyBldr.Append({{$field.KeyCastType}}(k))
-			{{- if $field.ValIsStruct}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, v)
-			}
-			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, &v)
-			{{- end}}
-			{{- else}}
-			{{- if $field.ValIsPointer}}
-			if v == nil {
-				valBldr.AppendNull()
-			} else {
-				valBldr.Append({{$field.ValCastType}}(*v))
-			}
-			{{- else}}
-			valBldr.Append({{$field.ValCastType}}(v))
-			{{- end}}
-			{{- end}}
+		{{$bldr}}.(*array.MapBuilder).Append(true)
+		{{$vn}}KeyBldr := {{$bldr}}.(*array.MapBuilder).KeyBuilder()
+		{{$vn}}ValBldr := {{$bldr}}.(*array.MapBuilder).ItemBuilder()
+		for {{$vn}}K, {{$vn}}V := range {{$var}} {
+			{{$vn}}KeyBldr.({{$info.KeyInfo.ArrowBuilder}}).Append({{$info.KeyInfo.CastType}}({{$vn}}K))
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" (printf "%sV" $vn) "BldrExpr" (printf "%sValBldr" $vn) "Depth" (add $d 1)}}
 		}
 	}
-{{- else if .MarshalMethod}}
-	{{- if .IsPointer}}
-	if row.{{$field.Name}} == nil {
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).AppendNull()
+{{- else if $info.MarshalMethod}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
 	} else {
-	{{- if eq .MarshalMethod "MarshalText"}}
-		marshalData, _ := row.{{$field.Name}}.MarshalText()
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(string(marshalData))
-	{{- else if eq .MarshalMethod "String"}}
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}}.String())
-	{{- else if eq .MarshalMethod "MarshalBinary"}}
-		marshalData, _ := row.{{$field.Name}}.MarshalBinary()
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(marshalData)
+	{{- if eq $info.MarshalMethod "MarshalText"}}
+		marshalData, _ := {{$var}}.MarshalText()
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append(string(marshalData))
+	{{- else if eq $info.MarshalMethod "String"}}
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$var}}.String())
+	{{- else if eq $info.MarshalMethod "MarshalBinary"}}
+		marshalData, _ := {{$var}}.MarshalBinary()
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append(marshalData)
 	{{- end}}
 	}
 	{{- else}}
-	{{- if eq .MarshalMethod "MarshalText"}}
+	{{- if eq $info.MarshalMethod "MarshalText"}}
 	{
-		marshalData, _ := row.{{$field.Name}}.MarshalText()
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(string(marshalData))
+		marshalData, _ := {{$var}}.MarshalText()
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append(string(marshalData))
 	}
-	{{- else if eq .MarshalMethod "String"}}
-	{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(row.{{$field.Name}}.String())
-	{{- else if eq .MarshalMethod "MarshalBinary"}}
+	{{- else if eq $info.MarshalMethod "String"}}
+	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$var}}.String())
+	{{- else if eq $info.MarshalMethod "MarshalBinary"}}
 	{
-		marshalData, _ := row.{{$field.Name}}.MarshalBinary()
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append(marshalData)
+		marshalData, _ := {{$var}}.MarshalBinary()
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append(marshalData)
 	}
 	{{- end}}
 	{{- end}}
 {{- else}}
-	{{- if .IsPointer}}
-	if row.{{$field.Name}} == nil {
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).AppendNull()
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
 	} else {
-		{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(*row.{{$field.Name}}))
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}(*{{$var}}))
 	}
 	{{- else}}
-	{{$.Bldr}}({{$i}}).({{$field.ArrowBuilder}}).Append({{$field.CastType}}(row.{{$field.Name}}))
+	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}))
 	{{- end}}
-{{- end}}
 {{- end}}
 {{- end}}
 `
@@ -335,6 +193,7 @@ var writerTemplate = template.Must(template.New("writer").Funcs(template.FuncMap
 		}
 		return m
 	},
+	"add": func(a, b int) int { return a + b },
 }).Parse(writerTemplateStr))
 
 // ImportInfo describes a single package import in the generated file.

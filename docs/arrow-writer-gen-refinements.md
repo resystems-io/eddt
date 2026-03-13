@@ -114,26 +114,21 @@ These must be fixed first because they produce output that does not compile.
   - Files: `generator.go` (parse loop), `generator_test.go` (new table case),
     `integration_test.go` (new `blank-identifier-field` subtest)
 
-- [x] **B3: Support nested slices (`[][]T`)** *(2026-03-13)* — Implemented option
-  (b): recursive list append. When the slice element is itself a list, `FieldInfo`
-  now carries `ValIsList`, `ValValArrowBuilder`, and `ValValCastType` to describe
-  the inner list. The template emits a nested loop: the outer `valBldr.Append(true)`
-  starts a new inner list, then `innerBldr` iterates the inner elements. Nesting
-  deeper than two levels (`[][][]T`) is rejected with a warning during parse.
-  - Files: `generator.go` (`FieldInfo` + slice/fixed-size-array cases),
-    `template.go` (new `ValIsList` branch in `IsList` and `IsFixedSizeList`),
-    `generator_test.go` (two new table cases),
-    `integration_test.go` (new `nested-slices` subtest)
+- [x] **B3: Support nested slices (`[][]T`)** *(2026-03-13, superseded by S2 on 2026-03-14)* —
+  Initially implemented with flat `Val*` fields for depth-2 support. Now handled
+  by the recursive `FieldInfo`/`appendValue` architecture (S2) which supports
+  arbitrary nesting depth.
+  - Files: `generator.go`, `template.go`, `generator_test.go`,
+    `integration_test.go` (nested-slices subtest)
 
-- [ ] **B4: Handle `map[K][]V`** — Same two options as B3. When `valInfo.IsList`
-  is true in the MapType case, either skip with warning or implement nested
-  append. Depends on B3(b) if implementing.
-  - Files: `generator.go`, `template.go` (if implementing), `generator_test.go`
+- [x] **B4: Handle `map[K][]V`** *(2026-03-14)* — Resolved by S2. The recursive
+  `FieldInfo` and `appendValue` template naturally handle map values of any type,
+  including slices. No ad-hoc fields needed.
+  - Files: resolved as part of S2 refactor
 
-- [ ] **B5: Handle `map[K]map[K2]V`** — Same pattern. When `valInfo.IsMap` is true,
-  either skip with warning or implement nested map append. Depends on B3(b)
-  approach decision.
-  - Files: `generator.go`, `template.go` (if implementing), `generator_test.go`
+- [x] **B5: Handle `map[K]map[K2]V`** *(2026-03-14)* — Resolved by S2. Same as B4;
+  the recursive template dispatches inner maps through the same `IsMap` branch.
+  - Files: resolved as part of S2 refactor
 
 ### Priority 2 — Easy Wins
 
@@ -157,27 +152,19 @@ These must be fixed first because they produce output that does not compile.
   - Files: `generator.go` (parse loop + new helper), `generator_test.go`,
     `integration_test.go` (new sub-test)
 
-- [ ] **S2: Recursive `FieldInfo` for arbitrary nesting depth** — The current
-  `FieldInfo` uses flat `Val*` fields (`ValIsList`, `ValValArrowBuilder`, etc.)
-  to describe one level of element nesting. This limits nested slices to `[][]T`
-  (depth 2) and means B4 (`map[K][]V`) and B5 (`map[K]map[K2]V`) each require
-  their own ad-hoc fields. A cleaner approach is to make `FieldInfo` recursive:
-  replace the `Val*` fields with `EltInfo *FieldInfo` (and `KeyInfo *FieldInfo`
-  for maps). The template's element dispatch logic — currently duplicated across
-  the `IsList`, `IsFixedSizeList`, and `IsMap` branches — would collapse into a
-  single recursive `appendValue` sub-template that recurses when
-  `EltInfo.IsList` is true and emits leaf appends otherwise.
-  - Benefits:
-    - Supports arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.)
-    - DRYs up the three near-identical element dispatch blocks in `template.go`
-    - Naturally solves B4 and B5 without further ad-hoc `FieldInfo` fields
-  - Trade-offs:
-    - Touches every part of the pipeline: `FieldInfo` struct, `mapToFieldInfo`,
-      template rendering, and all test assertions that reference `Val*` fields
-    - Larger refactor scope — should be done as a dedicated pass
-  - Files: `generator.go` (`FieldInfo` restructure, `mapToFieldInfo`),
-    `template.go` (recursive sub-template), `generator_test.go`,
-    `integration_test.go`
+- [x] **S2: Recursive `FieldInfo` for arbitrary nesting depth** *(2026-03-14)* —
+  Replaced 11 flat `Val*`/`Key*` fields with two recursive pointers:
+  `EltInfo *FieldInfo` (element info for lists, fixed-size-lists, and map values)
+  and `KeyInfo *FieldInfo` (key info for maps). The template's three near-identical
+  element dispatch blocks were collapsed into a single recursive `appendValue`
+  sub-template. Intermediate builder variables are stored as `array.Builder`
+  (interface) to allow type assertions at each recursive dispatch point.
+  This naturally resolves B4 and B5 without additional special-case code.
+  - Files: `generator.go` (`FieldInfo` restructure, `mapToFieldInfo` simplified),
+    `template.go` (recursive `appendValue` sub-template),
+    `generator_test.go` (updated assertions, new test cases for B4/B5/list-of-maps),
+    `integration_test.go` (new subtests: triple-nested-slices, map-with-slice-value,
+    nested-maps)
 
 ### Priority 4 — Debatable / Future
 
@@ -219,3 +206,6 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-13 | B1   | Fixed-size arrays mapped to `FixedSizeListOfNonNullable` |
 | 2026-03-13 | B2   | Blank-identifier fields (`_`) filtered out during parse  |
 | 2026-03-13 | B3   | Nested slices (`[][]T`) supported via recursive list append |
+| 2026-03-14 | S2   | Recursive `FieldInfo` with `EltInfo`/`KeyInfo`; recursive `appendValue` template |
+| 2026-03-14 | B4   | `map[K][]V` resolved by S2                              |
+| 2026-03-14 | B5   | `map[K]map[K2]V` resolved by S2                         |

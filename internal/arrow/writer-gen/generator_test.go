@@ -68,24 +68,36 @@ type IgnoredStruct struct {
 			{Name: "Valid", GoType: "bool", ArrowType: "arrow.FixedWidthTypes.Boolean", ArrowBuilder: "*array.BooleanBuilder", CastType: "bool"},
 			{Name: "Value", GoType: "float64", ArrowType: "arrow.PrimitiveTypes.Float64", ArrowBuilder: "*array.Float64Builder", CastType: "float64"},
 			{
-				Name:            "Tags",
-				GoType:          "[]string",
-				ArrowType:       "arrow.ListOf(arrow.BinaryTypes.String)",
-				ArrowBuilder:    "*array.ListBuilder",
-				IsList:          true,
-				ValArrowBuilder: "*array.StringBuilder",
-				ValCastType:     "string",
+				Name:         "Tags",
+				GoType:       "[]string",
+				ArrowType:    "arrow.ListOf(arrow.BinaryTypes.String)",
+				ArrowBuilder: "*array.ListBuilder",
+				IsList:       true,
+				EltInfo: &FieldInfo{
+					GoType:       "string",
+					ArrowType:    "arrow.BinaryTypes.String",
+					ArrowBuilder: "*array.StringBuilder",
+					CastType:     "string",
+				},
 			},
 			{
-				Name:            "Scores",
-				GoType:          "map[string]float64",
-				ArrowType:       "arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Float64)",
-				ArrowBuilder:    "*array.MapBuilder",
-				IsMap:           true,
-				KeyArrowBuilder: "*array.StringBuilder",
-				ValArrowBuilder: "*array.Float64Builder",
-				KeyCastType:     "string",
-				ValCastType:     "float64",
+				Name:         "Scores",
+				GoType:       "map[string]float64",
+				ArrowType:    "arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Float64)",
+				ArrowBuilder: "*array.MapBuilder",
+				IsMap:        true,
+				KeyInfo: &FieldInfo{
+					GoType:       "string",
+					ArrowType:    "arrow.BinaryTypes.String",
+					ArrowBuilder: "*array.StringBuilder",
+					CastType:     "string",
+				},
+				EltInfo: &FieldInfo{
+					GoType:       "float64",
+					ArrowType:    "arrow.PrimitiveTypes.Float64",
+					ArrowBuilder: "*array.Float64Builder",
+					CastType:     "float64",
+				},
 			},
 			{Name: "SingleByte", GoType: "byte", ArrowType: "arrow.PrimitiveTypes.Uint8", ArrowBuilder: "*array.Uint8Builder", CastType: "uint8"},
 			{Name: "ByteSlice", GoType: "[]byte", ArrowType: "arrow.BinaryTypes.Binary", ArrowBuilder: "*array.BinaryBuilder", CastType: "[]byte"},
@@ -364,7 +376,7 @@ type Padded struct {
 			mustNotContain: []string{"row._"},
 		},
 		{
-			name: "triple-nested-slice-skipped",
+			name: "triple-nested-slice",
 			goCode: `package mypkg
 
 type Deep struct {
@@ -372,9 +384,17 @@ type Deep struct {
 	Cube  [][][]int32
 }
 `,
-			targetStruct:   "Deep",
-			mustContain:    []string{"row.ID"},
-			mustNotContain: []string{"row.Cube", "Cube"},
+			targetStruct: "Deep",
+			mustContain: []string{
+				"row.ID",
+				"row.Cube",
+				"v0Bldr",
+				"v1Bldr",
+				"v2Bldr",
+				"for _, v0 := range",
+				"for _, v1 := range v0",
+				"for _, v2 := range v1",
+			},
 		},
 		{
 			name: "nested-slice",
@@ -390,11 +410,68 @@ type Matrix struct {
 			mustContain: []string{
 				"arrow.ListOf(arrow.ListOf(",
 				"NewMatrixArrowWriter",
-				"valBldr.Append(true)",
-				"innerBldr",
-				"for _, iv := range v",
+				"v0Bldr",
+				"v1Bldr",
+				"for _, v0 := range",
+				"for _, v1 := range v0",
 			},
 			mustNotContain: []string{},
+		},
+		{
+			name: "map-with-slice-value",
+			goCode: `package mypkg
+
+type Grouped struct {
+	ID   int32
+	Data map[string][]int32
+}
+`,
+			targetStruct: "Grouped",
+			mustContain: []string{
+				"row.Data",
+				"arrow.MapOf(arrow.BinaryTypes.String, arrow.ListOf(arrow.PrimitiveTypes.Int32))",
+				"v0KeyBldr",
+				"v0ValBldr",
+				"v1Bldr",
+				"for _, v1 := range v0V",
+			},
+		},
+		{
+			name: "nested-map",
+			goCode: `package mypkg
+
+type Config struct {
+	ID       int32
+	Settings map[string]map[string]int32
+}
+`,
+			targetStruct: "Config",
+			mustContain: []string{
+				"row.Settings",
+				"arrow.MapOf(arrow.BinaryTypes.String, arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int32))",
+				"v0KeyBldr",
+				"v0ValBldr",
+				"v1KeyBldr",
+				"v1ValBldr",
+			},
+		},
+		{
+			name: "list-of-maps",
+			goCode: `package mypkg
+
+type Timeline struct {
+	ID     int32
+	Events []map[string]int32
+}
+`,
+			targetStruct: "Timeline",
+			mustContain: []string{
+				"row.Events",
+				"arrow.ListOf(arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int32))",
+				"v0Bldr",
+				"v1KeyBldr",
+				"v1ValBldr",
+			},
 		},
 		{
 			name: "pointer-to-named-primitive-type",
@@ -645,8 +722,12 @@ type Packet struct {
 	if scores.FixedSizeLen != "3" {
 		t.Errorf("Scores: expected FixedSizeLen=3, got %s", scores.FixedSizeLen)
 	}
-	if scores.ValCastType != "int32" {
-		t.Errorf("Scores: expected ValCastType=int32, got %s", scores.ValCastType)
+	if scores.EltInfo == nil || scores.EltInfo.CastType != "int32" {
+		castType := ""
+		if scores.EltInfo != nil {
+			castType = scores.EltInfo.CastType
+		}
+		t.Errorf("Scores: expected EltInfo.CastType=int32, got %s", castType)
 	}
 
 	// Test Run() — verify the generated code is valid Go (gofmt succeeds)

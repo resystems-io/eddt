@@ -1456,6 +1456,181 @@ func TestNestedSlices(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestNestedSlices")
 	})
 
+	t.Run("triple-nested-slices", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Cube struct {
+	ID    int32
+	Data  [][][]int32
+}
+`, []string{"Cube"}, "")
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestTripleNestedSlices(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewCubeArrowWriter(pool)
+	defer writer.Release()
+
+	c1 := Cube{
+		ID: 1,
+		Data: [][][]int32{
+			{{1, 2}, {3}},
+			{{4, 5, 6}},
+		},
+	}
+	c2 := Cube{
+		ID:   2,
+		Data: nil, // nil outer
+	}
+	c3 := Cube{
+		ID: 3,
+		Data: [][][]int32{
+			nil,            // nil middle
+			{{7}, nil},     // non-nil middle with nil inner
+		},
+	}
+
+	writer.Append(&c1)
+	writer.Append(&c2)
+	writer.Append(&c3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+	if record.NumCols() != 2 {
+		t.Fatalf("expected 2 columns, got %d", record.NumCols())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTripleNestedSlices")
+	})
+
+	t.Run("map-with-slice-value", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Grouped struct {
+	ID   int32
+	Data map[string][]int32
+}
+`, []string{"Grouped"}, "")
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMapWithSliceValue(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewGroupedArrowWriter(pool)
+	defer writer.Release()
+
+	g1 := Grouped{
+		ID: 1,
+		Data: map[string][]int32{
+			"scores":  {90, 85, 92},
+			"weights": {1, 2},
+		},
+	}
+	g2 := Grouped{
+		ID:   2,
+		Data: nil, // nil map
+	}
+	g3 := Grouped{
+		ID: 3,
+		Data: map[string][]int32{
+			"empty": nil, // nil slice value
+		},
+	}
+
+	writer.Append(&g1)
+	writer.Append(&g2)
+	writer.Append(&g3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestMapWithSliceValue")
+	})
+
+	t.Run("nested-maps", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Config struct {
+	ID       int32
+	Settings map[string]map[string]int32
+}
+`, []string{"Config"}, "")
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNestedMaps(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewConfigArrowWriter(pool)
+	defer writer.Release()
+
+	c1 := Config{
+		ID: 1,
+		Settings: map[string]map[string]int32{
+			"display": {"width": 1920, "height": 1080},
+			"audio":   {"volume": 75},
+		},
+	}
+	c2 := Config{
+		ID:       2,
+		Settings: nil, // nil outer map
+	}
+	c3 := Config{
+		ID: 3,
+		Settings: map[string]map[string]int32{
+			"empty": nil, // nil inner map
+		},
+	}
+
+	writer.Append(&c1)
+	writer.Append(&c2)
+	writer.Append(&c3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestNestedMaps")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

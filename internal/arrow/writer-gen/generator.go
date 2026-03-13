@@ -10,31 +10,25 @@ import (
 )
 
 // FieldInfo contains information about a parsed struct field.
+// For container types (list, fixed-size-list, map), element and key metadata
+// is carried recursively via EltInfo and KeyInfo pointers, enabling arbitrary
+// nesting depth (e.g. [][]map[K][]V).
 type FieldInfo struct {
-	Name             string
-	ArrowType        string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
-	ArrowBuilder     string // The Arrow array builder type (e.g., "*array.Int32Builder")
-	GoType           string // The original Go type string
-	IsList           bool
-	IsMap            bool
-	IsStruct         bool   // True if the field itself is a struct or pointer-to-struct
-	IsPointer        bool   // True if the field is a pointer
-	StructName       string // If IsStruct=true, the name of the struct
-	KeyArrowBuilder  string // Used for the map keys builder type
-	ValArrowBuilder  string // Used for the list items and map values builder type
-	CastType         string // The Go type used when appending to the builder
-	KeyCastType      string // The Go type used when appending a map key
-	ValCastType      string // The Go type used when appending a map value or list item
-	IsFixedSizeList  bool   // True if the field is a fixed-size array ([N]T)
-	FixedSizeLen     string // The array length as a string literal (e.g. "4")
-	ValIsStruct      bool   // True if list value or map value is a struct
-	ValIsPointer     bool   // True if list value or map value is a pointer
-	ValStructName    string // If ValIsStruct is true, the name of that struct
-	MarshalMethod    string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
-	ValMarshalMethod string // Serialization method for list/map value external types
-	ValIsList          bool   // True if list/fixed-size-list element is itself a list ([][]T)
-	ValValArrowBuilder string // Inner list element's arrow builder (for [][]T)
-	ValValCastType     string // Inner list element's cast type (for [][]T)
+	Name            string
+	ArrowType       string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
+	ArrowBuilder    string // The Arrow array builder type (e.g., "*array.Int32Builder")
+	GoType          string // The original Go type string
+	IsList          bool
+	IsMap           bool
+	IsStruct        bool       // True if the field itself is a struct or pointer-to-struct
+	IsPointer       bool       // True if the field is a pointer
+	StructName      string     // If IsStruct=true, the name of the struct
+	CastType        string     // The Go type used when appending to the builder
+	IsFixedSizeList bool       // True if the field is a fixed-size array ([N]T)
+	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
+	MarshalMethod   string     // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
+	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
+	KeyInfo         *FieldInfo // Key info for maps
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -258,40 +252,20 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 				return FieldInfo{}, fmt.Errorf("fixed-size array element %w", err)
 			}
 
-			// Reject nesting deeper than two levels (e.g. [N][][]T).
-			if eltInfo.ValIsList {
-				return FieldInfo{}, fmt.Errorf("fixed-size array of triple-nested slices is not supported")
-			}
-
 			arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lit.Value, eltInfo.ArrowType)
 			if eltInfo.IsStruct {
 				arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lit.Value, eltInfo.StructName)
 			}
 
-			fi := FieldInfo{
-				Name:             name,
-				GoType:           fmt.Sprintf("[%s]%s", lit.Value, eltInfo.GoType),
-				ArrowType:        arrowType,
-				ArrowBuilder:     "*array.FixedSizeListBuilder",
-				IsFixedSizeList:  true,
-				FixedSizeLen:     lit.Value,
-				ValArrowBuilder:  eltInfo.ArrowBuilder,
-				ValCastType:      eltInfo.CastType,
-				ValIsStruct:      eltInfo.IsStruct,
-				ValIsPointer:     eltInfo.IsPointer,
-				ValStructName:    eltInfo.StructName,
-				ValMarshalMethod: eltInfo.MarshalMethod,
-			}
-
-			// Propagate nested list metadata ([N][]T).
-			if eltInfo.IsList {
-				fi.ValIsList = true
-				fi.ValArrowBuilder = eltInfo.ArrowBuilder
-				fi.ValValArrowBuilder = eltInfo.ValArrowBuilder
-				fi.ValValCastType = eltInfo.ValCastType
-			}
-
-			return fi, nil
+			return FieldInfo{
+				Name:            name,
+				GoType:          fmt.Sprintf("[%s]%s", lit.Value, eltInfo.GoType),
+				ArrowType:       arrowType,
+				ArrowBuilder:    "*array.FixedSizeListBuilder",
+				IsFixedSizeList: true,
+				FixedSizeLen:    lit.Value,
+				EltInfo:         &eltInfo,
+			}, nil
 		}
 
 		// []byte is represented as Arrow Binary, not a List of Uint8.
@@ -311,40 +285,19 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
 
-		// Reject nesting deeper than two levels (e.g. [][][]T).
-		if eltInfo.ValIsList {
-			return FieldInfo{}, fmt.Errorf("triple-nested slices ([][][]T) are not supported")
-		}
-
 		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
 		if eltInfo.IsStruct {
 			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
 		}
 
-		fi := FieldInfo{
-			Name:             name,
-			GoType:           "[]" + eltInfo.GoType,
-			ArrowType:        arrowType,
-			ArrowBuilder:     "*array.ListBuilder",
-			IsList:           true,
-			ValArrowBuilder:  eltInfo.ArrowBuilder,
-			ValCastType:      eltInfo.CastType,
-			IsStruct:         false, // A slice itself is not a struct
-			ValIsStruct:      eltInfo.IsStruct,
-			ValIsPointer:     eltInfo.IsPointer,
-			ValStructName:    eltInfo.StructName,
-			ValMarshalMethod: eltInfo.MarshalMethod,
-		}
-
-		// Propagate nested list metadata ([][]T).
-		if eltInfo.IsList {
-			fi.ValIsList = true
-			fi.ValArrowBuilder = eltInfo.ArrowBuilder // *array.ListBuilder for inner list
-			fi.ValValArrowBuilder = eltInfo.ValArrowBuilder
-			fi.ValValCastType = eltInfo.ValCastType
-		}
-
-		return fi, nil
+		return FieldInfo{
+			Name:         name,
+			GoType:       "[]" + eltInfo.GoType,
+			ArrowType:    arrowType,
+			ArrowBuilder: "*array.ListBuilder",
+			IsList:       true,
+			EltInfo:      &eltInfo,
+		}, nil
 
 	case *ast.MapType:
 		// Map type
@@ -367,19 +320,13 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 		}
 
 		return FieldInfo{
-			Name:            name,
-			GoType:          fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType),
-			ArrowType:       fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
-			ArrowBuilder:    "*array.MapBuilder",
-			IsMap:           true,
-			KeyArrowBuilder: keyInfo.ArrowBuilder,
-			ValArrowBuilder: valInfo.ArrowBuilder,
-			KeyCastType:     keyInfo.CastType,
-			ValCastType:     valInfo.CastType,
-			IsStruct:        false, // A map itself is not a struct
-			ValIsStruct:     valInfo.IsStruct,
-			ValIsPointer:    valInfo.IsPointer,
-			ValStructName:   valInfo.StructName,
+			Name:         name,
+			GoType:       fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType),
+			ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
+			ArrowBuilder: "*array.MapBuilder",
+			IsMap:        true,
+			KeyInfo:      &keyInfo,
+			EltInfo:      &valInfo,
 		}, nil
 
 	case *ast.SelectorExpr:
