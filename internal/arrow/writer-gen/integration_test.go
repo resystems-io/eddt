@@ -86,8 +86,8 @@ func TestArrowMemoryAndDuckDB(t *testing.T) {
 	u1 := User{ID: 1, Name: "Alice", Score: 99.5, Valid: true}
 	u2 := User{ID: 2, Name: "Bob", Score: 85.0, Valid: false}
 
-	writer.Append(u1)
-	writer.Append(u2)
+	writer.Append(&u1)
+	writer.Append(&u2)
 
 	// Build Arrow Record
 	record := writer.NewRecord()
@@ -257,9 +257,9 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 		Scores: nil,
 	}
 
-	writer.Append(u1)
-	writer.Append(u2)
-	writer.Append(u3)
+	writer.Append(&u1)
+	writer.Append(&u2)
+	writer.Append(&u3)
 
 	// Build Arrow Record
 	record := writer.NewRecord()
@@ -459,9 +459,9 @@ func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
 		Map4: nil,
 	}
 
-	writer.Append(u1)
-	writer.Append(u2)
-	writer.Append(u3)
+	writer.Append(&u1)
+	writer.Append(&u2)
+	writer.Append(&u3)
 
 	record := writer.NewRecord()
 	defer record.Release()
@@ -722,8 +722,8 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 		Config: nil,
 	}
 
-	writer.Append(p1)
-	writer.Append(p2)
+	writer.Append(&p1)
+	writer.Append(&p2)
 
 	record := writer.NewRecord()
 	defer record.Release()
@@ -900,8 +900,8 @@ func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 		Name:  nil,
 	}
 
-	writer.Append(u1)
-	writer.Append(u2)
+	writer.Append(&u1)
+	writer.Append(&u2)
 
 	record := writer.NewRecord()
 	defer record.Release()
@@ -1044,9 +1044,9 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 	r2 := IPAddresses{IPv4s: []*netip.Addr{&addr3, nil}} // nil element should become null
 	r3 := IPAddresses{IPv4s: nil}                        // nil slice should become null list
 
-	writer.Append(r1)
-	writer.Append(r2)
-	writer.Append(r3)
+	writer.Append(&r1)
+	writer.Append(&r2)
+	writer.Append(&r3)
 
 	record := writer.NewRecord()
 	defer record.Release()

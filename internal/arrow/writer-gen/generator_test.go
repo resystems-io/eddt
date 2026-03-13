@@ -216,8 +216,8 @@ type Person struct {
 	if !strings.Contains(outStr, "\"mypkg\"") {
 		t.Errorf("Expected output to import 'mypkg', got:\n%s", outStr)
 	}
-	if !strings.Contains(outStr, "func (w *PersonArrowWriter) Append(row mypkg.Person)") {
-		t.Errorf("Expected output to use imported struct mypkg.Person, got:\n%s", outStr)
+	if !strings.Contains(outStr, "func (w *PersonArrowWriter) Append(row *mypkg.Person)") {
+		t.Errorf("Expected output to use imported struct *mypkg.Person, got:\n%s", outStr)
 	}
 	if strings.Contains(outStr, "row Person)") {
 		t.Errorf("Expected no unqualified 'row Person)' in method signatures, got:\n%s", outStr)
@@ -295,6 +295,81 @@ type Person struct {
 	}
 }
 
+// TestGenerator_OuterStructWithMutexInner tests that generation succeeds when an inner struct
+// contains a field (Lock *sync.Mutex) that has no supported marshal interface.
+// The Lock field must be silently skipped. The test verifies that AppendInnerStruct
+// receives the inner struct by pointer (*Inner), avoiding any copy of a struct that
+// contains mutex-adjacent fields and eliminating the associated linter warnings.
+func TestGenerator_OuterStructWithMutexInner(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+import "sync"
+
+type Inner struct {
+	Value int32
+	Lock  *sync.Mutex
+}
+
+type Outer struct {
+	ID    int32
+	Child Inner
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"Outer"}, outPath, false, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+
+	// Outer and Inner should both appear
+	if !strings.Contains(outStr, `{Name: "ID",`) {
+		t.Errorf("Expected output to contain field ID, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, `{Name: "Child",`) {
+		t.Errorf("Expected output to contain field Child, got:\n%s", outStr)
+	}
+
+	// Value field on Inner should be present
+	if !strings.Contains(outStr, `{Name: "Value",`) {
+		t.Errorf("Expected output to contain field Value on Inner, got:\n%s", outStr)
+	}
+
+	// Lock must be skipped — sync.Mutex implements no supported marshal interface
+	if strings.Contains(outStr, "Lock") {
+		t.Errorf("Expected Lock field to be skipped (no marshal interface), but found it in output:\n%s", outStr)
+	}
+
+	// AppendInnerStruct must exist — Inner is referenced as a nested struct
+	if !strings.Contains(outStr, "func AppendInnerStruct(") {
+		t.Errorf("Expected output to contain AppendInnerStruct helper, got:\n%s", outStr)
+	}
+
+	// AppendInnerStruct must receive Inner by pointer to avoid copying mutex-adjacent fields.
+	if !strings.Contains(outStr, "func AppendInnerStruct(b *array.StructBuilder, row *Inner)") {
+		t.Errorf("Expected AppendInnerStruct to take *Inner by pointer, got:\n%s", outStr)
+	}
+}
+
 func TestGenerator_PointerToStruct(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFilePath := filepath.Join(tmpDir, "test_structs.go")
@@ -331,7 +406,7 @@ type Person struct {
 	}
 
 	outStr := string(outBytes)
-	if !strings.Contains(outStr, "func AppendNestedStruct(b *array.StructBuilder, row Nested)") {
+	if !strings.Contains(outStr, "func AppendNestedStruct(b *array.StructBuilder, row *Nested)") {
 		t.Errorf("Expected output to contain AppendNestedStruct, got:\n%s", outStr)
 	}
 	if !strings.Contains(outStr, "{Name: \"Details\",") {

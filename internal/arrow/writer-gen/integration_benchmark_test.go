@@ -164,7 +164,7 @@ func BenchmarkArrowAppendSimpleStruct(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		writer.Append(record)
+		writer.Append(&record)
 	}
 }
 `
@@ -210,7 +210,7 @@ func BenchmarkArrowAppendComplexStruct(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		writer.Append(record)
+		writer.Append(&record)
 	}
 }
 `

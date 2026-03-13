@@ -69,13 +69,13 @@ func (w *{{.Name}}ArrowWriter) Release() {
 }
 
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
-func (w *{{.Name}}ArrowWriter) Append(row {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
+func (w *{{.Name}}ArrowWriter) Append(row *{{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
 {{- template "appendFields" dict "Fields" .Fields "Bldr" "w.b.Field" "ImportPkgName" $.ImportPkgName}}
 }
 
 // Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
 // This is used for writing nested structs.
-func Append{{.Name}}Struct(b *array.StructBuilder, row {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
+func Append{{.Name}}Struct(b *array.StructBuilder, row *{{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{.Name}}) {
 	b.Append(true)
 {{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "ImportPkgName" $.ImportPkgName}}
 }
@@ -92,10 +92,10 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 	if row.{{$field.Name}} == nil {
 		{{$.Bldr}}({{$i}}).(*array.StructBuilder).AppendNull()
 	} else {
-		Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.StructName}}(*row.{{$field.Name}}))
+		Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
 	}
 	{{- else}}
-	Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), row.{{$field.Name}})
+	Append{{$field.StructName}}Struct({{$.Bldr}}({{$i}}).(*array.StructBuilder), &row.{{$field.Name}})
 	{{- end}}
 {{- else if .IsList}}
 	if row.{{$field.Name}} == nil {
@@ -113,10 +113,10 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
+				Append{{$field.ValStructName}}Struct(valBldr, v)
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, &v)
 			{{- end}}
 			{{- else if $field.ValMarshalMethod}}
 			{{- if $field.ValIsPointer}}
@@ -179,10 +179,10 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			if v == nil {
 				valBldr.AppendNull()
 			} else {
-				Append{{$field.ValStructName}}Struct(valBldr, {{if $.ImportPkgName}}{{$.ImportPkgName}}.{{end}}{{$field.ValStructName}}(*v))
+				Append{{$field.ValStructName}}Struct(valBldr, v)
 			}
 			{{- else}}
-			Append{{$field.ValStructName}}Struct(valBldr, v)
+			Append{{$field.ValStructName}}Struct(valBldr, &v)
 			{{- end}}
 			{{- else}}
 			{{- if $field.ValIsPointer}}

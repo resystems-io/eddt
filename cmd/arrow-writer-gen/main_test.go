@@ -136,7 +136,7 @@ type Person struct {
 		t.Errorf("Expected aliased import mydummy \"dummy\", but got:\n%s", got)
 	}
 
-	if !strings.Contains(got, "func (w *PersonArrowWriter) Append(row mydummy.Person)") {
-		t.Errorf("Expected func (w *PersonArrowWriter) Append(row mydummy.Person), but got:\n%s", got)
+	if !strings.Contains(got, "func (w *PersonArrowWriter) Append(row *mydummy.Person)") {
+		t.Errorf("Expected func (w *PersonArrowWriter) Append(row *mydummy.Person), but got:\n%s", got)
 	}
 }

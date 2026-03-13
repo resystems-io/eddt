@@ -10,24 +10,24 @@ import (
 
 // FieldInfo contains information about a parsed struct field.
 type FieldInfo struct {
-	Name            string
-	ArrowType       string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
-	ArrowBuilder    string // The Arrow array builder type (e.g., "*array.Int32Builder")
-	GoType          string // The original Go type string
-	IsList          bool
-	IsMap           bool
-	IsStruct        bool   // True if the field itself is a struct or pointer-to-struct
-	IsPointer       bool   // True if the field is a pointer
-	StructName      string // If IsStruct=true, the name of the struct
-	KeyArrowBuilder string // Used for the map keys builder type
-	ValArrowBuilder string // Used for the list items and map values builder type
-	CastType        string // The Go type used when appending to the builder
-	KeyCastType     string // The Go type used when appending a map key
-	ValCastType     string // The Go type used when appending a map value or list item
-	ValIsStruct     bool   // True if list value or map value is a struct
-	ValIsPointer    bool   // True if list value or map value is a pointer
-	ValStructName   string // If ValIsStruct is true, the name of that struct
-	MarshalMethod   string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
+	Name             string
+	ArrowType        string // The Apache Arrow datatype string (e.g., "arrow.PrimitiveTypes.Int32")
+	ArrowBuilder     string // The Arrow array builder type (e.g., "*array.Int32Builder")
+	GoType           string // The original Go type string
+	IsList           bool
+	IsMap            bool
+	IsStruct         bool   // True if the field itself is a struct or pointer-to-struct
+	IsPointer        bool   // True if the field is a pointer
+	StructName       string // If IsStruct=true, the name of the struct
+	KeyArrowBuilder  string // Used for the map keys builder type
+	ValArrowBuilder  string // Used for the list items and map values builder type
+	CastType         string // The Go type used when appending to the builder
+	KeyCastType      string // The Go type used when appending a map key
+	ValCastType      string // The Go type used when appending a map value or list item
+	ValIsStruct      bool   // True if list value or map value is a struct
+	ValIsPointer     bool   // True if list value or map value is a pointer
+	ValStructName    string // If ValIsStruct is true, the name of that struct
+	MarshalMethod    string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
 	ValMarshalMethod string // Serialization method for list/map value external types
 }
 
