@@ -982,6 +982,181 @@ func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 
 		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestArrowMemoryAndDuckDBPointerToPrimitive")
 	})
+
+	t.Run("slice-of-ip-addresses", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		dummyCode := `package dummy
+
+import "net/netip"
+
+type IPAddresses struct {
+	IPv4s []*netip.Addr
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy.go: %v", err)
+		}
+
+		modContent := "module dummy\n\ngo 1.25.0\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("Failed to write go.mod: %v", err)
+		}
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator(tmpDir, []string{"IPAddresses"}, outPath, false, "")
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		if _, err := os.Stat(outPath); os.IsNotExist(err) {
+			t.Fatalf("Expected output file %s was not generated", outPath)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewIPAddressesArrowWriter(pool)
+	defer writer.Release()
+
+	addr1 := netip.MustParseAddr("192.168.1.1")
+	addr2 := netip.MustParseAddr("10.0.0.1")
+	addr3 := netip.MustParseAddr("::1")
+
+	r1 := IPAddresses{IPv4s: []*netip.Addr{&addr1, &addr2}}
+	r2 := IPAddresses{IPv4s: []*netip.Addr{&addr3, nil}} // nil element should become null
+	r3 := IPAddresses{IPv4s: nil}                        // nil slice should become null list
+
+	writer.Append(r1)
+	writer.Append(r2)
+	writer.Append(r3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "ip_addresses.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB memory instance: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf("SELECT ipv4s FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		addrs []string
+	}
+	var results []row
+	for rows.Next() {
+		var elems *[]interface{}
+		if err := rows.Scan(&elems); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+		var r row
+		if elems != nil {
+			for _, e := range *elems {
+				if e == nil {
+					r.addrs = append(r.addrs, "<null>")
+				} else {
+					r.addrs = append(r.addrs, e.(string))
+				}
+			}
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1: two non-nil addresses
+	if len(results[0].addrs) != 2 {
+		t.Errorf("row 1: expected 2 addresses, got %d: %v", len(results[0].addrs), results[0].addrs)
+	}
+	if results[0].addrs[0] != addr1.String() {
+		t.Errorf("row 1 addr[0]: want %s, got %s", addr1, results[0].addrs[0])
+	}
+	if results[0].addrs[1] != addr2.String() {
+		t.Errorf("row 1 addr[1]: want %s, got %s", addr2, results[0].addrs[1])
+	}
+
+	// Row 2: one address and one nil element
+	if len(results[1].addrs) != 2 {
+		t.Errorf("row 2: expected 2 entries, got %d: %v", len(results[1].addrs), results[1].addrs)
+	}
+	if results[1].addrs[0] != addr3.String() {
+		t.Errorf("row 2 addr[0]: want %s, got %s", addr3, results[1].addrs[0])
+	}
+	if results[1].addrs[1] != "<null>" {
+		t.Errorf("row 2 addr[1]: expected null, got %s", results[1].addrs[1])
+	}
+
+	// Row 3: nil slice — no addresses
+	if len(results[2].addrs) != 0 {
+		t.Errorf("row 3: expected empty/null list, got %v", results[2].addrs)
+	}
+}
+`
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy_test.go: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+
+		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestArrowMemoryAndDuckDBSliceOfIPAddresses")
+
+		if false {
+			tarball(t, "/tmp/arrow-gen-slice-of-ip-addresses.tar.gz", tmpDir)
+		}
+	})
 }
 
 // runCmd is a helper for running external commands during integration tests.

@@ -622,6 +622,65 @@ type Device struct {
 	}
 }
 
+// TestGenerator_IPAddressStructSlice tests generation for a struct containing a slice of pointers
+// to an external package type (e.g. []*netip.Addr). The elements must be serialized via their
+// marshal interface (MarshalText for netip.Addr), and nil pointer elements must append null.
+func TestGenerator_IPAddressStructSlice(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+import "net/netip"
+
+type IPAddresses struct {
+	IPv4s []*netip.Addr
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator(tmpDir, []string{"IPAddresses"}, outPath, true, "")
+
+	err := g.Run("")
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output file: %v", err)
+	}
+
+	outStr := string(outBytes)
+
+	// The IPAddresses struct should contain the IPv4s list field
+	if !strings.Contains(outStr, `{Name: "IPv4s",`) {
+		t.Errorf("Expected output to contain field IPv4s, got:\n%s", outStr)
+	}
+
+	// The list type should be arrow.ListOf(arrow.BinaryTypes.String) since netip.Addr uses MarshalText
+	if !strings.Contains(outStr, "arrow.ListOf(arrow.BinaryTypes.String)") {
+		t.Errorf("Expected output to use arrow.ListOf(arrow.BinaryTypes.String) for []*netip.Addr, got:\n%s", outStr)
+	}
+
+	// Elements should be serialized via MarshalText
+	if !strings.Contains(outStr, ".MarshalText()") {
+		t.Errorf("Expected output to use MarshalText() for *netip.Addr elements, got:\n%s", outStr)
+	}
+
+	// Nil pointer elements must append null, not panic
+	if !strings.Contains(outStr, "AppendNull") {
+		t.Errorf("Expected output to handle nil pointer elements with AppendNull, got:\n%s", outStr)
+	}
+}
+
 func TestGenerator_PointerToNamedPrimitiveType(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFilePath := filepath.Join(tmpDir, "test_structs.go")

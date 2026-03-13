@@ -28,6 +28,7 @@ type FieldInfo struct {
 	ValIsPointer    bool   // True if list value or map value is a pointer
 	ValStructName   string // If ValIsStruct is true, the name of that struct
 	MarshalMethod   string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
+	ValMarshalMethod string // Serialization method for list/map value external types
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -211,17 +212,18 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 		}
 
 		return FieldInfo{
-			Name:            name,
-			GoType:          "[]" + eltInfo.GoType,
-			ArrowType:       arrowType,
-			ArrowBuilder:    "*array.ListBuilder",
-			IsList:          true,
-			ValArrowBuilder: eltInfo.ArrowBuilder,
-			ValCastType:     eltInfo.CastType,
-			IsStruct:        false, // A slice itself is not a struct
-			ValIsStruct:     eltInfo.IsStruct,
-			ValIsPointer:    eltInfo.IsPointer,
-			ValStructName:   eltInfo.StructName,
+			Name:             name,
+			GoType:           "[]" + eltInfo.GoType,
+			ArrowType:        arrowType,
+			ArrowBuilder:     "*array.ListBuilder",
+			IsList:           true,
+			ValArrowBuilder:  eltInfo.ArrowBuilder,
+			ValCastType:      eltInfo.CastType,
+			IsStruct:         false, // A slice itself is not a struct
+			ValIsStruct:      eltInfo.IsStruct,
+			ValIsPointer:     eltInfo.IsPointer,
+			ValStructName:    eltInfo.StructName,
+			ValMarshalMethod: eltInfo.MarshalMethod,
 		}, nil
 
 	case *ast.MapType:

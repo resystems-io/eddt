@@ -118,6 +118,36 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			{{- else}}
 			Append{{$field.ValStructName}}Struct(valBldr, v)
 			{{- end}}
+			{{- else if $field.ValMarshalMethod}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+			{{- if eq $field.ValMarshalMethod "MarshalText"}}
+				marshalData, _ := v.MarshalText()
+				valBldr.Append(string(marshalData))
+			{{- else if eq $field.ValMarshalMethod "String"}}
+				valBldr.Append(v.String())
+			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
+				marshalData, _ := v.MarshalBinary()
+				valBldr.Append(marshalData)
+			{{- end}}
+			}
+			{{- else}}
+			{{- if eq $field.ValMarshalMethod "MarshalText"}}
+			{
+				marshalData, _ := v.MarshalText()
+				valBldr.Append(string(marshalData))
+			}
+			{{- else if eq $field.ValMarshalMethod "String"}}
+			valBldr.Append(v.String())
+			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
+			{
+				marshalData, _ := v.MarshalBinary()
+				valBldr.Append(marshalData)
+			}
+			{{- end}}
+			{{- end}}
 			{{- else}}
 			{{- if $field.ValIsPointer}}
 			if v == nil {
