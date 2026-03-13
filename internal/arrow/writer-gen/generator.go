@@ -490,7 +490,7 @@ func mapToArrowType(expr ast.Expr) (string, string, string, string, error) {
 		arrowType = "arrow.PrimitiveTypes.Int16"
 		arrowBuilder = "*array.Int16Builder"
 		castType = "int16"
-	case "int32":
+	case "int32", "rune":
 		arrowType = "arrow.PrimitiveTypes.Int32"
 		arrowBuilder = "*array.Int32Builder"
 		castType = "int32"

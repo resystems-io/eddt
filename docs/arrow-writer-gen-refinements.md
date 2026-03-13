@@ -134,7 +134,7 @@ These must be fixed first because they produce output that does not compile.
 
 ### Priority 2 — Easy Wins
 
-- [ ] **M1: Add `rune` alias** — Add `"rune"` to the `case "int32":` branch in
+- [x] **M1: Add `rune` alias** *(2026-03-13)* — Add `"rune"` to the `case "int32":` branch in
   `mapToArrowType`, mirroring the existing `"byte"` → `"uint8"` pattern.
   - Files: `generator.go` (`mapToArrowType`), `generator_test.go` (`TestMapToArrowType`
     — add `{"rune", "rune", "arrow.PrimitiveTypes.Int32", "*array.Int32Builder", false}`)
@@ -186,8 +186,8 @@ Each fix above should include:
 
 ## 4. Change Log
 
-Record completed items here with date and commit hash.
+Record completed items here with date (check git blame for the git commit).
 
-| Date | Item | Commit | Notes |
-|------|------|--------|-------|
-| | | | |
+| Date       | Item |  Notes                                                  |
+|------------|------|---------------------------------------------------------|
+| 2026-03-13 | M1   | Added `rune` to `case "int32"` in `mapToArrowType`      |

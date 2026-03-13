@@ -111,6 +111,7 @@ func TestMapToArrowType(t *testing.T) {
 		{"uint64", "uint64", "arrow.PrimitiveTypes.Uint64", "*array.Uint64Builder", false},
 		{"float64", "float64", "arrow.PrimitiveTypes.Float64", "*array.Float64Builder", false},
 		{"byte", "byte", "arrow.PrimitiveTypes.Uint8", "*array.Uint8Builder", false},
+		{"rune", "rune", "arrow.PrimitiveTypes.Int32", "*array.Int32Builder", false},
 		{"unknown", "", "", "", true},
 	}
 
