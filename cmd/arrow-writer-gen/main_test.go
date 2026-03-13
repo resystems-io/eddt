@@ -115,7 +115,7 @@ type Person struct {
 	cmd.SetArgs([]string{
 		"--pkg", tmpDir,
 		"--pkg-name", "dummy",
-		"--pkg-alias", "mydummy",
+		"--pkg-alias", "dummy=mydummy",
 		"--structs", "Person",
 		"--out", outFile,
 	})

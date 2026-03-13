@@ -33,27 +33,30 @@ type FieldInfo struct {
 
 // StructInfo contains information about a parsed Go struct.
 type StructInfo struct {
-	Name   string
-	Fields []FieldInfo
+	Name      string
+	Fields    []FieldInfo
+	PkgPath   string // import path of the package this struct belongs to
+	PkgName   string // base package name of the package this struct belongs to
+	Qualifier string // qualifier prefix for this struct in generated code (e.g. "mypkg." or "")
 }
 
 // Generator holds the configuration for generating Arrow writers.
 type Generator struct {
-	InputPkg      string
+	InputPkgs     []string
 	TargetStructs []string
 	OutPath       string
 	Verbose       bool
-	PkgAlias      string
+	PkgAliases    []string // raw alias mappings in "original=replacement" format
 }
 
 // NewGenerator initializes a new Generator.
-func NewGenerator(inputPkg string, targetStructs []string, outPath string, verbose bool, pkgAlias string) *Generator {
+func NewGenerator(inputPkgs []string, targetStructs []string, outPath string, verbose bool, pkgAliases []string) *Generator {
 	return &Generator{
-		InputPkg:      inputPkg,
+		InputPkgs:     inputPkgs,
 		TargetStructs: targetStructs,
 		OutPath:       outPath,
 		Verbose:       verbose,
-		PkgAlias:      pkgAlias,
+		PkgAliases:    pkgAliases,
 	}
 }
 
@@ -67,25 +70,51 @@ func collectPackageErrors(pkgs []*packages.Package) int {
 	return count
 }
 
-// Parse extracts StructInfo for the targeted structs and discovers the package name.
-func (g *Generator) Parse() (string, string, []StructInfo, error) {
+// loadPackages loads all packages from InputPkgs, one directory at a time.
+// Each directory is loaded independently to support separate Go modules.
+func (g *Generator) loadPackages() ([]*packages.Package, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:  g.InputPkg,
 	}
-	pkgs, err := packages.Load(cfg, ".")
+	var all []*packages.Package
+	for _, dir := range g.InputPkgs {
+		cfg.Dir = dir
+		pkgs, err := packages.Load(cfg, ".")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load package directory %q: %w", dir, err)
+		}
+		if errCount := collectPackageErrors(pkgs); errCount > 0 {
+			return nil, fmt.Errorf("package loading had %d error(s) in %q", errCount, dir)
+		}
+		all = append(all, pkgs...)
+	}
+	return all, nil
+}
+
+// findPkgByPath returns the loaded package with the given import path, or nil.
+func findPkgByPath(pkgs []*packages.Package, pkgPath string) *packages.Package {
+	for _, p := range pkgs {
+		if p.PkgPath == pkgPath {
+			return p
+		}
+	}
+	return nil
+}
+
+// Parse extracts StructInfo for the targeted structs and discovers the primary package name and path.
+// The returned pkgName and pkgPath refer to the first loaded input package (used for output package
+// auto-detection when no --pkg-name override is given). Each StructInfo carries its own PkgPath/PkgName.
+func (g *Generator) Parse() (string, string, []StructInfo, error) {
+	allPkgs, err := g.loadPackages()
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to load package directory %q: %w", g.InputPkg, err)
-	}
-	if errCount := collectPackageErrors(pkgs); errCount > 0 {
-		return "", "", nil, fmt.Errorf("package loading had %d error(s) in %q", errCount, g.InputPkg)
+		return "", "", nil, err
 	}
 
 	var parsedPkgName string
 	var parsedPkgPath string
-	if len(pkgs) > 0 {
-		parsedPkgName = pkgs[0].Name
-		parsedPkgPath = pkgs[0].PkgPath
+	if len(allPkgs) > 0 {
+		parsedPkgName = allPkgs[0].Name
+		parsedPkgPath = allPkgs[0].PkgPath
 	}
 
 	queue := make([]string, len(g.TargetStructs))
@@ -103,7 +132,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 		processed[target] = true
 
 		found := false
-		for _, pkg := range pkgs {
+		for _, pkg := range allPkgs {
 			for _, file := range pkg.Syntax {
 				ast.Inspect(file, func(n ast.Node) bool {
 					ts, ok := n.(*ast.TypeSpec)
@@ -117,7 +146,11 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 					}
 
 					found = true
-					info := StructInfo{Name: ts.Name.Name}
+					info := StructInfo{
+						Name:    ts.Name.Name,
+						PkgPath: pkg.PkgPath,
+						PkgName: pkg.Name,
+					}
 
 					for _, field := range st.Fields.List {
 						if len(field.Names) == 0 {
@@ -125,7 +158,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 						}
 
 						fieldName := field.Names[0].Name
-						fieldInfo, err := mapToFieldInfo(pkg, fieldName, field.Type, &queue, processed)
+						fieldInfo, err := mapToFieldInfo(pkg, allPkgs, fieldName, field.Type, &queue, processed)
 						if err != nil {
 							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
 							continue
@@ -155,21 +188,36 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 }
 
 // mapToFieldInfo maps an AST expression to a FieldInfo struct.
-func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
-		return resolveIdent(pkg, name, t, false, queue, processed)
+		return resolveIdent(pkg, allPkgs, name, t, false, queue, processed)
 
 	case *ast.StarExpr:
 		// Pointer type - this could be to a struct or a primitive
 		if ident, ok := t.X.(*ast.Ident); ok {
-			return resolveIdent(pkg, name, ident, true, queue, processed)
+			return resolveIdent(pkg, allPkgs, name, ident, true, queue, processed)
 		}
 
-		// Check for selector expression (external package type like *netip.Addr)
-		if _, ok := t.X.(*ast.SelectorExpr); ok {
-			typ := pkg.TypesInfo.TypeOf(t.X)
+		// Check for selector expression (e.g. *netip.Addr, *pkg2.Inner)
+		if sel, ok := t.X.(*ast.SelectorExpr); ok {
+			typ := pkg.TypesInfo.TypeOf(sel)
 			if typ != nil {
+				// If this is a named struct type from one of the explicitly loaded packages,
+				// treat it as a native Arrow struct rather than falling back to marshal methods.
+				if named, ok := typ.(*types.Named); ok {
+					if _, isStruct := named.Underlying().(*types.Struct); isStruct {
+						if named.Obj().Pkg() != nil {
+							pkgPath := named.Obj().Pkg().Path()
+							if findPkgByPath(allPkgs, pkgPath) != nil {
+								structName := named.Obj().Name()
+								pkgName := named.Obj().Pkg().Name()
+								return mapStructField(name, structName, pkgName, pkgPath, true, queue, processed), nil
+							}
+						}
+					}
+				}
+				// External type: fall back to marshal method detection.
 				method := detectMarshalMethod(typ)
 				if method != "" {
 					arrowType, arrowBuilder := marshalMethodArrowType(method)
@@ -201,7 +249,7 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 		}
 
 		// Slice type
-		eltInfo, err := mapToFieldInfo(pkg, "", t.Elt, queue, processed)
+		eltInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Elt, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
@@ -228,7 +276,7 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 
 	case *ast.MapType:
 		// Map type
-		keyInfo, err := mapToFieldInfo(pkg, "", t.Key, queue, processed)
+		keyInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Key, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key %w", err)
 		}
@@ -236,7 +284,7 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 			return FieldInfo{}, fmt.Errorf("struct maps keys are not supported")
 		}
 
-		valInfo, err := mapToFieldInfo(pkg, "", t.Value, queue, processed)
+		valInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Value, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map value %w", err)
 		}
@@ -263,11 +311,28 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 		}, nil
 
 	case *ast.SelectorExpr:
-		// External package type (e.g., netip.Addr, time.Time)
+		// External package type (e.g., netip.Addr, time.Time, or pkg2.Inner)
 		typ := pkg.TypesInfo.TypeOf(t)
 		if typ == nil {
 			return FieldInfo{}, fmt.Errorf("could not resolve type for selector expression")
 		}
+
+		// If this is a named struct type from one of the explicitly loaded packages,
+		// treat it as a native Arrow struct rather than falling back to marshal methods.
+		if named, ok := typ.(*types.Named); ok {
+			if _, isStruct := named.Underlying().(*types.Struct); isStruct {
+				if named.Obj().Pkg() != nil {
+					pkgPath := named.Obj().Pkg().Path()
+					if findPkgByPath(allPkgs, pkgPath) != nil {
+						structName := named.Obj().Name()
+						pkgName := named.Obj().Pkg().Name()
+						return mapStructField(name, structName, pkgName, pkgPath, false, queue, processed), nil
+					}
+				}
+			}
+		}
+
+		// External type not in any loaded package: fall back to marshal method detection.
 		method := detectMarshalMethod(typ)
 		if method == "" {
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
@@ -286,12 +351,18 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 }
 
 // resolveIdent handles unified type resolution for ast.Ident, tracking if it was accessed via a pointer.
-func resolveIdent(pkg *packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	// Check for struct reference or named primitive
 	obj := pkg.TypesInfo.ObjectOf(ident)
 	if obj != nil {
 		if _, ok := obj.Type().Underlying().(*types.Struct); ok {
-			return mapStructField(name, obj.Name(), isPointer, queue, processed), nil
+			structPkgPath := pkg.PkgPath
+			structPkgName := pkg.Name
+			if obj.Pkg() != nil {
+				structPkgPath = obj.Pkg().Path()
+				structPkgName = obj.Pkg().Name()
+			}
+			return mapStructField(name, obj.Name(), structPkgName, structPkgPath, isPointer, queue, processed), nil
 		}
 
 		// Check for named type over a primitive (e.g., type MyStates int)
@@ -374,7 +445,9 @@ func marshalMethodArrowType(method string) (string, string) {
 	return "arrow.BinaryTypes.String", "*array.StringBuilder"
 }
 
-func mapStructField(name string, structName string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
+// mapStructField builds a FieldInfo for a struct field (value or pointer).
+// pkgName and pkgPath record the origin package of the referenced struct.
+func mapStructField(name string, structName string, pkgName string, pkgPath string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
 	if !processed[structName] {
 		*queue = append(*queue, structName)
 	}

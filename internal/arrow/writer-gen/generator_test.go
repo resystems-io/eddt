@@ -40,7 +40,7 @@ type IgnoredStruct struct {
 		t.Fatalf("Failed to write go.mod: %v", err)
 	}
 
-	g := NewGenerator(tmpDir, []string{"SimpleStruct"}, "out.go", false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"SimpleStruct"}, "out.go", false, nil)
 
 	pkgName, pkgPath, structs, err := g.Parse()
 	if err != nil {
@@ -59,7 +59,9 @@ type IgnoredStruct struct {
 	}
 
 	expected := StructInfo{
-		Name: "SimpleStruct",
+		Name:    "SimpleStruct",
+		PkgPath: "testpkg",
+		PkgName: "testpkg",
 		Fields: []FieldInfo{
 			{Name: "ID", GoType: "int32", ArrowType: "arrow.PrimitiveTypes.Int32", ArrowBuilder: "*array.Int32Builder", CastType: "int32"},
 			{Name: "Name", GoType: "string", ArrowType: "arrow.BinaryTypes.String", ArrowBuilder: "*array.StringBuilder", CastType: "string"},
@@ -154,7 +156,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -197,7 +199,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("differentpkg")
 	if err != nil {
@@ -243,7 +245,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	for _, reserved := range []string{"arrow", "array", "memory"} {
 		t.Run(reserved, func(t *testing.T) {
@@ -277,7 +279,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -327,7 +329,7 @@ type Outer struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Outer"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -393,7 +395,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -433,7 +435,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -474,7 +476,7 @@ type Person struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Person"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -523,7 +525,7 @@ type Outer struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Outer"}, outPath, true, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, true, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -578,7 +580,7 @@ type WebLink struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"WebLink"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"WebLink"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -626,7 +628,7 @@ type Container struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Container"}, outPath, false, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Container"}, outPath, false, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -673,7 +675,7 @@ type Device struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Device"}, outPath, true, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Device"}, outPath, true, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -721,7 +723,7 @@ type IPAddresses struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"IPAddresses"}, outPath, true, "")
+	g := NewGenerator([]string{tmpDir}, []string{"IPAddresses"}, outPath, true, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -779,7 +781,7 @@ type Device struct {
 	}
 
 	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator(tmpDir, []string{"Device"}, outPath, true, "")
+	g := NewGenerator([]string{tmpDir}, []string{"Device"}, outPath, true, nil)
 
 	err := g.Run("")
 	if err != nil {
@@ -801,4 +803,159 @@ type Device struct {
 	if !strings.Contains(outStr, `{Name: "State",`) {
 		t.Errorf("Expected output to contain field State (named type MyStates over int), got:\n%s", outStr)
 	}
+}
+
+// TestGenerator_MultiPackageResolution tests that when two packages are provided, structs from
+// the second package are resolved natively as Arrow struct types (not as marshal fallbacks).
+// pkg1.Outer has a field of type pkg2.Inner; Inner must appear as a StructBuilder in the output.
+func TestGenerator_MultiPackageResolution(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// pkg1: contains Outer which references Inner from pkg2
+	pkg1Dir := filepath.Join(tmpDir, "pkg1")
+	pkg2Dir := filepath.Join(tmpDir, "pkg2")
+	if err := os.MkdirAll(pkg1Dir, 0755); err != nil {
+		t.Fatalf("mkdir pkg1: %v", err)
+	}
+	if err := os.MkdirAll(pkg2Dir, 0755); err != nil {
+		t.Fatalf("mkdir pkg2: %v", err)
+	}
+
+	pkg2Code := `package pkg2
+
+type Inner struct {
+	Value int32
+}
+`
+	if err := os.WriteFile(filepath.Join(pkg2Dir, "inner.go"), []byte(pkg2Code), 0644); err != nil {
+		t.Fatalf("write pkg2: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg2Dir, "go.mod"), []byte("module pkg2\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write pkg2 go.mod: %v", err)
+	}
+
+	pkg1Code := `package pkg1
+
+import "pkg2"
+
+type Outer struct {
+	ID    int32
+	Child pkg2.Inner
+}
+`
+	if err := os.WriteFile(filepath.Join(pkg1Dir, "outer.go"), []byte(pkg1Code), 0644); err != nil {
+		t.Fatalf("write pkg1: %v", err)
+	}
+	pkg1Mod := "module pkg1\n\ngo 1.25.0\n\nrequire pkg2 v0.0.0\n\nreplace pkg2 => " + pkg2Dir + "\n"
+	if err := os.WriteFile(filepath.Join(pkg1Dir, "go.mod"), []byte(pkg1Mod), 0644); err != nil {
+		t.Fatalf("write pkg1 go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator([]string{pkg1Dir, pkg2Dir}, []string{"Outer"}, outPath, false, nil)
+
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	// Both Outer and Inner should be in the results
+	names := map[string]bool{}
+	for _, s := range structs {
+		names[s.Name] = true
+	}
+	if !names["Outer"] {
+		t.Errorf("Expected Outer struct in results, got: %v", structs)
+	}
+	if !names["Inner"] {
+		t.Errorf("Expected Inner struct in results (resolved natively from pkg2), got: %v", structs)
+	}
+
+	// Outer should have PkgPath/PkgName from pkg1
+	for _, s := range structs {
+		if s.Name == "Outer" {
+			if s.PkgName != "pkg1" {
+				t.Errorf("Outer.PkgName: want pkg1, got %s", s.PkgName)
+			}
+		}
+		if s.Name == "Inner" {
+			if s.PkgName != "pkg2" {
+				t.Errorf("Inner.PkgName: want pkg2, got %s", s.PkgName)
+			}
+		}
+	}
+
+	// Child field on Outer should be IsStruct=true (native Arrow struct, not marshal fallback)
+	for _, s := range structs {
+		if s.Name == "Outer" {
+			for _, f := range s.Fields {
+				if f.Name == "Child" {
+					if !f.IsStruct {
+						t.Errorf("Child field should be IsStruct=true (native Arrow struct resolution), got IsStruct=false. MarshalMethod=%q", f.MarshalMethod)
+					}
+					if f.StructName != "Inner" {
+						t.Errorf("Child StructName: want Inner, got %s", f.StructName)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestGenerator_AliasMapping tests parsing of --pkg-alias entries and error handling.
+func TestGenerator_AliasMapping(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "model.go")
+	testCode := `package mypkg
+
+type Person struct {
+	Name string
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out.go")
+
+	t.Run("valid-alias-applied", func(t *testing.T) {
+		g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, []string{"mypkg=mypkgalias"})
+		err := g.Run("writers")
+		if err != nil {
+			t.Fatalf("Run() failed: %v", err)
+		}
+		out, _ := os.ReadFile(outPath)
+		outStr := string(out)
+		if !strings.Contains(outStr, `mypkgalias "mypkg"`) {
+			t.Errorf("Expected aliased import mypkgalias \"mypkg\", got:\n%s", outStr)
+		}
+		if !strings.Contains(outStr, "row *mypkgalias.Person") {
+			t.Errorf("Expected row *mypkgalias.Person, got:\n%s", outStr)
+		}
+	})
+
+	t.Run("missing-equals-sign", func(t *testing.T) {
+		g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, []string{"noequalssign"})
+		err := g.Run("")
+		if err == nil {
+			t.Fatalf("Expected error for alias without '=', got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid --pkg-alias") {
+			t.Errorf("Expected 'invalid --pkg-alias' error, got: %v", err)
+		}
+	})
+
+	t.Run("empty-original", func(t *testing.T) {
+		g := NewGenerator([]string{tmpDir}, []string{"Person"}, outPath, false, []string{"=alias"})
+		err := g.Run("")
+		if err == nil {
+			t.Fatalf("Expected error for empty original in alias, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid --pkg-alias") {
+			t.Errorf("Expected 'invalid --pkg-alias' error, got: %v", err)
+		}
+	})
 }

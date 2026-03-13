@@ -46,7 +46,7 @@ type User struct {
 
 		// 3. Initiate our Code Generator logic targeting "User"
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"User"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"User"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -203,7 +203,7 @@ type ComplexUser struct {
 
 		// 3. Initiate our Code Generator logic targeting "ComplexUser"
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"ComplexUser"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"ComplexUser"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -405,7 +405,7 @@ type IntMapUser struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"IntMapUser"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"IntMapUser"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -675,7 +675,7 @@ type Profile struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"Profile"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"Profile"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -852,7 +852,7 @@ type PointMapUser struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"PointMapUser"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"PointMapUser"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -1004,7 +1004,7 @@ type IPAddresses struct {
 		}
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator(tmpDir, []string{"IPAddresses"}, outPath, false, "")
+		g := NewGenerator([]string{tmpDir}, []string{"IPAddresses"}, outPath, false, nil)
 		if err := g.Run(""); err != nil {
 			t.Fatalf("Generator.Run() failed: %v", err)
 		}
@@ -1155,6 +1155,196 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 
 		if false {
 			tarball(t, "/tmp/arrow-gen-slice-of-ip-addresses.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("multi-package-structs", func(t *testing.T) {
+		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
+		// This tests that Inner is resolved natively (Arrow StructBuilder) and that
+		// an external type (netip.Addr) in the same struct still uses the marshal fallback.
+		tmpDir := t.TempDir()
+
+		pkg1Dir := filepath.Join(tmpDir, "pkg1")
+		pkg2Dir := filepath.Join(tmpDir, "pkg2")
+		if err := os.MkdirAll(pkg1Dir, 0755); err != nil {
+			t.Fatalf("mkdir pkg1: %v", err)
+		}
+		if err := os.MkdirAll(pkg2Dir, 0755); err != nil {
+			t.Fatalf("mkdir pkg2: %v", err)
+		}
+
+		// pkg2: simple inner struct
+		pkg2Code := `package pkg2
+
+type Location struct {
+	Lat float64
+	Lon float64
+}
+`
+		if err := os.WriteFile(filepath.Join(pkg2Dir, "location.go"), []byte(pkg2Code), 0644); err != nil {
+			t.Fatalf("write pkg2: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(pkg2Dir, "go.mod"), []byte("module pkg2\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write pkg2 go.mod: %v", err)
+		}
+
+		// pkg1: outer struct with a native inner struct field and an external type field
+		pkg1Code := `package pkg1
+
+import (
+	"net/netip"
+	"pkg2"
+)
+
+type Device struct {
+	ID       int32
+	Position pkg2.Location
+	Addr     *netip.Addr
+}
+`
+		if err := os.WriteFile(filepath.Join(pkg1Dir, "device.go"), []byte(pkg1Code), 0644); err != nil {
+			t.Fatalf("write pkg1: %v", err)
+		}
+		pkg1Mod := "module pkg1\n\ngo 1.25.0\n\nrequire pkg2 v0.0.0\n\nreplace pkg2 => " + pkg2Dir + "\n"
+		if err := os.WriteFile(filepath.Join(pkg1Dir, "go.mod"), []byte(pkg1Mod), 0644); err != nil {
+			t.Fatalf("write pkg1 go.mod: %v", err)
+		}
+
+		// Generate the writer targeting Device, providing both packages
+		outPath := filepath.Join(pkg1Dir, "device_arrow_writer.go")
+		g := NewGenerator([]string{pkg1Dir, pkg2Dir}, []string{"Device"}, outPath, false, nil)
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		if _, err := os.Stat(outPath); os.IsNotExist(err) {
+			t.Fatalf("Expected output file was not generated")
+		}
+
+		testCode := `package pkg1
+
+import (
+	"database/sql"
+	"fmt"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"pkg2"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestMultiPackageArrowWriter(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	addr1 := netip.MustParseAddr("10.0.0.1")
+	d1 := Device{ID: 1, Position: pkg2.Location{Lat: 51.5, Lon: -0.1}, Addr: &addr1}
+	d2 := Device{ID: 2, Position: pkg2.Location{Lat: 40.7, Lon: -74.0}, Addr: nil}
+
+	writer.Append(&d1)
+	writer.Append(&d2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "devices.parquet")
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("new pqarrow writer: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open duckdb: %v", err)
+	}
+	defer db.Close()
+
+	// Verify id and addr columns; position is a nested struct verified via JSON cast
+	rows, err := db.Query(fmt.Sprintf(
+		"SELECT id, addr, position.lat, position.lon FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("duckdb query failed: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		id  int32
+		addr *string
+		lat float64
+		lon float64
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		if err := rows.Scan(&r.id, &r.addr, &r.lat, &r.lon); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Row 1: addr should equal "10.0.0.1"
+	if results[0].id != 1 {
+		t.Errorf("row1 id: want 1, got %d", results[0].id)
+	}
+	if results[0].addr == nil || *results[0].addr != "10.0.0.1" {
+		t.Errorf("row1 addr: want 10.0.0.1, got %v", results[0].addr)
+	}
+	if results[0].lat != 51.5 {
+		t.Errorf("row1 lat: want 51.5, got %f", results[0].lat)
+	}
+
+	// Row 2: addr should be nil
+	if results[1].id != 2 {
+		t.Errorf("row2 id: want 2, got %d", results[1].id)
+	}
+	if results[1].addr != nil {
+		t.Errorf("row2 addr: want nil, got %v", results[1].addr)
+	}
+}
+`
+		if err := os.WriteFile(filepath.Join(pkg1Dir, "device_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("write test: %v", err)
+		}
+
+		runCmd(t, pkg1Dir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, pkg1Dir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, pkg1Dir, "go", "mod", "tidy")
+
+		runCmd(t, pkg1Dir, "go", "test", "-v", "-run", "TestMultiPackageArrowWriter")
+
+		if false {
+			tarball(t, "/tmp/arrow-gen-multi-package.tar.gz", pkg1Dir)
 		}
 	})
 }

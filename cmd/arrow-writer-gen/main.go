@@ -10,9 +10,9 @@ import (
 
 func newRootCmd() *cobra.Command {
 	var (
-		inputPkg      string
+		inputPkgs     []string
 		outPkgName    string
-		pkgAlias      string
+		pkgAliases    []string
 		targetStructs []string
 		outPath       string
 		verbose       bool
@@ -25,7 +25,14 @@ func newRootCmd() *cobra.Command {
 Apache Arrow append writers for Go structs.
 
 Example usage:
-  arrow-writer-gen --pkg ./internal/model --structs User,Order --out custom_arrow_writer.go`,
+  # Single package
+  arrow-writer-gen --pkg ./internal/model --structs User,Order --out custom_arrow_writer.go
+
+  # Multiple packages (structs from pkg2 are resolved natively, not via marshal fallback)
+  arrow-writer-gen --pkg ./internal/model --pkg ./internal/types --structs Outer --out writer.go
+
+  # Alias a package to avoid name collisions (key is the full Go import path)
+  arrow-writer-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes --structs Outer --out writer.go`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(targetStructs) == 0 {
 				return fmt.Errorf("at least one target struct must be specified")
@@ -33,14 +40,14 @@ Example usage:
 
 			if verbose {
 				fmt.Printf("Generating Arrow writers for structs: %v\n", targetStructs)
-				fmt.Printf("Input package: %s\n", inputPkg)
+				fmt.Printf("Input packages: %v\n", inputPkgs)
 				if outPkgName != "" {
 					fmt.Printf("Output package override: %s\n", outPkgName)
 				}
 				fmt.Printf("Output file: %s\n", outPath)
 			}
 
-			gen := writergen.NewGenerator(inputPkg, targetStructs, outPath, verbose, pkgAlias)
+			gen := writergen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
 			if err := gen.Run(outPkgName); err != nil {
 				return err
 			}
@@ -50,9 +57,9 @@ Example usage:
 		},
 	}
 
-	cmd.Flags().StringVarP(&inputPkg, "pkg", "p", ".", "Input package directory containing the structs")
+	cmd.Flags().StringSliceVarP(&inputPkgs, "pkg", "p", []string{"."}, "Input package directories containing the structs (comma-separated or repeated flag)")
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
-	cmd.Flags().StringVarP(&pkgAlias, "pkg-alias", "a", "", "Alias for the imported input package")
+	cmd.Flags().StringSliceVarP(&pkgAliases, "pkg-alias", "a", nil, "Aliases for imported packages in 'importpath=alias' format (e.g. go.example.com/pkg=mypkg)")
 	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Specific struct(s) to generate writers for (comma-separated)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "arrow-writer-gen.go", "Output file path")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
