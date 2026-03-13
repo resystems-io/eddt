@@ -350,6 +350,20 @@ type IPAddresses struct {
 			},
 		},
 		{
+			name: "blank-identifier-field-skipped",
+			goCode: `package mypkg
+
+type Padded struct {
+	ID   int32
+	_    int32
+	Name string
+}
+`,
+			targetStruct:   "Padded",
+			mustContain:    []string{"row.ID", "row.Name", "NewPaddedArrowWriter"},
+			mustNotContain: []string{"row._"},
+		},
+		{
 			name: "pointer-to-named-primitive-type",
 			goCode: `package mypkg
 

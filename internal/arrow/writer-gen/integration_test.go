@@ -1147,6 +1147,118 @@ func TestFixedSizeArrayArrowWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("blank-identifier-field", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Padded struct {
+	ID   int32
+	_    int32
+	Name string
+}
+`, []string{"Padded"}, "")
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestBlankIdentifierFieldSkipped(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPaddedArrowWriter(pool)
+	defer writer.Release()
+
+	p1 := Padded{ID: 1, Name: "Alice"}
+	p2 := Padded{ID: 2, Name: "Bob"}
+
+	writer.Append(&p1)
+	writer.Append(&p2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	// Verify the schema has exactly 2 fields (ID, Name) — blank field excluded
+	if record.Schema().NumFields() != 2 {
+		t.Fatalf("expected 2 schema fields, got %d: %v", record.Schema().NumFields(), record.Schema())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "padded.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf("SELECT id, name FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		id   int32
+		name string
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		if err := rows.Scan(&r.id, &r.name); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	if results[0].id != 1 || results[0].name != "Alice" {
+		t.Errorf("row1: want {1, Alice}, got {%d, %s}", results[0].id, results[0].name)
+	}
+	if results[1].id != 2 || results[1].name != "Bob" {
+		t.Errorf("row2: want {2, Bob}, got {%d, %s}", results[1].id, results[1].name)
+	}
+}
+`
+
+		runInnerTest(t, tmpDir, testCode, "TestBlankIdentifierFieldSkipped")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

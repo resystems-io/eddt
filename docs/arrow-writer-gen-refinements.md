@@ -100,17 +100,18 @@ dependency and effort.
 
 These must be fixed first because they produce output that does not compile.
 
-- [ ] **B2: Skip blank-identifier fields** — In `Parse()`, filter out fields where
-  `field.Names[0].Name == "_"`. This is the smallest, safest fix and prevents a
-  compile error in the generated output.
-  - Files: `generator.go` (parse loop), `generator_test.go` (new test case)
-
 - [x] **B1: Support fixed-size arrays** *(2026-03-13)* — `[N]T` is now mapped to
   `arrow.FixedSizeListOfNonNullable(N, T)` with `*array.FixedSizeListBuilder`.
   No nil check is generated (arrays are value types). Element iteration uses
   the same dispatch logic as variable-length lists.
   - Files: `generator.go` (`mapToFieldInfo` ArrayType case, `FieldInfo` struct),
     `template.go` (new `IsFixedSizeList` branch), `generator_test.go`
+
+- [x] **B2: Skip blank-identifier fields** *(2026-03-13)* — In `Parse()`, blank-
+  identifier fields (`_ T`) are now filtered out with a `fieldName == "_"` guard.
+  This prevents the generator from emitting `row._` which does not compile.
+  - Files: `generator.go` (parse loop), `generator_test.go` (new table case),
+    `integration_test.go` (new `blank-identifier-field` subtest)
 
 - [ ] **B3: Handle nested slices (`[][]T`)** — Two options:
   - **(a) Skip with warning** — detect when the slice element is itself a list
@@ -192,3 +193,4 @@ Record completed items here with date (check git blame for the git commit).
 |------------|------|---------------------------------------------------------|
 | 2026-03-13 | M1   | Added `rune` to `case "int32"` in `mapToArrowType`      |
 | 2026-03-13 | B1   | Fixed-size arrays mapped to `FixedSizeListOfNonNullable` |
+| 2026-03-13 | B2   | Blank-identifier fields (`_`) filtered out during parse  |

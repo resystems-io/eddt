@@ -161,6 +161,9 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 						}
 
 						fieldName := field.Names[0].Name
+						if fieldName == "_" {
+							continue // blank-identifier fields are padding; skip
+						}
 						fieldInfo, err := mapToFieldInfo(pkg, allPkgs, fieldName, field.Type, &queue, processed)
 						if err != nil {
 							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
