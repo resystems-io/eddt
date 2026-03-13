@@ -152,9 +152,44 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 						PkgName: pkg.Name,
 					}
 
+					// Pre-scan: collect explicitly named fields for shadowing detection.
+					explicitNames := map[string]bool{}
 					for _, field := range st.Fields.List {
+						for _, name := range field.Names {
+							if name.Name != "_" {
+								explicitNames[name.Name] = true
+							}
+						}
+					}
+
+					// Pre-resolve embedded fields for cross-embedding ambiguity detection.
+					// A promoted field name that appears from multiple embeddings is
+					// ambiguous in Go (neither is accessible) and must be skipped.
+					embeddedByIdx := make([][]FieldInfo, len(st.Fields.List))
+					promotedCount := map[string]int{}
+					for i, field := range st.Fields.List {
+						if len(field.Names) != 0 {
+							continue
+						}
+						promoted := resolveEmbeddedFields(pkg, allPkgs, field, &queue, processed)
+						embeddedByIdx[i] = promoted
+						for _, fi := range promoted {
+							promotedCount[fi.Name]++
+						}
+					}
+
+					// Process fields in declaration order, interleaving promoted fields
+					// at the position of their embedding.
+					for i, field := range st.Fields.List {
 						if len(field.Names) == 0 {
-							continue // Skip embedded fields for now
+							// Embedded field — include non-shadowed, non-ambiguous promoted fields.
+							for _, fi := range embeddedByIdx[i] {
+								if explicitNames[fi.Name] || promotedCount[fi.Name] > 1 {
+									continue
+								}
+								info.Fields = append(info.Fields, fi)
+							}
+							continue
 						}
 
 						fieldName := field.Names[0].Name
@@ -485,6 +520,99 @@ func mapStructField(name string, structName string, pkgName string, pkgPath stri
 		IsPointer:    isPointer,
 		StructName:   structName,
 	}
+}
+
+// resolveEmbeddedFields resolves an embedded struct field and returns its
+// promoted fields as flattened FieldInfo entries. The embedded struct itself
+// is NOT added to the processing queue — only struct types referenced by its
+// fields are queued (via mapToFieldInfo).
+//
+// Returns nil if the embedded type cannot be resolved, is not a struct, is a
+// pointer embedding, or its package is not loaded.
+func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, field *ast.Field, queue *[]string, processed map[string]bool) []FieldInfo {
+	// Detect pointer embedding (*Base) — skip for now.
+	fieldType := field.Type
+	if _, isPtr := fieldType.(*ast.StarExpr); isPtr {
+		fmt.Println("Warning: Skipping pointer-embedded struct (not yet supported)")
+		return nil
+	}
+
+	// Resolve the type via the type checker.
+	typ := pkg.TypesInfo.TypeOf(fieldType)
+	if typ == nil {
+		return nil
+	}
+
+	named, ok := typ.(*types.Named)
+	if !ok {
+		fmt.Printf("Warning: Embedded type %s is not a named type; skipping\n", typ)
+		return nil
+	}
+
+	if _, isStruct := named.Underlying().(*types.Struct); !isStruct {
+		fmt.Printf("Warning: Embedded type %s is not a struct; skipping\n", named.Obj().Name())
+		return nil
+	}
+
+	// Find the loaded package containing the embedded struct.
+	embObjPkg := named.Obj().Pkg()
+	if embObjPkg == nil {
+		return nil
+	}
+	loadedPkg := findPkgByPath(allPkgs, embObjPkg.Path())
+	if loadedPkg == nil {
+		fmt.Printf("Warning: Package %s for embedded struct %s is not loaded; skipping\n",
+			embObjPkg.Path(), named.Obj().Name())
+		return nil
+	}
+
+	// Find the struct's AST declaration.
+	structName := named.Obj().Name()
+	var structType *ast.StructType
+	for _, file := range loadedPkg.Syntax {
+		ast.Inspect(file, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != structName {
+				return true
+			}
+			if st, ok := ts.Type.(*ast.StructType); ok {
+				structType = st
+			}
+			return false
+		})
+		if structType != nil {
+			break
+		}
+	}
+
+	if structType == nil {
+		fmt.Printf("Warning: Could not find AST declaration for embedded struct %s\n", structName)
+		return nil
+	}
+
+	// Iterate fields and build FieldInfo entries.
+	var fields []FieldInfo
+	for _, embField := range structType.Fields.List {
+		if len(embField.Names) == 0 {
+			// Nested embedding — skip (depth-1 flattening only).
+			continue
+		}
+
+		embFieldName := embField.Names[0].Name
+		if embFieldName == "_" {
+			continue
+		}
+
+		fieldInfo, err := mapToFieldInfo(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
+		if err != nil {
+			fmt.Printf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
+			continue
+		}
+
+		fields = append(fields, fieldInfo)
+	}
+
+	return fields
 }
 
 // mapToArrowType maps a primitive Go AST expression to its primitive Arrow type representation

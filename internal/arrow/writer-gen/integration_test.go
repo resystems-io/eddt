@@ -1631,6 +1631,122 @@ func TestNestedMaps(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestNestedMaps")
 	})
 
+	t.Run("embedded-struct", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Base struct {
+	ID        int32
+	CreatedAt string
+}
+
+type Device struct {
+	Base
+	Name string
+}
+`, []string{"Device"}, "")
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestEmbeddedStruct(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	d1 := Device{Base: Base{ID: 1, CreatedAt: "2026-01-01"}, Name: "sensor-a"}
+	d2 := Device{Base: Base{ID: 2, CreatedAt: "2026-01-02"}, Name: "sensor-b"}
+
+	writer.Append(&d1)
+	writer.Append(&d2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+	// Schema should have 3 flat columns: ID, CreatedAt, Name (no nested struct)
+	if record.NumCols() != 3 {
+		t.Fatalf("expected 3 flat columns, got %d", record.NumCols())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "devices.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("new pqarrow writer: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open duckdb: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf(
+		"SELECT \"ID\", \"CreatedAt\", \"Name\" FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		id        int32
+		createdAt string
+		name      string
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		if err := rows.Scan(&r.id, &r.createdAt, &r.name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(results))
+	}
+
+	if results[0].id != 1 || results[0].createdAt != "2026-01-01" || results[0].name != "sensor-a" {
+		t.Errorf("row1: want {1, 2026-01-01, sensor-a}, got %+v", results[0])
+	}
+	if results[1].id != 2 || results[1].createdAt != "2026-01-02" || results[1].name != "sensor-b" {
+		t.Errorf("row2: want {2, 2026-01-02, sensor-b}, got %+v", results[1])
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestEmbeddedStruct")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

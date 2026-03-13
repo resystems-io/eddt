@@ -487,6 +487,147 @@ type Device struct {
 			targetStruct: "Device",
 			mustContain:  []string{`{Name: "ID",`, `{Name: "State",`},
 		},
+		{
+			name: "embedded-struct-flattened",
+			goCode: `package mypkg
+
+type Base struct {
+	ID        int32
+	CreatedAt string
+}
+
+type Device struct {
+	Base
+	Name string
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				"row.ID",
+				"row.CreatedAt",
+				"row.Name",
+				`{Name: "ID",`,
+				`{Name: "CreatedAt",`,
+				`{Name: "Name",`,
+				"NewDeviceArrowWriter",
+			},
+			mustNotContain: []string{
+				"row.Base",
+				"NewBaseSchema",
+				"AppendBaseStruct",
+			},
+		},
+		{
+			name: "embedded-struct-shadowed-field",
+			goCode: `package mypkg
+
+type Base struct {
+	ID   int32
+	Name string
+}
+
+type Device struct {
+	Base
+	Name  string
+	Label string
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				"row.ID",
+				"row.Name",
+				"row.Label",
+				`{Name: "ID",`,
+				`{Name: "Name",`,
+				`{Name: "Label",`,
+			},
+			mustNotContain: []string{
+				"AppendBaseStruct",
+			},
+		},
+		{
+			name: "embedded-non-struct-skipped",
+			goCode: `package mypkg
+
+type MyString string
+
+type Container struct {
+	MyString
+	Value int32
+}
+`,
+			targetStruct:   "Container",
+			mustContain:    []string{"row.Value"},
+			mustNotContain: []string{"MyString"},
+		},
+		{
+			name: "pointer-embedded-struct-skipped",
+			goCode: `package mypkg
+
+type Base struct {
+	ID int32
+}
+
+type Device struct {
+	*Base
+	Name string
+}
+`,
+			targetStruct:   "Device",
+			mustContain:    []string{"row.Name"},
+			mustNotContain: []string{"row.ID", "AppendBaseStruct"},
+		},
+		{
+			name: "embedded-struct-field-ordering",
+			goCode: `package mypkg
+
+type Meta struct {
+	Version int32
+}
+
+type Device struct {
+	Name string
+	Meta
+	Label string
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				`{Name: "Name",`,
+				`{Name: "Version",`,
+				`{Name: "Label",`,
+			},
+		},
+		{
+			name: "embedded-cross-ambiguity-skipped",
+			goCode: `package mypkg
+
+type Base1 struct {
+	ID    int32
+	Alpha string
+}
+
+type Base2 struct {
+	ID   int32
+	Beta string
+}
+
+type Device struct {
+	Base1
+	Base2
+	Name string
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				"row.Alpha",
+				"row.Beta",
+				"row.Name",
+			},
+			mustNotContain: []string{
+				"row.ID", // ambiguous — promoted by both Base1 and Base2
+			},
+		},
 	}
 
 	for _, tt := range tests {

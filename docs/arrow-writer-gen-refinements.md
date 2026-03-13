@@ -80,7 +80,7 @@ the user's build.
 
 | ID | Go Pattern | Issue |
 |----|-----------|-------|
-| S1 | Embedded structs (`type T struct { Base; Name string }`) | Embedded fields have `len(field.Names) == 0` and are silently skipped. The embedded struct's fields (e.g. `Base.ID`) are lost from the Arrow schema. This is a common Go idiom; users will expect the promoted fields to appear in the output. |
+| S1 | Embedded structs (`type T struct { Base; Name string }`) | ~~Embedded fields have `len(field.Names) == 0` and are silently skipped.~~ **Fixed (2026-03-14).** Promoted fields are now flattened into the parent schema. Pointer-embedded structs (`*Base`) are skipped with warning (future work). |
 | S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | `FieldInfo` uses flat `Val*` fields to describe one level of element nesting, limiting nested slices to depth 2 and requiring ad-hoc fields for each new nesting pattern (B4, B5). A recursive `FieldInfo` (with `EltInfo *FieldInfo` and `KeyInfo *FieldInfo`) would remove the depth limit and unify the duplicated element dispatch logic in the template. |
 
 ### 1.5 Debatable / Low Priority
@@ -139,18 +139,17 @@ These must be fixed first because they produce output that does not compile.
 
 ### Priority 3 — Structural Enhancements
 
-- [ ] **S1: Flatten embedded struct fields** — When `len(field.Names) == 0` in the
-  parse loop, resolve the embedded type. If it is a struct (local or cross-package),
-  recursively include its fields in the parent struct's `FieldInfo` list (flattening).
-  This mirrors Go's own field promotion semantics.
-  - Considerations:
-    - Embedded pointer-to-struct (`*Base`) should also be handled; the promoted
-      fields become nullable.
-    - Name collisions between promoted fields and explicitly declared fields
-      should follow Go's shadowing rules (explicit field wins).
-    - Embedded non-struct types (e.g. `type T struct { string }`) can be skipped.
-  - Files: `generator.go` (parse loop + new helper), `generator_test.go`,
-    `integration_test.go` (new sub-test)
+- [x] **S1: Flatten embedded struct fields** *(2026-03-14)* — Embedded struct
+  fields (`type T struct { Base; ... }`) are now flattened: promoted fields
+  appear as top-level Arrow columns rather than a nested struct. A two-pass
+  approach in the parse loop handles shadowing (explicit field wins) and
+  cross-embedding ambiguity (field promoted by multiple embeddings is skipped).
+  Pointer-embedded structs (`*Base`) are skipped with a warning (future work).
+  Embedded non-struct types are skipped. Depth-1 flattening only (nested
+  embeddings within the embedded struct are not recursed).
+  - Files: `generator.go` (`resolveEmbeddedFields` helper, parse loop restructured),
+    `generator_test.go` (6 new test cases), `integration_test.go` (new `embedded-struct`
+    subtest with Parquet/DuckDB round-trip)
 
 - [x] **S2: Recursive `FieldInfo` for arbitrary nesting depth** *(2026-03-14)* —
   Replaced 11 flat `Val*`/`Key*` fields with two recursive pointers:
@@ -209,3 +208,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | S2   | Recursive `FieldInfo` with `EltInfo`/`KeyInfo`; recursive `appendValue` template |
 | 2026-03-14 | B4   | `map[K][]V` resolved by S2                              |
 | 2026-03-14 | B5   | `map[K]map[K2]V` resolved by S2                         |
+| 2026-03-14 | S1   | Embedded struct fields flattened into parent Arrow schema |
