@@ -187,6 +187,18 @@ func mapToFieldInfo(pkg *packages.Package, name string, expr ast.Expr, queue *[]
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 
 	case *ast.ArrayType:
+		// []byte is represented as Arrow Binary, not a List of Uint8
+		// This uses Arrow's canonical representation for byte slices, which is more efficient than a list.
+		if eltIdent, ok := t.Elt.(*ast.Ident); ok && eltIdent.Name == "byte" {
+			return FieldInfo{
+				Name:         name,
+				GoType:       "[]byte",
+				ArrowType:    "arrow.BinaryTypes.Binary",
+				ArrowBuilder: "*array.BinaryBuilder",
+				CastType:     "[]byte",
+			}, nil
+		}
+
 		// Slice type
 		eltInfo, err := mapToFieldInfo(pkg, "", t.Elt, queue, processed)
 		if err != nil {
@@ -411,7 +423,7 @@ func mapToArrowType(expr ast.Expr) (string, string, string, string, error) {
 		arrowType = "arrow.PrimitiveTypes.Int64"
 		arrowBuilder = "*array.Int64Builder"
 		castType = "int64"
-	case "uint8":
+	case "uint8", "byte":
 		arrowType = "arrow.PrimitiveTypes.Uint8"
 		arrowBuilder = "*array.Uint8Builder"
 		castType = "uint8"

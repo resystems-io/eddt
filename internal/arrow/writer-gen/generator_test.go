@@ -17,12 +17,14 @@ func TestGenerator_Parse(t *testing.T) {
 	testCode := `package testpkg
 
 type SimpleStruct struct {
-	ID    int32
-	Name  string
-	Valid bool
-	Value  float64
-	Tags   []string
-	Scores map[string]float64
+	ID         int32
+	Name       string
+	Valid      bool
+	Value      float64
+	Tags       []string
+	Scores     map[string]float64
+	SingleByte byte
+	ByteSlice  []byte
 }
 
 type IgnoredStruct struct {
@@ -83,6 +85,8 @@ type IgnoredStruct struct {
 				KeyCastType:     "string",
 				ValCastType:     "float64",
 			},
+			{Name: "SingleByte", GoType: "byte", ArrowType: "arrow.PrimitiveTypes.Uint8", ArrowBuilder: "*array.Uint8Builder", CastType: "uint8"},
+			{Name: "ByteSlice", GoType: "[]byte", ArrowType: "arrow.BinaryTypes.Binary", ArrowBuilder: "*array.BinaryBuilder", CastType: "[]byte"},
 		},
 	}
 
@@ -104,6 +108,7 @@ func TestMapToArrowType(t *testing.T) {
 		{"bool", "bool", "arrow.FixedWidthTypes.Boolean", "*array.BooleanBuilder", false},
 		{"uint64", "uint64", "arrow.PrimitiveTypes.Uint64", "*array.Uint64Builder", false},
 		{"float64", "float64", "arrow.PrimitiveTypes.Float64", "*array.Float64Builder", false},
+		{"byte", "byte", "arrow.PrimitiveTypes.Uint8", "*array.Uint8Builder", false},
 		{"unknown", "", "", "", true},
 	}
 
