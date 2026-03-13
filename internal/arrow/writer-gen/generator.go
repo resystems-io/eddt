@@ -32,6 +32,9 @@ type FieldInfo struct {
 	ValStructName    string // If ValIsStruct is true, the name of that struct
 	MarshalMethod    string // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
 	ValMarshalMethod string // Serialization method for list/map value external types
+	ValIsList          bool   // True if list/fixed-size-list element is itself a list ([][]T)
+	ValValArrowBuilder string // Inner list element's arrow builder (for [][]T)
+	ValValCastType     string // Inner list element's cast type (for [][]T)
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -255,12 +258,17 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 				return FieldInfo{}, fmt.Errorf("fixed-size array element %w", err)
 			}
 
+			// Reject nesting deeper than two levels (e.g. [N][][]T).
+			if eltInfo.ValIsList {
+				return FieldInfo{}, fmt.Errorf("fixed-size array of triple-nested slices is not supported")
+			}
+
 			arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lit.Value, eltInfo.ArrowType)
 			if eltInfo.IsStruct {
 				arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lit.Value, eltInfo.StructName)
 			}
 
-			return FieldInfo{
+			fi := FieldInfo{
 				Name:             name,
 				GoType:           fmt.Sprintf("[%s]%s", lit.Value, eltInfo.GoType),
 				ArrowType:        arrowType,
@@ -273,7 +281,17 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 				ValIsPointer:     eltInfo.IsPointer,
 				ValStructName:    eltInfo.StructName,
 				ValMarshalMethod: eltInfo.MarshalMethod,
-			}, nil
+			}
+
+			// Propagate nested list metadata ([N][]T).
+			if eltInfo.IsList {
+				fi.ValIsList = true
+				fi.ValArrowBuilder = eltInfo.ArrowBuilder
+				fi.ValValArrowBuilder = eltInfo.ValArrowBuilder
+				fi.ValValCastType = eltInfo.ValCastType
+			}
+
+			return fi, nil
 		}
 
 		// []byte is represented as Arrow Binary, not a List of Uint8.
@@ -293,12 +311,17 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
 
+		// Reject nesting deeper than two levels (e.g. [][][]T).
+		if eltInfo.ValIsList {
+			return FieldInfo{}, fmt.Errorf("triple-nested slices ([][][]T) are not supported")
+		}
+
 		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
 		if eltInfo.IsStruct {
 			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
 		}
 
-		return FieldInfo{
+		fi := FieldInfo{
 			Name:             name,
 			GoType:           "[]" + eltInfo.GoType,
 			ArrowType:        arrowType,
@@ -311,7 +334,17 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			ValIsPointer:     eltInfo.IsPointer,
 			ValStructName:    eltInfo.StructName,
 			ValMarshalMethod: eltInfo.MarshalMethod,
-		}, nil
+		}
+
+		// Propagate nested list metadata ([][]T).
+		if eltInfo.IsList {
+			fi.ValIsList = true
+			fi.ValArrowBuilder = eltInfo.ArrowBuilder // *array.ListBuilder for inner list
+			fi.ValValArrowBuilder = eltInfo.ValArrowBuilder
+			fi.ValValCastType = eltInfo.ValCastType
+		}
+
+		return fi, nil
 
 	case *ast.MapType:
 		// Map type

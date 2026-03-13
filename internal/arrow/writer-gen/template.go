@@ -151,6 +151,16 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			}
 			{{- end}}
 			{{- end}}
+			{{- else if $field.ValIsList}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				valBldr.Append(true)
+				innerBldr := valBldr.ValueBuilder().({{$field.ValValArrowBuilder}})
+				for _, iv := range v {
+					innerBldr.Append({{$field.ValValCastType}}(iv))
+				}
+			}
 			{{- else}}
 			{{- if $field.ValIsPointer}}
 			if v == nil {
@@ -213,6 +223,16 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			}
 			{{- end}}
 			{{- end}}
+			{{- else if $field.ValIsList}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				valBldr.Append(true)
+				innerBldr := valBldr.ValueBuilder().({{$field.ValValArrowBuilder}})
+				for _, iv := range v {
+					innerBldr.Append({{$field.ValValCastType}}(iv))
+				}
+			}
 			{{- else}}
 			{{- if $field.ValIsPointer}}
 			if v == nil {

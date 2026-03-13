@@ -1259,6 +1259,203 @@ func TestBlankIdentifierFieldSkipped(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestBlankIdentifierFieldSkipped")
 	})
 
+	t.Run("nested-slices", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Matrix struct {
+	ID   int32
+	Grid [][]int32
+	Tags [][]string
+}
+`, []string{"Matrix"}, "")
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestNestedSlices(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMatrixArrowWriter(pool)
+	defer writer.Release()
+
+	m1 := Matrix{
+		ID:   1,
+		Grid: [][]int32{{1, 2, 3}, {4, 5}},
+		Tags: [][]string{{"a", "b"}, {"c"}},
+	}
+	m2 := Matrix{
+		ID:   2,
+		Grid: [][]int32{{10}},
+		Tags: [][]string{{"x", "y", "z"}},
+	}
+	m3 := Matrix{
+		ID:   3,
+		Grid: nil,         // nil outer slice
+		Tags: [][]string{nil, {"d"}}, // nil inner slice
+	}
+
+	writer.Append(&m1)
+	writer.Append(&m2)
+	writer.Append(&m3)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "matrix.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf("SELECT id, grid, tags FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		id   int32
+		grid [][]int32
+		tags [][]string
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		var gridIf *[]interface{}
+		var tagsIf *[]interface{}
+		if err := rows.Scan(&r.id, &gridIf, &tagsIf); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+
+		if gridIf != nil {
+			for _, outerRaw := range *gridIf {
+				if outerRaw == nil {
+					r.grid = append(r.grid, nil)
+					continue
+				}
+				outer := outerRaw.([]interface{})
+				var inner []int32
+				for _, v := range outer {
+					switch val := v.(type) {
+					case int32:
+						inner = append(inner, val)
+					case int64:
+						inner = append(inner, int32(val))
+					default:
+						t.Fatalf("unexpected grid element type: %T", v)
+					}
+				}
+				r.grid = append(r.grid, inner)
+			}
+		}
+
+		if tagsIf != nil {
+			for _, outerRaw := range *tagsIf {
+				if outerRaw == nil {
+					r.tags = append(r.tags, nil)
+					continue
+				}
+				outer := outerRaw.([]interface{})
+				var inner []string
+				for _, v := range outer {
+					inner = append(inner, v.(string))
+				}
+				r.tags = append(r.tags, inner)
+			}
+		}
+
+		results = append(results, r)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("Expected 3 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1
+	if results[0].id != 1 {
+		t.Errorf("row1 id: want 1, got %d", results[0].id)
+	}
+	wantGrid1 := [][]int32{{1, 2, 3}, {4, 5}}
+	if !reflect.DeepEqual(results[0].grid, wantGrid1) {
+		t.Errorf("row1 grid: want %v, got %v", wantGrid1, results[0].grid)
+	}
+	wantTags1 := [][]string{{"a", "b"}, {"c"}}
+	if !reflect.DeepEqual(results[0].tags, wantTags1) {
+		t.Errorf("row1 tags: want %v, got %v", wantTags1, results[0].tags)
+	}
+
+	// Row 2
+	if results[1].id != 2 {
+		t.Errorf("row2 id: want 2, got %d", results[1].id)
+	}
+	wantGrid2 := [][]int32{{10}}
+	if !reflect.DeepEqual(results[1].grid, wantGrid2) {
+		t.Errorf("row2 grid: want %v, got %v", wantGrid2, results[1].grid)
+	}
+
+	// Row 3: nil outer grid
+	if results[2].id != 3 {
+		t.Errorf("row3 id: want 3, got %d", results[2].id)
+	}
+	if results[2].grid != nil {
+		t.Errorf("row3 grid: want nil, got %v", results[2].grid)
+	}
+	// Row 3: tags has nil inner + non-nil inner
+	if len(results[2].tags) != 2 {
+		t.Fatalf("row3 tags: want 2 entries, got %d", len(results[2].tags))
+	}
+	if results[2].tags[0] != nil {
+		t.Errorf("row3 tags[0]: want nil, got %v", results[2].tags[0])
+	}
+	wantTags3_1 := []string{"d"}
+	if !reflect.DeepEqual(results[2].tags[1], wantTags3_1) {
+		t.Errorf("row3 tags[1]: want %v, got %v", wantTags3_1, results[2].tags[1])
+	}
+}
+`
+
+		runInnerTest(t, tmpDir, testCode, "TestNestedSlices")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

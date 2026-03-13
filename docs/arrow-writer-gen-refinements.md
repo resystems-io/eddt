@@ -81,6 +81,7 @@ the user's build.
 | ID | Go Pattern | Issue |
 |----|-----------|-------|
 | S1 | Embedded structs (`type T struct { Base; Name string }`) | Embedded fields have `len(field.Names) == 0` and are silently skipped. The embedded struct's fields (e.g. `Base.ID`) are lost from the Arrow schema. This is a common Go idiom; users will expect the promoted fields to appear in the output. |
+| S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | `FieldInfo` uses flat `Val*` fields to describe one level of element nesting, limiting nested slices to depth 2 and requiring ad-hoc fields for each new nesting pattern (B4, B5). A recursive `FieldInfo` (with `EltInfo *FieldInfo` and `KeyInfo *FieldInfo`) would remove the depth limit and unify the duplicated element dispatch logic in the template. |
 
 ### 1.5 Debatable / Low Priority
 
@@ -113,15 +114,16 @@ These must be fixed first because they produce output that does not compile.
   - Files: `generator.go` (parse loop), `generator_test.go` (new table case),
     `integration_test.go` (new `blank-identifier-field` subtest)
 
-- [ ] **B3: Handle nested slices (`[][]T`)** — Two options:
-  - **(a) Skip with warning** — detect when the slice element is itself a list
-    (`eltInfo.IsList == true`) and return an error. Safest short-term fix.
-  - **(b) Implement recursive list append** — the template would need to emit a
-    nested loop with a second `ListBuilder.Append(true)` + element iteration.
-    This requires a template redesign (recursive `appendFields` or a dedicated
-    `appendListValue` sub-template).
-  - Recommended: option (a) first, option (b) as a follow-up if users need it.
-  - Files: `generator.go`, `template.go` (if option b), `generator_test.go`
+- [x] **B3: Support nested slices (`[][]T`)** *(2026-03-13)* — Implemented option
+  (b): recursive list append. When the slice element is itself a list, `FieldInfo`
+  now carries `ValIsList`, `ValValArrowBuilder`, and `ValValCastType` to describe
+  the inner list. The template emits a nested loop: the outer `valBldr.Append(true)`
+  starts a new inner list, then `innerBldr` iterates the inner elements. Nesting
+  deeper than two levels (`[][][]T`) is rejected with a warning during parse.
+  - Files: `generator.go` (`FieldInfo` + slice/fixed-size-array cases),
+    `template.go` (new `ValIsList` branch in `IsList` and `IsFixedSizeList`),
+    `generator_test.go` (two new table cases),
+    `integration_test.go` (new `nested-slices` subtest)
 
 - [ ] **B4: Handle `map[K][]V`** — Same two options as B3. When `valInfo.IsList`
   is true in the MapType case, either skip with warning or implement nested
@@ -154,6 +156,28 @@ These must be fixed first because they produce output that does not compile.
     - Embedded non-struct types (e.g. `type T struct { string }`) can be skipped.
   - Files: `generator.go` (parse loop + new helper), `generator_test.go`,
     `integration_test.go` (new sub-test)
+
+- [ ] **S2: Recursive `FieldInfo` for arbitrary nesting depth** — The current
+  `FieldInfo` uses flat `Val*` fields (`ValIsList`, `ValValArrowBuilder`, etc.)
+  to describe one level of element nesting. This limits nested slices to `[][]T`
+  (depth 2) and means B4 (`map[K][]V`) and B5 (`map[K]map[K2]V`) each require
+  their own ad-hoc fields. A cleaner approach is to make `FieldInfo` recursive:
+  replace the `Val*` fields with `EltInfo *FieldInfo` (and `KeyInfo *FieldInfo`
+  for maps). The template's element dispatch logic — currently duplicated across
+  the `IsList`, `IsFixedSizeList`, and `IsMap` branches — would collapse into a
+  single recursive `appendValue` sub-template that recurses when
+  `EltInfo.IsList` is true and emits leaf appends otherwise.
+  - Benefits:
+    - Supports arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.)
+    - DRYs up the three near-identical element dispatch blocks in `template.go`
+    - Naturally solves B4 and B5 without further ad-hoc `FieldInfo` fields
+  - Trade-offs:
+    - Touches every part of the pipeline: `FieldInfo` struct, `mapToFieldInfo`,
+      template rendering, and all test assertions that reference `Val*` fields
+    - Larger refactor scope — should be done as a dedicated pass
+  - Files: `generator.go` (`FieldInfo` restructure, `mapToFieldInfo`),
+    `template.go` (recursive sub-template), `generator_test.go`,
+    `integration_test.go`
 
 ### Priority 4 — Debatable / Future
 
@@ -194,3 +218,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-13 | M1   | Added `rune` to `case "int32"` in `mapToArrowType`      |
 | 2026-03-13 | B1   | Fixed-size arrays mapped to `FixedSizeListOfNonNullable` |
 | 2026-03-13 | B2   | Blank-identifier fields (`_`) filtered out during parse  |
+| 2026-03-13 | B3   | Nested slices (`[][]T`) supported via recursive list append |

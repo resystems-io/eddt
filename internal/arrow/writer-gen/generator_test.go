@@ -364,6 +364,39 @@ type Padded struct {
 			mustNotContain: []string{"row._"},
 		},
 		{
+			name: "triple-nested-slice-skipped",
+			goCode: `package mypkg
+
+type Deep struct {
+	ID    int32
+	Cube  [][][]int32
+}
+`,
+			targetStruct:   "Deep",
+			mustContain:    []string{"row.ID"},
+			mustNotContain: []string{"row.Cube", "Cube"},
+		},
+		{
+			name: "nested-slice",
+			goCode: `package mypkg
+
+type Matrix struct {
+	ID   int32
+	Grid [][]int32
+	Tags [][]string
+}
+`,
+			targetStruct: "Matrix",
+			mustContain: []string{
+				"arrow.ListOf(arrow.ListOf(",
+				"NewMatrixArrowWriter",
+				"valBldr.Append(true)",
+				"innerBldr",
+				"for _, iv := range v",
+			},
+			mustNotContain: []string{},
+		},
+		{
 			name: "pointer-to-named-primitive-type",
 			goCode: `package mypkg
 
