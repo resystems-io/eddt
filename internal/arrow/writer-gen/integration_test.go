@@ -22,11 +22,7 @@ func TestEndToEndIntegration(t *testing.T) {
 	}
 
 	t.Run("simple-struct", func(t *testing.T) {
-		// 1. Create a dummy package directory
-		tmpDir := t.TempDir()
-
-		// 2. Write the Go struct definition payload
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type User struct {
 	ID    int32
@@ -34,29 +30,8 @@ type User struct {
 	Score float64
 	Valid bool
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
+`, []string{"User"}, "")
 
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		// 3. Initiate our Code Generator logic targeting "User"
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"User"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		// 4. Validate output file exists
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
-
-		// 5. Write the testing harness (dummy_test.go) that incorporates DuckDB & Parquet
 		testCode := `package dummy
 
 import (
@@ -160,60 +135,23 @@ func TestArrowMemoryAndDuckDB(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
+		runInnerTest(t, tmpDir, testCode, "")
 
-		// Get supporting libraries
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		// Execute test!
-		runCmd(t, tmpDir, "go", "test", "-v", ".")
-
-		// Create a tarball of the temp directory for debugging.
 		if false {
 			tarball(t, "/tmp/arrow-gen-simple.tar.gz", tmpDir)
 		}
 	})
 
 	t.Run("lists-and-maps", func(t *testing.T) {
-		// 1. Create a dummy package directory
-
-		tmpDir := t.TempDir()
-
-		// 2. Write the Go struct definition payload
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type ComplexUser struct {
 	ID     int32
 	Tags   []string
 	Scores map[string]float64
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
+`, []string{"ComplexUser"}, "")
 
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		// 3. Initiate our Code Generator logic targeting "ComplexUser"
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"ComplexUser"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		// 4. Validate output file exists
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
-
-		// 5. Write the testing harness (dummy_test.go) that incorporates DuckDB & Parquet
 		testCode := `package dummy
 
 import (
@@ -313,7 +251,7 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 	defer rows.Close()
 
 	type MapEntry struct {
-		Key   string  ` + "`" + `duckdb:"key"` + "`" + `
+		Key   string ` + "`" + `duckdb:"key"` + "`" + `
 		Value float64 ` + "`" + `duckdb:"value"` + "`" + `
 	}
 
@@ -364,28 +302,15 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
+		runInnerTest(t, tmpDir, testCode, "")
 
-		// Get supporting libraries
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		// Execute test!
-		runCmd(t, tmpDir, "go", "test", "-v", ".")
-
-		// Create a tarball of the temp directory for debugging.
 		if false {
 			tarball(t, "/tmp/arrow-gen-list-and-map.tar.gz", tmpDir)
 		}
 	})
 
 	t.Run("int-map", func(t *testing.T) {
-		tmpDir := t.TempDir()
-
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type IntMapUser struct {
 	ID   int32
@@ -394,25 +319,7 @@ type IntMapUser struct {
 	Map3 map[int64]float64
 	Map4 map[int32]bool
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
-
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"IntMapUser"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
+`, []string{"IntMapUser"}, "")
 
 		testCode := `package dummy
 
@@ -628,15 +535,7 @@ func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
-
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		runCmd(t, tmpDir, "go", "test", "-v", ".")
+		runInnerTest(t, tmpDir, testCode, "")
 
 		if false {
 			tarball(t, "/tmp/arrow-gen-int-map.tar.gz", tmpDir)
@@ -644,9 +543,7 @@ func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
 	})
 
 	t.Run("nested-structs", func(t *testing.T) {
-		tmpDir := t.TempDir()
-
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type Address struct {
 	ZipCode int32
@@ -664,25 +561,7 @@ type Profile struct {
 	History   []Address
 	Config    map[string]Contact
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
-
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"Profile"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
+`, []string{"Profile"}, "")
 
 		testCode := `package dummy
 
@@ -815,15 +694,7 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
-
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		runCmd(t, tmpDir, "go", "test", "-v", ".")
+		runInnerTest(t, tmpDir, testCode, "")
 
 		if false {
 			tarball(t, "/tmp/arrow-gen-nested-structs.tar.gz", tmpDir)
@@ -831,9 +702,7 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 	})
 
 	t.Run("pointer-to-primitive", func(t *testing.T) {
-		tmpDir := t.TempDir()
-
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type PointMapUser struct {
 	ID    int32
@@ -841,25 +710,7 @@ type PointMapUser struct {
 	Valid *bool
 	Name  *string
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
-
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"PointMapUser"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
+`, []string{"PointMapUser"}, "")
 
 		testCode := `package dummy
 
@@ -869,7 +720,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	
+
 	"github.com/apache/arrow/go/v18/arrow/memory"
 	"github.com/apache/arrow/go/v18/parquet"
 	"github.com/apache/arrow/go/v18/parquet/pqarrow"
@@ -879,7 +730,7 @@ import (
 func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
 	defer pool.AssertSize(t, 0)
-	
+
 	writer := NewPointMapUserArrowWriter(pool)
 	defer writer.Release()
 
@@ -972,46 +823,18 @@ func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
-
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestArrowMemoryAndDuckDBPointerToPrimitive")
+		runInnerTest(t, tmpDir, testCode, "TestArrowMemoryAndDuckDBPointerToPrimitive")
 	})
 
 	t.Run("slice-of-ip-addresses", func(t *testing.T) {
-		tmpDir := t.TempDir()
-
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 import "net/netip"
 
 type IPAddresses struct {
 	IPv4s []*netip.Addr
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
-
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"IPAddresses"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
+`, []string{"IPAddresses"}, "")
 
 		testCode := `package dummy
 
@@ -1143,15 +966,7 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
-
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestArrowMemoryAndDuckDBSliceOfIPAddresses")
+		runInnerTest(t, tmpDir, testCode, "TestArrowMemoryAndDuckDBSliceOfIPAddresses")
 
 		if false {
 			tarball(t, "/tmp/arrow-gen-slice-of-ip-addresses.tar.gz", tmpDir)
@@ -1159,34 +974,14 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 	})
 
 	t.Run("fixed-size-arrays", func(t *testing.T) {
-		tmpDir := t.TempDir()
-
-		dummyCode := `package dummy
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
 
 type Packet struct {
 	ID     int32
 	Header [4]byte
 	Scores [3]int32
 }
-`
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy.go: %v", err)
-		}
-
-		modContent := "module dummy\n\ngo 1.25.0\n"
-		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-			t.Fatalf("Failed to write go.mod: %v", err)
-		}
-
-		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
-		g := NewGenerator([]string{tmpDir}, []string{"Packet"}, outPath, false, nil)
-		if err := g.Run(""); err != nil {
-			t.Fatalf("Generator.Run() failed: %v", err)
-		}
-
-		if _, err := os.Stat(outPath); os.IsNotExist(err) {
-			t.Fatalf("Expected output file %s was not generated", outPath)
-		}
+`, []string{"Packet"}, "")
 
 		testCode := `package dummy
 
@@ -1345,15 +1140,7 @@ func TestFixedSizeArrayArrowWriter(t *testing.T) {
 }
 `
 
-		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-			t.Fatalf("Failed to write dummy_test.go: %v", err)
-		}
-
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
-		runCmd(t, tmpDir, "go", "mod", "tidy")
-
-		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestFixedSizeArrayArrowWriter")
+		runInnerTest(t, tmpDir, testCode, "TestFixedSizeArrayArrowWriter")
 
 		if false {
 			tarball(t, "/tmp/arrow-gen-fixed-size-arrays.tar.gz", tmpDir)
@@ -1549,6 +1336,58 @@ func TestMultiPackageArrowWriter(t *testing.T) {
 			tarball(t, "/tmp/arrow-gen-multi-package.tar.gz", pkg1Dir)
 		}
 	})
+}
+
+// setupIntegrationTest creates a temp directory, writes the Go struct source and
+// go.mod, runs the generator, and verifies the output file exists. It returns
+// the temp directory and generated output path. For multi-package layouts use
+// the setup directly rather than this helper.
+func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string, pkgOverride string) (tmpDir, outPath string) {
+	t.Helper()
+	tmpDir = t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+		t.Fatalf("Failed to write dummy.go: %v", err)
+	}
+
+	modContent := "module dummy\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	outPath = filepath.Join(tmpDir, "dummy_arrow_writer.go")
+	g := NewGenerator([]string{tmpDir}, targetStructs, outPath, false, nil)
+	if err := g.Run(pkgOverride); err != nil {
+		t.Fatalf("Generator.Run() failed: %v", err)
+	}
+
+	if _, err := os.Stat(outPath); os.IsNotExist(err) {
+		t.Fatalf("Expected output file %s was not generated", outPath)
+	}
+
+	return tmpDir, outPath
+}
+
+// runInnerTest writes the inner test harness code, fetches dependencies, and
+// executes `go test`. An optional testRunFilter can restrict which inner test
+// function runs (pass "" to run all).
+func runInnerTest(t *testing.T, tmpDir, testCode, testRunFilter string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write dummy_test.go: %v", err)
+	}
+
+	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+	runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+	runCmd(t, tmpDir, "go", "mod", "tidy")
+
+	args := []string{"test", "-v"}
+	if testRunFilter != "" {
+		args = append(args, "-run", testRunFilter)
+	}
+	args = append(args, ".")
+	runCmd(t, tmpDir, "go", args...)
 }
 
 // runCmd is a helper for running external commands during integration tests.
