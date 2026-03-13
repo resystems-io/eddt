@@ -105,12 +105,12 @@ These must be fixed first because they produce output that does not compile.
   compile error in the generated output.
   - Files: `generator.go` (parse loop), `generator_test.go` (new test case)
 
-- [ ] **B1: Handle fixed-size arrays** — In the `*ast.ArrayType` case of
-  `mapToFieldInfo`, check `t.Len != nil`. When present, skip the field with a
-  warning (e.g. "fixed-size arrays are not yet supported"). This prevents the
-  broken nil-check code from being emitted. A future enhancement could map
-  `[N]T` to `arrow.FixedSizeListOf(T, N)` if there is demand.
-  - Files: `generator.go` (`mapToFieldInfo` ArrayType case), `generator_test.go`
+- [x] **B1: Support fixed-size arrays** *(2026-03-13)* — `[N]T` is now mapped to
+  `arrow.FixedSizeListOfNonNullable(N, T)` with `*array.FixedSizeListBuilder`.
+  No nil check is generated (arrays are value types). Element iteration uses
+  the same dispatch logic as variable-length lists.
+  - Files: `generator.go` (`mapToFieldInfo` ArrayType case, `FieldInfo` struct),
+    `template.go` (new `IsFixedSizeList` branch), `generator_test.go`
 
 - [ ] **B3: Handle nested slices (`[][]T`)** — Two options:
   - **(a) Skip with warning** — detect when the slice element is itself a list
@@ -191,3 +191,4 @@ Record completed items here with date (check git blame for the git commit).
 | Date       | Item |  Notes                                                  |
 |------------|------|---------------------------------------------------------|
 | 2026-03-13 | M1   | Added `rune` to `case "int32"` in `mapToArrowType`      |
+| 2026-03-13 | B1   | Fixed-size arrays mapped to `FixedSizeListOfNonNullable` |

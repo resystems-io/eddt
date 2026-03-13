@@ -903,6 +903,99 @@ type Outer struct {
 	}
 }
 
+// TestGenerator_FixedSizeArray tests that fixed-size arrays ([N]T) are correctly mapped
+// to Arrow FixedSizeList types and that the generated code compiles.
+func TestGenerator_FixedSizeArray(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "test_structs.go")
+	testCode := `package mypkg
+
+type Packet struct {
+	Header [4]byte
+	Scores [3]int32
+	Label  string
+}
+`
+	if err := os.WriteFile(testFilePath, []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	modContent := "module mypkg\n\ngo 1.25.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"Packet"}, filepath.Join(tmpDir, "out.go"), false, nil)
+
+	// Test Parse()-level FieldInfo
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+	if len(structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(structs))
+	}
+
+	fields := structs[0].Fields
+	if len(fields) != 3 {
+		t.Fatalf("Expected 3 fields, got %d", len(fields))
+	}
+
+	// Header: [4]byte → FixedSizeList of Uint8
+	header := fields[0]
+	if header.Name != "Header" {
+		t.Errorf("Expected first field Header, got %s", header.Name)
+	}
+	if !header.IsFixedSizeList {
+		t.Errorf("Header: expected IsFixedSizeList=true")
+	}
+	if header.FixedSizeLen != "4" {
+		t.Errorf("Header: expected FixedSizeLen=4, got %s", header.FixedSizeLen)
+	}
+	if header.ArrowBuilder != "*array.FixedSizeListBuilder" {
+		t.Errorf("Header: expected ArrowBuilder=*array.FixedSizeListBuilder, got %s", header.ArrowBuilder)
+	}
+	if !strings.Contains(header.ArrowType, "FixedSizeListOfNonNullable") {
+		t.Errorf("Header: expected ArrowType to contain FixedSizeListOfNonNullable, got %s", header.ArrowType)
+	}
+
+	// Scores: [3]int32 → FixedSizeList of Int32
+	scores := fields[1]
+	if !scores.IsFixedSizeList {
+		t.Errorf("Scores: expected IsFixedSizeList=true")
+	}
+	if scores.FixedSizeLen != "3" {
+		t.Errorf("Scores: expected FixedSizeLen=3, got %s", scores.FixedSizeLen)
+	}
+	if scores.ValCastType != "int32" {
+		t.Errorf("Scores: expected ValCastType=int32, got %s", scores.ValCastType)
+	}
+
+	// Test Run() — verify the generated code is valid Go (gofmt succeeds)
+	outPath := filepath.Join(tmpDir, "out.go")
+	g2 := NewGenerator([]string{tmpDir}, []string{"Packet"}, outPath, false, nil)
+	if err := g2.Run(""); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Failed to read output: %v", err)
+	}
+	outStr := string(outBytes)
+
+	if !strings.Contains(outStr, "FixedSizeListBuilder") {
+		t.Errorf("Expected output to contain FixedSizeListBuilder, got:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "FixedSizeListOfNonNullable") {
+		t.Errorf("Expected output to contain FixedSizeListOfNonNullable, got:\n%s", outStr)
+	}
+	// Fixed-size arrays are value types — no nil check should be generated
+	if strings.Contains(outStr, "row.Header == nil") || strings.Contains(outStr, "row.Scores == nil") {
+		t.Errorf("Expected no nil check for fixed-size array fields, got:\n%s", outStr)
+	}
+}
+
 // TestGenerator_AliasMapping tests parsing of --pkg-alias entries and error handling.
 func TestGenerator_AliasMapping(t *testing.T) {
 	tmpDir := t.TempDir()

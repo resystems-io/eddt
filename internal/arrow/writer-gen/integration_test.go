@@ -1158,6 +1158,208 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 		}
 	})
 
+	t.Run("fixed-size-arrays", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		dummyCode := `package dummy
+
+type Packet struct {
+	ID     int32
+	Header [4]byte
+	Scores [3]int32
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(dummyCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy.go: %v", err)
+		}
+
+		modContent := "module dummy\n\ngo 1.25.0\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("Failed to write go.mod: %v", err)
+		}
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator([]string{tmpDir}, []string{"Packet"}, outPath, false, nil)
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		if _, err := os.Stat(outPath); os.IsNotExist(err) {
+			t.Fatalf("Expected output file %s was not generated", outPath)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestFixedSizeArrayArrowWriter(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPacketArrowWriter(pool)
+	defer writer.Release()
+
+	p1 := Packet{
+		ID:     1,
+		Header: [4]byte{0xDE, 0xAD, 0xBE, 0xEF},
+		Scores: [3]int32{100, 200, 300},
+	}
+	p2 := Packet{
+		ID:     2,
+		Header: [4]byte{0x01, 0x02, 0x03, 0x04},
+		Scores: [3]int32{10, 20, 30},
+	}
+
+	writer.Append(&p1)
+	writer.Append(&p2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "packets.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("Failed to create parquet file: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("Failed to instantiate pqarrow FileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write failed: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close failed: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("Failed to open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	// Query the fixed-size list columns — DuckDB reads them as regular lists
+	rows, err := db.Query(fmt.Sprintf(
+		"SELECT id, header, scores FROM read_parquet('%s')", parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query failed: %v", err)
+	}
+	defer rows.Close()
+
+	type result struct {
+		id     int32
+		header []byte
+		scores []int32
+	}
+	var results []result
+	for rows.Next() {
+		var r result
+		var headerIf *[]interface{}
+		var scoresIf *[]interface{}
+		if err := rows.Scan(&r.id, &headerIf, &scoresIf); err != nil {
+			t.Fatalf("Row scan failed: %v", err)
+		}
+		if headerIf != nil {
+			for _, v := range *headerIf {
+				switch val := v.(type) {
+				case int8:
+					r.header = append(r.header, byte(val))
+				case int16:
+					r.header = append(r.header, byte(val))
+				case int32:
+					r.header = append(r.header, byte(val))
+				case int64:
+					r.header = append(r.header, byte(val))
+				case uint8:
+					r.header = append(r.header, val)
+				default:
+					t.Fatalf("unexpected header element type: %T", v)
+				}
+			}
+		}
+		if scoresIf != nil {
+			for _, v := range *scoresIf {
+				switch val := v.(type) {
+				case int32:
+					r.scores = append(r.scores, val)
+				case int64:
+					r.scores = append(r.scores, int32(val))
+				default:
+					t.Fatalf("unexpected scores element type: %T", v)
+				}
+			}
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1
+	if results[0].id != 1 {
+		t.Errorf("row1 id: want 1, got %d", results[0].id)
+	}
+	wantHeader1 := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	if !reflect.DeepEqual(results[0].header, wantHeader1) {
+		t.Errorf("row1 header: want %v, got %v", wantHeader1, results[0].header)
+	}
+	wantScores1 := []int32{100, 200, 300}
+	if !reflect.DeepEqual(results[0].scores, wantScores1) {
+		t.Errorf("row1 scores: want %v, got %v", wantScores1, results[0].scores)
+	}
+
+	// Row 2
+	if results[1].id != 2 {
+		t.Errorf("row2 id: want 2, got %d", results[1].id)
+	}
+	wantHeader2 := []byte{0x01, 0x02, 0x03, 0x04}
+	if !reflect.DeepEqual(results[1].header, wantHeader2) {
+		t.Errorf("row2 header: want %v, got %v", wantHeader2, results[1].header)
+	}
+	wantScores2 := []int32{10, 20, 30}
+	if !reflect.DeepEqual(results[1].scores, wantScores2) {
+		t.Errorf("row2 scores: want %v, got %v", wantScores2, results[1].scores)
+	}
+}
+`
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("Failed to write dummy_test.go: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+
+		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestFixedSizeArrayArrowWriter")
+
+		if false {
+			tarball(t, "/tmp/arrow-gen-fixed-size-arrays.tar.gz", tmpDir)
+		}
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

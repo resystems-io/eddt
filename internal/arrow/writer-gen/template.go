@@ -164,6 +164,68 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 			{{- end}}
 		}
 	}
+{{- else if .IsFixedSizeList}}
+	{
+		{{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).Append(true)
+		{{- if $field.ValIsStruct}}
+		valBldr := {{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).ValueBuilder().(*array.StructBuilder)
+		{{- else}}
+		valBldr := {{$.Bldr}}({{$i}}).(*array.FixedSizeListBuilder).ValueBuilder().({{$field.ValArrowBuilder}})
+		{{- end}}
+		for _, v := range row.{{$field.Name}} {
+			{{- if $field.ValIsStruct}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				Append{{$field.ValStructName}}Struct(valBldr, v)
+			}
+			{{- else}}
+			Append{{$field.ValStructName}}Struct(valBldr, &v)
+			{{- end}}
+			{{- else if $field.ValMarshalMethod}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+			{{- if eq $field.ValMarshalMethod "MarshalText"}}
+				marshalData, _ := v.MarshalText()
+				valBldr.Append(string(marshalData))
+			{{- else if eq $field.ValMarshalMethod "String"}}
+				valBldr.Append(v.String())
+			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
+				marshalData, _ := v.MarshalBinary()
+				valBldr.Append(marshalData)
+			{{- end}}
+			}
+			{{- else}}
+			{{- if eq $field.ValMarshalMethod "MarshalText"}}
+			{
+				marshalData, _ := v.MarshalText()
+				valBldr.Append(string(marshalData))
+			}
+			{{- else if eq $field.ValMarshalMethod "String"}}
+			valBldr.Append(v.String())
+			{{- else if eq $field.ValMarshalMethod "MarshalBinary"}}
+			{
+				marshalData, _ := v.MarshalBinary()
+				valBldr.Append(marshalData)
+			}
+			{{- end}}
+			{{- end}}
+			{{- else}}
+			{{- if $field.ValIsPointer}}
+			if v == nil {
+				valBldr.AppendNull()
+			} else {
+				valBldr.Append({{$field.ValCastType}}(*v))
+			}
+			{{- else}}
+			valBldr.Append({{$field.ValCastType}}(v))
+			{{- end}}
+			{{- end}}
+		}
+	}
 {{- else if .IsMap}}
 	if row.{{$field.Name}} == nil {
 		{{$.Bldr}}({{$i}}).(*array.MapBuilder).AppendNull()

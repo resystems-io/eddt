@@ -3,6 +3,7 @@ package writergen
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/packages"
@@ -24,6 +25,8 @@ type FieldInfo struct {
 	CastType         string // The Go type used when appending to the builder
 	KeyCastType      string // The Go type used when appending a map key
 	ValCastType      string // The Go type used when appending a map value or list item
+	IsFixedSizeList  bool   // True if the field is a fixed-size array ([N]T)
+	FixedSizeLen     string // The array length as a string literal (e.g. "4")
 	ValIsStruct      bool   // True if list value or map value is a struct
 	ValIsPointer     bool   // True if list value or map value is a pointer
 	ValStructName    string // If ValIsStruct is true, the name of that struct
@@ -236,8 +239,41 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 
 	case *ast.ArrayType:
-		// []byte is represented as Arrow Binary, not a List of Uint8
-		// This uses Arrow's canonical representation for byte slices, which is more efficient than a list.
+		// Fixed-size array ([N]T) — use Arrow FixedSizeList.
+		if t.Len != nil {
+			lit, ok := t.Len.(*ast.BasicLit)
+			if !ok || lit.Kind != token.INT {
+				return FieldInfo{}, fmt.Errorf("fixed-size array length must be an integer literal")
+			}
+
+			// []byte special case does not apply to [N]byte — treat as fixed-size list of uint8.
+			eltInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Elt, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("fixed-size array element %w", err)
+			}
+
+			arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lit.Value, eltInfo.ArrowType)
+			if eltInfo.IsStruct {
+				arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lit.Value, eltInfo.StructName)
+			}
+
+			return FieldInfo{
+				Name:             name,
+				GoType:           fmt.Sprintf("[%s]%s", lit.Value, eltInfo.GoType),
+				ArrowType:        arrowType,
+				ArrowBuilder:     "*array.FixedSizeListBuilder",
+				IsFixedSizeList:  true,
+				FixedSizeLen:     lit.Value,
+				ValArrowBuilder:  eltInfo.ArrowBuilder,
+				ValCastType:      eltInfo.CastType,
+				ValIsStruct:      eltInfo.IsStruct,
+				ValIsPointer:     eltInfo.IsPointer,
+				ValStructName:    eltInfo.StructName,
+				ValMarshalMethod: eltInfo.MarshalMethod,
+			}, nil
+		}
+
+		// []byte is represented as Arrow Binary, not a List of Uint8.
 		if eltIdent, ok := t.Elt.(*ast.Ident); ok && eltIdent.Name == "byte" {
 			return FieldInfo{
 				Name:         name,
