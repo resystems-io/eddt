@@ -260,6 +260,12 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return fmt.Errorf("no target structs found matching specifications")
 	}
 
+	// Check for struct name collisions across packages — same-named structs
+	// would produce duplicate generated helper functions (e.g. AppendInnerStruct).
+	if err := detectStructNameCollisions(structs); err != nil {
+		return err
+	}
+
 	// Determine output package name.
 	packageName := outPkgNameOverride
 	if packageName == "" {
@@ -363,6 +369,23 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
+	return nil
+}
+
+// detectStructNameCollisions checks for duplicate struct names across different
+// packages. Same-named structs would produce duplicate generated helper functions
+// (e.g. two AppendInnerStruct), causing a compile error in the output.
+func detectStructNameCollisions(structs []StructInfo) error {
+	seen := map[string][]string{} // name -> list of pkgPaths
+	for _, si := range structs {
+		seen[si.Name] = append(seen[si.Name], si.PkgPath)
+	}
+	for name, pkgs := range seen {
+		if len(pkgs) > 1 {
+			return fmt.Errorf("struct name %q appears in multiple packages (%s); generated helper function names would collide",
+				name, strings.Join(pkgs, ", "))
+		}
+	}
 	return nil
 }
 

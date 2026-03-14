@@ -45,6 +45,14 @@ type StructInfo struct {
 	Qualifier string // qualifier prefix for this struct in generated code (e.g. "mypkg." or "")
 }
 
+// structRef identifies a struct to be processed, optionally qualified by package path.
+// When PkgPath is empty (user-specified initial targets), all loaded packages are searched.
+// When PkgPath is set (discovered via field references), only the specified package is searched.
+type structRef struct {
+	PkgPath string
+	Name    string
+}
+
 // Generator holds the configuration for generating Arrow writers.
 type Generator struct {
 	InputPkgs     []string
@@ -177,26 +185,46 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 		parsedPkgPath = allPkgs[0].PkgPath
 	}
 
-	queue := make([]string, len(g.TargetStructs))
-	copy(queue, g.TargetStructs)
+	queue := make([]structRef, len(g.TargetStructs))
+	for i, t := range g.TargetStructs {
+		queue[i] = structRef{Name: t}
+	}
 	processed := make(map[string]bool)
 	var results []StructInfo
 
 	for len(queue) > 0 {
-		target := queue[0]
+		ref := queue[0]
 		queue = queue[1:]
 
-		if processed[target] {
-			continue
+		// Determine which packages to search. Discovered structs (PkgPath set)
+		// search only their origin package; initial targets search all packages.
+		var searchPkgs []*packages.Package
+		if ref.PkgPath != "" {
+			qualName := ref.PkgPath + "." + ref.Name
+			if processed[qualName] {
+				continue
+			}
+			pkg := findPkgByPath(allPkgs, ref.PkgPath)
+			if pkg == nil {
+				continue
+			}
+			searchPkgs = []*packages.Package{pkg}
+		} else {
+			searchPkgs = allPkgs
 		}
-		processed[target] = true
 
 		found := false
-		for _, pkg := range allPkgs {
+		for _, pkg := range searchPkgs {
+			qualName := pkg.PkgPath + "." + ref.Name
+			if processed[qualName] {
+				found = true
+				break
+			}
+
 			for _, file := range pkg.Syntax {
 				ast.Inspect(file, func(n ast.Node) bool {
 					ts, ok := n.(*ast.TypeSpec)
-					if !ok || ts.Name.Name != target {
+					if !ok || ts.Name.Name != ref.Name {
 						return true
 					}
 
@@ -206,6 +234,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 					}
 
 					found = true
+					processed[qualName] = true
 					info := StructInfo{
 						Name:    ts.Name.Name,
 						PkgPath: pkg.PkgPath,
@@ -278,7 +307,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 		}
 
 		if !found && g.Verbose {
-			fmt.Printf("Warning: Could not find definition for targeted struct: %s\n", target)
+			fmt.Printf("Warning: Could not find definition for targeted struct: %s\n", ref.Name)
 		}
 	}
 
@@ -292,7 +321,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 //
 // Returns nil if the embedded type cannot be resolved, is not a struct, is a
 // pointer embedding, or its package is not loaded.
-func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, field *ast.Field, queue *[]string, processed map[string]bool) []FieldInfo {
+func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, field *ast.Field, queue *[]structRef, processed map[string]bool) []FieldInfo {
 	// Detect pointer embedding (*Base) — skip for now.
 	fieldType := field.Type
 	if _, isPtr := fieldType.(*ast.StarExpr); isPtr {
@@ -389,7 +418,7 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 // fieldInfoFromExpr resolves an AST expression to a FieldInfo. This is the
 // primary entry point called by Parse for each declared struct field and by
 // resolveEmbeddedFields for promoted fields.
-func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name string, expr ast.Expr, queue *[]structRef, processed map[string]bool) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		return fieldInfoFromIdent(pkg, allPkgs, name, t, false, queue, processed)
@@ -524,7 +553,7 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 // fieldInfoFromIdent resolves an ast.Ident to a FieldInfo. Handles local struct
 // references, named types over primitives, named types over composites
 // (delegating to fieldInfoFromType), and bare primitives.
-func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]structRef, processed map[string]bool) (FieldInfo, error) {
 	// Check for struct reference or named primitive
 	obj := pkg.TypesInfo.ObjectOf(ident)
 	if obj != nil {
@@ -678,7 +707,7 @@ func primitiveArrowType(expr ast.Expr) (string, string, string, string, error) {
 
 // fieldInfoFromType resolves a types.Type to a FieldInfo. Operates purely on
 // go/types representations, independent of the AST.
-func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name string, typ types.Type, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name string, typ types.Type, isPointer bool, queue *[]structRef, processed map[string]bool) (FieldInfo, error) {
 	switch t := typ.(type) {
 	case *types.Basic:
 		return fieldInfoFromBasic(name, t, isPointer)
@@ -931,9 +960,10 @@ func marshalMethodArrowType(method string) (string, string) {
 
 // buildStructFieldInfo constructs a FieldInfo for a struct field (value or pointer)
 // and enqueues the struct name for recursive processing.
-func buildStructFieldInfo(name string, structName string, pkgName string, pkgPath string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
-	if !processed[structName] {
-		*queue = append(*queue, structName)
+func buildStructFieldInfo(name string, structName string, pkgName string, pkgPath string, isPointer bool, queue *[]structRef, processed map[string]bool) FieldInfo {
+	qualName := pkgPath + "." + structName
+	if !processed[qualName] {
+		*queue = append(*queue, structRef{PkgPath: pkgPath, Name: structName})
 	}
 
 	goType := structName

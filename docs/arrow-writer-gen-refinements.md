@@ -267,10 +267,12 @@ These must be fixed first because they produce output that does not compile.
   and a single recursive `appendValue` sub-template. Also resolves B4 and B5.
   - Files: `generator.go`, `template.go`, `generator_test.go`, `integration_test.go`
 
-- [ ] **S3: Qualify struct names in `processed` map** — Key by
+- [x] **S3: Qualify struct names in `processed` map** *(2026-03-14)* — Key by
   `pkgPath + "." + structName` instead of bare name to avoid cross-package
-  collisions. See section 1.4.
-  - Files: `generator.go`, `generator_test.go`
+  collisions. Queue uses `structRef` type for package-aware processing.
+  Collision detection added at generation time (error if same struct name
+  appears from multiple packages). See section 1.4.
+  - Files: `generator.go`, `template.go`, `generator_test.go`
 
 - [x] **S4: Support named slice/map types** *(2026-03-14)* — Added
   `fieldInfoFromType` helper that resolves `types.Type` → `FieldInfo` recursively
@@ -353,3 +355,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | B6   | Unexported fields filtered in cross-package generation via `filterUnexportedFields` |
 | 2026-03-14 | S5   | `--pkg` accepts Go import paths in addition to filesystem paths |
 | 2026-03-14 | S4   | Named slice/map/array types supported via `fieldInfoFromType` + `resolveIdent` branches |
+| 2026-03-14 | S3   | Qualified struct processing via `structRef` + collision detection in `Run()` |

@@ -1119,6 +1119,105 @@ type Outer struct {
 	}
 }
 
+// TestGenerator_QualifiedStructProcessing tests that the processed map uses qualified
+// names (pkgPath + "." + structName) so that same-named structs from different packages
+// are both discovered. It also verifies that Run() detects the resulting name collision.
+func TestGenerator_QualifiedStructProcessing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// pkg1: defines Inner with an int32 field
+	pkg1Dir := filepath.Join(tmpDir, "pkg1")
+	pkg2Dir := filepath.Join(tmpDir, "pkg2")
+	if err := os.MkdirAll(pkg1Dir, 0755); err != nil {
+		t.Fatalf("mkdir pkg1: %v", err)
+	}
+	if err := os.MkdirAll(pkg2Dir, 0755); err != nil {
+		t.Fatalf("mkdir pkg2: %v", err)
+	}
+
+	pkg1Code := `package pkg1
+
+import "pkg2"
+
+type Inner struct {
+	Value int32
+}
+
+type Outer struct {
+	A Inner
+	B pkg2.Inner
+}
+`
+	if err := os.WriteFile(filepath.Join(pkg1Dir, "types.go"), []byte(pkg1Code), 0644); err != nil {
+		t.Fatalf("write pkg1: %v", err)
+	}
+
+	pkg2Code := `package pkg2
+
+type Inner struct {
+	Label string
+}
+`
+	if err := os.WriteFile(filepath.Join(pkg2Dir, "types.go"), []byte(pkg2Code), 0644); err != nil {
+		t.Fatalf("write pkg2: %v", err)
+	}
+
+	// go.mod files
+	if err := os.WriteFile(filepath.Join(pkg2Dir, "go.mod"), []byte("module pkg2\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write pkg2 go.mod: %v", err)
+	}
+	pkg1Mod := "module pkg1\n\ngo 1.25.0\n\nrequire pkg2 v0.0.0\n\nreplace pkg2 => " + pkg2Dir + "\n"
+	if err := os.WriteFile(filepath.Join(pkg1Dir, "go.mod"), []byte(pkg1Mod), 0644); err != nil {
+		t.Fatalf("write pkg1 go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator([]string{pkg1Dir, pkg2Dir}, []string{"Outer"}, outPath, false, nil)
+
+	t.Run("both-structs-processed", func(t *testing.T) {
+		_, _, structs, err := g.Parse()
+		if err != nil {
+			t.Fatalf("Parse() failed: %v", err)
+		}
+
+		// Expect three structs: Outer, pkg1.Inner, pkg2.Inner
+		nameCount := map[string]int{}
+		for _, s := range structs {
+			nameCount[s.Name]++
+		}
+		if nameCount["Outer"] != 1 {
+			t.Errorf("Expected 1 Outer, got %d", nameCount["Outer"])
+		}
+		if nameCount["Inner"] != 2 {
+			t.Errorf("Expected 2 Inner structs (from pkg1 and pkg2), got %d", nameCount["Inner"])
+		}
+
+		// Verify they come from different packages
+		innerPkgs := map[string]bool{}
+		for _, s := range structs {
+			if s.Name == "Inner" {
+				innerPkgs[s.PkgName] = true
+			}
+		}
+		if !innerPkgs["pkg1"] || !innerPkgs["pkg2"] {
+			t.Errorf("Expected Inner from both pkg1 and pkg2, got packages: %v", innerPkgs)
+		}
+	})
+
+	t.Run("collision-detected-at-generation", func(t *testing.T) {
+		err := g.Run("")
+		if err == nil {
+			t.Fatal("Run() should have returned an error for same-named structs")
+		}
+		if !strings.Contains(err.Error(), "multiple packages") {
+			t.Errorf("Expected collision error mentioning 'multiple packages', got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "Inner") {
+			t.Errorf("Expected collision error mentioning 'Inner', got: %v", err)
+		}
+	})
+}
+
 // TestGenerator_FixedSizeArray tests that fixed-size arrays ([N]T) are correctly mapped
 // to Arrow FixedSizeList types and that the generated code compiles.
 func TestGenerator_FixedSizeArray(t *testing.T) {
