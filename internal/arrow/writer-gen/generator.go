@@ -50,6 +50,7 @@ type Generator struct {
 	OutPath       string
 	Verbose       bool
 	PkgAliases    []string // raw alias mappings in "original=replacement" format
+	Version       string   // short commitish for the generated header; may be empty
 }
 
 // NewGenerator initializes a new Generator.
