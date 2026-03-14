@@ -31,6 +31,9 @@ Example usage:
   # Multiple packages (structs from pkg2 are resolved natively, not via marshal fallback)
   arrow-writer-gen --pkg ./internal/model --pkg ./internal/types --structs Outer --out writer.go
 
+  # Package from go.mod (import path — requires 'go get' first)
+  arrow-writer-gen --pkg github.com/user/repo/model --structs User --out writer.go
+
   # Alias a package to avoid name collisions (key is the full Go import path)
   arrow-writer-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes --structs Outer --out writer.go`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,7 +60,7 @@ Example usage:
 		},
 	}
 
-	cmd.Flags().StringSliceVarP(&inputPkgs, "pkg", "p", []string{"."}, "Input package directories containing the structs (comma-separated or repeated flag)")
+	cmd.Flags().StringSliceVarP(&inputPkgs, "pkg", "p", []string{"."}, "Input packages: filesystem paths (./internal/model) or Go import paths (github.com/user/repo/pkg). Import paths must be in your go.mod; run 'go get <pkg>' first if needed.")
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
 	cmd.Flags().StringSliceVarP(&pkgAliases, "pkg-alias", "a", nil, "Aliases for imported packages in 'importpath=alias' format (e.g. go.example.com/pkg=mypkg)")
 	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Specific struct(s) to generate writers for (comma-separated)")

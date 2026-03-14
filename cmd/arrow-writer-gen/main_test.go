@@ -87,6 +87,48 @@ func TestCLI_InvalidPackage(t *testing.T) {
 	}
 }
 
+func TestCLI_ImportPathNotInGoMod(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a minimal module so the CLI has a module context.
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package dummy\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Chdir so the import path is resolved against this module.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "github.com/nonexistent/pkg123456789",
+		"--structs", "Person",
+		"--out", filepath.Join(tmpDir, "dummy.go"),
+	})
+
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("Expected error for nonexistent import path, got nil")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "go get") {
+		t.Errorf("Expected error to contain 'go get' remediation guidance, got: %s", errMsg)
+	}
+	if strings.Contains(errMsg, "failed to load package directory") {
+		t.Errorf("Expected import-path error, not filesystem-path error, got: %s", errMsg)
+	}
+}
+
 func TestCLI_PkgAlias(t *testing.T) {
 	tmpDir := t.TempDir()
 

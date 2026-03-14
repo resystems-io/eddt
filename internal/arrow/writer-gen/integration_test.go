@@ -2609,6 +2609,183 @@ func TestCrossPackageUnexportedFields(t *testing.T) {
 
 		runCmd(t, outDir, "go", "test", "-v", "-run", "TestCrossPackageUnexportedFields")
 	})
+
+	t.Run("import-path-loading", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a module with a sub-package "model".
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module example.com/importpathtest\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		// Root package (needed so the module is valid)
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// Sub-package "model"
+		modelDir := filepath.Join(tmpDir, "model")
+		if err := os.MkdirAll(modelDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(modelDir, "model.go"), []byte(`package model
+
+type Device struct {
+	ID    int32
+	Name  string
+	Score float64
+}
+`), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// Chdir to the temp module so import paths resolve.
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer os.Chdir(origDir)
+
+		// Generate using import path.
+		outPath := filepath.Join(tmpDir, "device_arrow_writer.go")
+		g := NewGenerator(
+			[]string{"example.com/importpathtest/model"},
+			[]string{"Device"}, outPath, false, nil,
+		)
+		if err := g.Run("model"); err != nil {
+			t.Fatalf("Run() failed: %v", err)
+		}
+
+		// Move generated file into model/ so it's in the same package.
+		finalPath := filepath.Join(modelDir, "device_arrow_writer.go")
+		outBytes, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read output: %v", err)
+		}
+		if err := os.WriteFile(finalPath, outBytes, 0644); err != nil {
+			t.Fatalf("write output to model/: %v", err)
+		}
+
+		// Write an inner test in model/.
+		testCode := `package model
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestImportPathDevice(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	d := Device{ID: 1, Name: "sensor-1", Score: 42.5}
+	writer.Append(&d)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 1 {
+		t.Fatalf("expected 1 row, got %d", record.NumRows())
+	}
+	if record.NumCols() != 3 {
+		t.Fatalf("expected 3 cols, got %d", record.NumCols())
+	}
+}
+`
+		if err := os.WriteFile(filepath.Join(modelDir, "device_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("write test: %v", err)
+		}
+
+		runCmd(t, modelDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, modelDir, "go", "mod", "tidy")
+		runCmd(t, modelDir, "go", "test", "-v", "-run", "TestImportPathDevice")
+	})
+
+	t.Run("import-path-mixed-with-filesystem", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create a module with two sub-packages.
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module example.com/mixedtest\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// Sub-package "typesA" — loaded via filesystem path
+		typesADir := filepath.Join(tmpDir, "typesA")
+		if err := os.MkdirAll(typesADir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(typesADir, "a.go"), []byte(`package typesA
+
+type Inner struct {
+	Value int32
+}
+`), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// Sub-package "typesB" — loaded via import path
+		typesBDir := filepath.Join(tmpDir, "typesB")
+		if err := os.MkdirAll(typesBDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(typesBDir, "b.go"), []byte(`package typesB
+
+import "example.com/mixedtest/typesA"
+
+type Outer struct {
+	ID    int32
+	Child typesA.Inner
+}
+`), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+
+		// Chdir to the temp module.
+		origDir, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer os.Chdir(origDir)
+
+		// Generate using mixed inputs: filesystem path + import path.
+		outDir := filepath.Join(tmpDir, "out")
+		if err := os.MkdirAll(outDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		outPath := filepath.Join(outDir, "writer.go")
+		g := NewGenerator(
+			[]string{typesADir, "example.com/mixedtest/typesB"},
+			[]string{"Outer"}, outPath, false, nil,
+		)
+		if err := g.Run("out"); err != nil {
+			t.Fatalf("Run() failed: %v", err)
+		}
+
+		// Write go.mod for out/ package, verify generated code compiles.
+		outMod := "module example.com/mixedtest/out\n\ngo 1.25.0\n\n" +
+			"require example.com/mixedtest v0.0.0\n\n" +
+			"replace example.com/mixedtest => " + tmpDir + "\n"
+		if err := os.WriteFile(filepath.Join(outDir, "go.mod"), []byte(outMod), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		runCmd(t, outDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, outDir, "go", "mod", "tidy")
+		runCmd(t, outDir, "go", "build", ".")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the Go struct source and

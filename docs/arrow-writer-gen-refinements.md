@@ -272,21 +272,14 @@ These must be fixed first because they produce output that does not compile.
   branches to `resolveIdent` to unwrap underlying types. See section 1.4.
   - Files: `generator.go`, `generator_test.go`, `integration_test.go` (optional)
 
-- [ ] **S5: Accept Go import paths in `--pkg`** — Pass `--pkg` values directly as
-  patterns to `packages.Load` (Option A). Classify inputs using `go help packages`
-  convention: filesystem paths (`.`, `..`, `/` prefix) use current `cfg.Dir`-based
-  loading; everything else is treated as an import path. See section 1.5 for full
-  analysis.
-
-  Key requirements:
-  - Import paths must already be in the caller's `go.mod` (no automatic `go get`)
-  - Actionable error message with `go get` remediation when package is missing
-  - CLI `--help` and docs must document the `go get` prerequisite
-  - Evaluate adding `NeedImports | NeedDeps` to `packages.Config.Mode`
-  - All existing filesystem-path usage must continue to work unchanged
-
-  - Files: `generator.go` (`loadPackages()`), `cmd/arrow-writer-gen/main.go`
-    (`--pkg` help text), `generator_test.go`, `integration_test.go`
+- [x] **S5: Accept Go import paths in `--pkg`** *(2026-03-14)* — Classify inputs
+  using `go help packages` convention: filesystem paths (`.`, `..`, `/` prefix) use
+  `cfg.Dir`-based loading (unchanged); everything else is treated as a Go import
+  path and passed directly to `packages.Load`. Import paths batched into a single
+  call for efficiency. Actionable `go get` guidance in error messages for missing
+  modules. No LoadMode change needed (`NeedTypes` already triggers full type-checking).
+  - Files: `generator.go`, `cmd/arrow-writer-gen/main.go`, `generator_test.go`,
+    `integration_test.go`, `cmd/arrow-writer-gen/main_test.go`
 
 ### Priority 4 — Debatable / Future
 
@@ -349,3 +342,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | D4   | `durationpb.Duration` → Int64 nanoseconds via `AsDuration()` |
 | 2026-03-14 | D5   | `timestamppb.Timestamp` → `Timestamp_ns` (UTC) via `AsTime().UnixNano` |
 | 2026-03-14 | B6   | Unexported fields filtered in cross-package generation via `filterUnexportedFields` |
+| 2026-03-14 | S5   | `--pkg` accepts Go import paths in addition to filesystem paths |

@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -71,25 +73,75 @@ func collectPackageErrors(pkgs []*packages.Package) int {
 	return count
 }
 
-// loadPackages loads all packages from InputPkgs, one directory at a time.
-// Each directory is loaded independently to support separate Go modules.
+// isFilesystemPath reports whether s looks like a filesystem path rather than
+// a Go import path, following the convention from `go help packages`:
+// paths starting with ".", "..", or "/" are filesystem paths.
+func isFilesystemPath(s string) bool {
+	return s == "." || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") ||
+		strings.HasPrefix(s, "/") || filepath.IsAbs(s)
+}
+
+// loadPackages loads all packages from InputPkgs. Filesystem paths (starting
+// with ".", "..", or "/") are loaded one-at-a-time with cfg.Dir set, preserving
+// support for separate Go modules. Go import paths are batched into a single
+// packages.Load call resolved from the invoking module's go.mod.
 func (g *Generator) loadPackages() ([]*packages.Package, error) {
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-	}
+	mode := packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+		packages.NeedTypes | packages.NeedTypesInfo
+
 	var all []*packages.Package
-	for _, dir := range g.InputPkgs {
-		cfg.Dir = dir
+	var importPaths []string
+
+	// Phase 1: Load filesystem paths one-at-a-time (may be separate modules).
+	for _, input := range g.InputPkgs {
+		if !isFilesystemPath(input) {
+			importPaths = append(importPaths, input)
+			continue
+		}
+		cfg := &packages.Config{Mode: mode, Dir: input}
 		pkgs, err := packages.Load(cfg, ".")
 		if err != nil {
-			return nil, fmt.Errorf("failed to load package directory %q: %w", dir, err)
+			return nil, fmt.Errorf("failed to load package directory %q: %w", input, err)
 		}
 		if errCount := collectPackageErrors(pkgs); errCount > 0 {
-			return nil, fmt.Errorf("package loading had %d error(s) in %q", errCount, dir)
+			return nil, fmt.Errorf("package loading had %d error(s) in %q", errCount, input)
 		}
 		all = append(all, pkgs...)
 	}
+
+	// Phase 2: Load import paths in a single call (all resolved from the
+	// invoking module's go.mod via cwd).
+	if len(importPaths) > 0 {
+		cfg := &packages.Config{Mode: mode}
+		pkgs, err := packages.Load(cfg, importPaths...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load import paths %v: %w", importPaths, err)
+		}
+		if errCount := collectPackageErrors(pkgs); errCount > 0 {
+			return nil, formatImportPathErrors(pkgs)
+		}
+		all = append(all, pkgs...)
+	}
+
 	return all, nil
+}
+
+// formatImportPathErrors inspects package-level errors for common patterns
+// (e.g., missing module) and wraps them with actionable guidance.
+func formatImportPathErrors(pkgs []*packages.Package) error {
+	var msgs []string
+	for _, pkg := range pkgs {
+		for _, e := range pkg.Errors {
+			msg := e.Msg
+			if strings.Contains(msg, "no required module provides") ||
+				strings.Contains(msg, "could not import") {
+				msg += fmt.Sprintf("\n\n  To add it to your module's dependencies, run:"+
+					"\n    go get %s\n\n  Then re-run the generator.", pkg.PkgPath)
+			}
+			msgs = append(msgs, msg)
+		}
+	}
+	return fmt.Errorf("failed to load import paths:\n  %s", strings.Join(msgs, "\n  "))
 }
 
 // findPkgByPath returns the loaded package with the given import path, or nil.
