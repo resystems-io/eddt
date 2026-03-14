@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"os"
 	"sort"
 	"strings"
@@ -334,6 +335,10 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		// else: struct is in the output package — no qualifier needed.
 	}
 
+	// Filter unexported fields from cross-package structs — accessing unexported
+	// fields from another package is a compile error in the generated code.
+	filterUnexportedFields(structs, packageName)
+
 	data := templateData{
 		PackageName: packageName,
 		Imports:     imports,
@@ -357,4 +362,26 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 
 	return nil
+}
+
+// filterUnexportedFields removes unexported fields from structs that will be
+// accessed cross-package (indicated by a non-empty Qualifier). Accessing
+// unexported fields from another package is a compile error in Go.
+func filterUnexportedFields(structs []StructInfo, outputPkg string) {
+	for i := range structs {
+		si := &structs[i]
+		if si.Qualifier == "" {
+			continue // same package — all fields accessible
+		}
+		filtered := si.Fields[:0]
+		for _, f := range si.Fields {
+			if !token.IsExported(f.Name) {
+				fmt.Printf("Warning: Skipping unexported field %s in %s (inaccessible from output package %q)\n",
+					f.Name, si.Name, outputPkg)
+				continue
+			}
+			filtered = append(filtered, f)
+		}
+		si.Fields = filtered
+	}
 }

@@ -723,6 +723,97 @@ type Device struct {
 				"row.ID", // ambiguous — promoted by both Base1 and Base2
 			},
 		},
+		{
+			name: "cross-package-unexported-fields-skipped",
+			goCode: `package mypkg
+
+type Device struct {
+	ID     int32
+	name   string
+	Label  string
+	serial int64
+}
+`,
+			targetStruct: "Device",
+			pkgOverride:  "outpkg",
+			mustContain: []string{
+				`{Name: "ID",`,
+				`{Name: "Label",`,
+				"row.ID",
+				"row.Label",
+			},
+			mustNotContain: []string{
+				"row.name",
+				"row.serial",
+				`{Name: "name",`,
+				`{Name: "serial",`,
+			},
+		},
+		{
+			name: "cross-package-all-unexported",
+			goCode: `package mypkg
+
+type Secret struct {
+	name   string
+	value  int32
+}
+`,
+			targetStruct: "Secret",
+			pkgOverride:  "outpkg",
+			mustContain: []string{
+				"NewSecretSchema",
+				"NewSecretArrowWriter",
+			},
+			mustNotContain: []string{
+				"row.name",
+				"row.value",
+			},
+		},
+		{
+			name: "same-package-unexported-fields-kept",
+			goCode: `package mypkg
+
+type Device struct {
+	ID     int32
+	name   string
+	Label  string
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				`{Name: "ID",`,
+				`{Name: "name",`,
+				`{Name: "Label",`,
+				"row.name",
+			},
+		},
+		{
+			name: "cross-package-embedded-unexported-promoted-skipped",
+			goCode: `package mypkg
+
+type Base struct {
+	ID     int32
+	secret string
+}
+
+type Device struct {
+	Base
+	Label string
+}
+`,
+			targetStruct: "Device",
+			pkgOverride:  "outpkg",
+			mustContain: []string{
+				`{Name: "ID",`,
+				`{Name: "Label",`,
+				"row.ID",
+				"row.Label",
+			},
+			mustNotContain: []string{
+				"row.secret",
+				`{Name: "secret",`,
+			},
+		},
 	}
 
 	for _, tt := range tests {

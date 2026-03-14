@@ -2492,6 +2492,123 @@ func TestMultiPackageArrowWriter(t *testing.T) {
 			tarball(t, "/tmp/arrow-gen-multi-package.tar.gz", pkg1Dir)
 		}
 	})
+
+	t.Run("cross-package-unexported-fields", func(t *testing.T) {
+		// Source package has mixed exported/unexported fields.
+		// Generate into a different output package — unexported fields must be
+		// filtered out so the generated code compiles.
+		tmpDir := t.TempDir()
+
+		srcDir := filepath.Join(tmpDir, "srcpkg")
+		outDir := filepath.Join(tmpDir, "outpkg")
+		if err := os.MkdirAll(srcDir, 0755); err != nil {
+			t.Fatalf("mkdir srcpkg: %v", err)
+		}
+		if err := os.MkdirAll(outDir, 0755); err != nil {
+			t.Fatalf("mkdir outpkg: %v", err)
+		}
+
+		// Source package with mixed exported/unexported fields
+		srcCode := `package srcpkg
+
+type Device struct {
+	ID     int32
+	name   string
+	Label  string
+	serial int64
+}
+`
+		if err := os.WriteFile(filepath.Join(srcDir, "device.go"), []byte(srcCode), 0644); err != nil {
+			t.Fatalf("write srcpkg: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module srcpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write srcpkg go.mod: %v", err)
+		}
+
+		// Generate into outpkg (cross-package)
+		outPath := filepath.Join(outDir, "device_arrow_writer.go")
+		g := NewGenerator([]string{srcDir}, []string{"Device"}, outPath, false, nil)
+		if err := g.Run("outpkg"); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		// Verify generated code doesn't reference unexported fields
+		outBytes, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read output: %v", err)
+		}
+		outStr := string(outBytes)
+		if strings.Contains(outStr, "row.name") {
+			t.Errorf("Generated code should not reference unexported field 'name'")
+		}
+		if strings.Contains(outStr, "row.serial") {
+			t.Errorf("Generated code should not reference unexported field 'serial'")
+		}
+
+		// Set up outpkg go.mod with dependency on srcpkg
+		outMod := "module outpkg\n\ngo 1.25.0\n\nrequire srcpkg v0.0.0\n\nreplace srcpkg => " + srcDir + "\n"
+		if err := os.WriteFile(filepath.Join(outDir, "go.mod"), []byte(outMod), 0644); err != nil {
+			t.Fatalf("write outpkg go.mod: %v", err)
+		}
+
+		// Write inner test that exercises the generated writer
+		testCode := `package outpkg
+
+import (
+	"testing"
+
+	"srcpkg"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestCrossPackageUnexportedFields(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	d := srcpkg.Device{ID: 42, Label: "test"}
+	writer.Append(&d)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 1 {
+		t.Fatalf("expected 1 row, got %d", record.NumRows())
+	}
+
+	// Schema should have only exported fields
+	schema := record.Schema()
+	fieldNames := make(map[string]bool)
+	for i := 0; i < schema.NumFields(); i++ {
+		fieldNames[schema.Field(i).Name] = true
+	}
+
+	if !fieldNames["ID"] {
+		t.Error("schema missing exported field ID")
+	}
+	if !fieldNames["Label"] {
+		t.Error("schema missing exported field Label")
+	}
+	if fieldNames["name"] {
+		t.Error("schema should not contain unexported field name")
+	}
+	if fieldNames["serial"] {
+		t.Error("schema should not contain unexported field serial")
+	}
+}
+`
+		if err := os.WriteFile(filepath.Join(outDir, "device_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("write test: %v", err)
+		}
+
+		runCmd(t, outDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, outDir, "go", "mod", "tidy")
+
+		runCmd(t, outDir, "go", "test", "-v", "-run", "TestCrossPackageUnexportedFields")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the Go struct source and

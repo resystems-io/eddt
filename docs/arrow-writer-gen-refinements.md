@@ -137,24 +137,18 @@ These must be fixed first because they produce output that does not compile.
   the recursive template dispatches inner maps through the same `IsMap` branch.
   - Files: resolved as part of S2 refactor
 
-- [ ] **B6: Skip unexported fields in cross-package generation** —
+- [x] **B6: Skip unexported fields in cross-package generation** *(2026-03-14)* —
   When `--pkg-name` differs from the input package, the generated code accesses
   fields via `row *mypkg.Foo`, but unexported fields (`row.name`) are inaccessible
-  from another package and produce a compile error. The fix needs to filter
-  unexported fields when the output package differs from the struct's origin
-  package. This check cannot live in `Parse()` (which doesn't know the output
-  package name), so it should be applied in `Run()` after determining the
-  effective package name — iterate `structs` and remove fields where
-  `!ast.IsExported(field.Name)` when `packageName != si.PkgName`. Emit a warning
-  for each skipped field.
-
-  Note: `resolveEmbeddedFields` also needs the same guard — promoted unexported
-  fields from an embedded struct in the same package would be inaccessible from
-  a different output package.
-
-  - Files: `generator.go` (`Run()` — add post-parse filtering loop),
-    `generator_test.go` (new test case: cross-package with unexported fields),
-    `integration_test.go` (optional — compile verification)
+  from another package and produce a compile error. Added `filterUnexportedFields`
+  helper in `template.go` that uses `token.IsExported` to filter fields on structs
+  with a non-empty `Qualifier` (cross-package signal). Called in `Run()` between
+  Qualifier-setting and template execution. Emits a warning for each skipped field.
+  Same-package generation is unaffected. Promoted unexported fields from embedded
+  structs are also filtered since they appear as top-level fields on the StructInfo.
+  - Files: `template.go` (`filterUnexportedFields` + call in `Run()`),
+    `generator_test.go` (4 new test cases), `integration_test.go` (new
+    `cross-package-unexported-fields` subtest with compile verification)
 
 ### Priority 2 — Easy Wins
 
@@ -338,3 +332,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | D3   | `time.Time` → `Timestamp_ns` (UTC) via `resolveWellKnownType` + `ConvertMethod` |
 | 2026-03-14 | D4   | `durationpb.Duration` → Int64 nanoseconds via `AsDuration()` |
 | 2026-03-14 | D5   | `timestamppb.Timestamp` → `Timestamp_ns` (UTC) via `AsTime().UnixNano` |
+| 2026-03-14 | B6   | Unexported fields filtered in cross-package generation via `filterUnexportedFields` |
