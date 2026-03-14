@@ -50,6 +50,10 @@ when each item is completed.
 | External type (`String()`) | `String` | e.g. `url.URL` |
 | External type (`MarshalBinary`) | `Binary` | |
 | `[]*ExternalType` | `ListOf(String/Binary)` | Via marshal fallback on elements |
+| Named slice (`type Tags []string`) | Same as underlying slice | Unwrapped via `fieldInfoFromType` |
+| Named bytes (`type MyBytes []byte`) | `Binary` | `[]byte` special case preserved |
+| Named map (`type Config map[K]V`) | Same as underlying map | Unwrapped via `fieldInfoFromType` |
+| Named array (`type MAC [6]byte`) | Same as underlying array | Unwrapped via `fieldInfoFromType` |
 
 **Intentionally unsupported (correctly skipped with warning):**
 
@@ -88,7 +92,7 @@ the user's build.
 | S1 | Embedded structs (`type T struct { Base; Name string }`) | ~~Embedded fields have `len(field.Names) == 0` and are silently skipped.~~ **Fixed (2026-03-14).** Promoted fields are now flattened into the parent schema. Pointer-embedded structs (`*Base`) are skipped with warning (future work). |
 | S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | ~~`FieldInfo` uses flat `Val*` fields limiting nesting to depth 2.~~ **Fixed (2026-03-14).** Recursive `FieldInfo` with `EltInfo`/`KeyInfo` removes the depth limit. Also resolves B4 and B5. |
 | S3 | Struct name collision across packages | The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If pkg1 and pkg2 both define `Inner`, the second is silently skipped. The generated code would reference only one `AppendInnerStruct`, which may correspond to the wrong package's struct. Fix: key `processed` by qualified name (`pkgPath + "." + structName`). |
-| S4 | Named slice/map types (`type Tags []string`, `type MyBytes []byte`) | Named types whose underlying type is a slice or map fall through `resolveIdent` (which checks `*types.Struct` and `*types.Basic` but not `*types.Slice` or `*types.Map`) and hit `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add `*types.Slice` and `*types.Map` checks to `resolveIdent` and recurse into the underlying element/key/value types. |
+| S4 | Named slice/map types (`type Tags []string`, `type MyBytes []byte`) | ~~Named types whose underlying type is a slice or map fall through `resolveIdent` and hit `mapToArrowType`, which fails.~~ **Fixed (2026-03-14).** Added `fieldInfoFromType` helper and `*types.Slice`/`*types.Map`/`*types.Array` branches to `resolveIdent`. Supports named bytes, named slices of structs, named maps, named fixed-size arrays, and arbitrary nesting via S2's recursive architecture. |
 | S5 | `--pkg` accepts only local directories | `loadPackages()` forces `cfg.Dir`-based loading with `packages.Load(cfg, ".")`, rejecting Go import paths like `github.com/user/repo/pkg`. Other Go tools (mockery, go-sumtype, gqlgen) pass patterns directly to `packages.Load`, which natively handles both filesystem paths and import paths. See section 1.5 for full analysis. |
 
 ### 1.5 Package Input — Go Import Paths vs Local Directories
@@ -268,9 +272,14 @@ These must be fixed first because they produce output that does not compile.
   collisions. See section 1.4.
   - Files: `generator.go`, `generator_test.go`
 
-- [ ] **S4: Support named slice/map types** — Add `*types.Slice` and `*types.Map`
-  branches to `resolveIdent` to unwrap underlying types. See section 1.4.
-  - Files: `generator.go`, `generator_test.go`, `integration_test.go` (optional)
+- [x] **S4: Support named slice/map types** *(2026-03-14)* — Added
+  `fieldInfoFromType` helper that resolves `types.Type` → `FieldInfo` recursively
+  (parallels the AST-based `mapToFieldInfo`). Added `*types.Slice`, `*types.Map`,
+  and `*types.Array` branches to `resolveIdent` via the underlying type. Named
+  type's name is preserved as `GoType`. Handles named bytes (`type MyBytes []byte`
+  → Binary), named slices of structs, named maps, named fixed-size arrays, and
+  arbitrary nesting depth via S2's recursive `EltInfo`/`KeyInfo` architecture.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
 - [x] **S5: Accept Go import paths in `--pkg`** *(2026-03-14)* — Classify inputs
   using `go help packages` convention: filesystem paths (`.`, `..`, `/` prefix) use
@@ -343,3 +352,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | D5   | `timestamppb.Timestamp` → `Timestamp_ns` (UTC) via `AsTime().UnixNano` |
 | 2026-03-14 | B6   | Unexported fields filtered in cross-package generation via `filterUnexportedFields` |
 | 2026-03-14 | S5   | `--pkg` accepts Go import paths in addition to filesystem paths |
+| 2026-03-14 | S4   | Named slice/map/array types supported via `fieldInfoFromType` + `resolveIdent` branches |

@@ -2788,6 +2788,132 @@ type Outer struct {
 	})
 }
 
+// TestNamedSliceAndMap tests that named slice and map types (e.g. type Tags []string,
+// type Config map[string]int32) generate correct Arrow writers that compile and
+// produce valid Parquet data queryable by DuckDB.
+func TestNamedSliceAndMap(t *testing.T) {
+	tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+type Tags []string
+type Config map[string]int32
+type MyBytes []byte
+
+type Device struct {
+	ID       int32
+	Tags     Tags
+	Settings Config
+	Data     MyBytes
+}
+`, []string{"Device"}, "")
+
+	testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/duckdb/duckdb-go/v2"
+)
+
+func TestNamedSliceAndMapArrowWriter(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	d1 := Device{
+		ID:       1,
+		Tags:     Tags{"alpha", "beta"},
+		Settings: Config{"port": 8080, "timeout": 30},
+		Data:     MyBytes{0xDE, 0xAD},
+	}
+	d2 := Device{
+		ID:       2,
+		Tags:     nil,
+		Settings: nil,
+		Data:     nil,
+	}
+
+	writer.Append(&d1)
+	writer.Append(&d2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	// Write to Parquet and verify via DuckDB.
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "devices.parquet")
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("pqarrow writer: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("duckdb: %v", err)
+	}
+	defer db.Close()
+
+	// Verify first row Tags via DuckDB list extraction.
+	var tags duckdb.Composite[[]string]
+	err = db.QueryRow(fmt.Sprintf("SELECT tags FROM read_parquet('%s') WHERE id = 1", parquetPath)).Scan(&tags)
+	if err != nil {
+		t.Fatalf("scan tags: %v", err)
+	}
+	if !reflect.DeepEqual(tags.Get(), []string{"alpha", "beta"}) {
+		t.Errorf("tags: want [alpha beta], got %v", tags.Get())
+	}
+
+	// Verify nil Tags for second row.
+	var tagsNull duckdb.Composite[[]string]
+	err = db.QueryRow(fmt.Sprintf("SELECT tags FROM read_parquet('%s') WHERE id = 2", parquetPath)).Scan(&tagsNull)
+	if err != nil {
+		t.Fatalf("scan null tags: %v", err)
+	}
+	if tagsNull.Get() != nil {
+		t.Errorf("expected nil tags for row 2, got %v", tagsNull.Get())
+	}
+
+	// Verify row count.
+	var count int
+	err = db.QueryRow(fmt.Sprintf("SELECT count(*) FROM read_parquet('%s')", parquetPath)).Scan(&count)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 rows, got %d", count)
+	}
+}
+`
+
+	runInnerTest(t, tmpDir, testCode, "")
+}
+
 // setupIntegrationTest creates a temp directory, writes the Go struct source and
 // go.mod, runs the generator, and verifies the output file exists. It returns
 // the temp directory and generated output path. For multi-package layouts use

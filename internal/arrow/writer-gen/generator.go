@@ -505,6 +505,22 @@ func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name strin
 				}, nil
 			}
 		}
+
+		// Named slice, map, or array type (e.g., type Tags []string, type Config map[string]int).
+		// Resolve the underlying composite via fieldInfoFromType and preserve the named
+		// type's name as GoType.
+		switch obj.Type().Underlying().(type) {
+		case *types.Slice, *types.Map, *types.Array:
+			fi, err := fieldInfoFromType(pkg, allPkgs, name, obj.Type().Underlying(), isPointer, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("named type %s: %w", obj.Name(), err)
+			}
+			fi.GoType = obj.Name()
+			if isPointer {
+				fi.GoType = "*" + fi.GoType
+			}
+			return fi, nil
+		}
 	}
 
 	// Primitive type
@@ -663,6 +679,209 @@ func mapStructField(name string, structName string, pkgName string, pkgPath stri
 		IsPointer:    isPointer,
 		StructName:   structName,
 	}
+}
+
+// fieldInfoFromType resolves a types.Type to a FieldInfo. Used to map element,
+// key, and value types of named slice/map/array types where the underlying
+// structure is available from the type checker but no AST expression exists.
+func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name string, typ types.Type, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+	switch t := typ.(type) {
+	case *types.Basic:
+		return fieldInfoFromBasic(name, t, isPointer)
+
+	case *types.Named:
+		// Well-known types (time.Time, time.Duration, protobuf types).
+		if fi, ok := resolveWellKnownType(name, t, isPointer); ok {
+			return fi, nil
+		}
+
+		switch u := t.Underlying().(type) {
+		case *types.Struct:
+			if t.Obj().Pkg() != nil {
+				pkgPath := t.Obj().Pkg().Path()
+				if findPkgByPath(allPkgs, pkgPath) != nil {
+					return mapStructField(name, t.Obj().Name(), t.Obj().Pkg().Name(), pkgPath, isPointer, queue, processed), nil
+				}
+			}
+			// External struct — try marshal methods.
+			method := detectMarshalMethod(t)
+			if method != "" {
+				arrowType, arrowBuilder := marshalMethodArrowType(method)
+				goType := t.String()
+				if isPointer {
+					goType = "*" + goType
+				}
+				return FieldInfo{
+					Name: name, GoType: goType, ArrowType: arrowType,
+					ArrowBuilder: arrowBuilder, MarshalMethod: method, IsPointer: isPointer,
+				}, nil
+			}
+			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", t)
+
+		case *types.Basic:
+			return fieldInfoFromBasic(name, u, isPointer)
+
+		case *types.Slice, *types.Map, *types.Array:
+			return fieldInfoFromType(pkg, allPkgs, name, u, isPointer, queue, processed)
+
+		default:
+			method := detectMarshalMethod(t)
+			if method != "" {
+				arrowType, arrowBuilder := marshalMethodArrowType(method)
+				goType := t.String()
+				if isPointer {
+					goType = "*" + goType
+				}
+				return FieldInfo{
+					Name: name, GoType: goType, ArrowType: arrowType,
+					ArrowBuilder: arrowBuilder, MarshalMethod: method, IsPointer: isPointer,
+				}, nil
+			}
+			return FieldInfo{}, fmt.Errorf("unsupported named type %s", t)
+		}
+
+	case *types.Pointer:
+		return fieldInfoFromType(pkg, allPkgs, name, t.Elem(), true, queue, processed)
+
+	case *types.Slice:
+		// []byte special case.
+		if basic, ok := t.Elem().(*types.Basic); ok && basic.Kind() == types.Byte {
+			goType := "[]byte"
+			if isPointer {
+				goType = "*[]byte"
+			}
+			return FieldInfo{
+				Name: name, GoType: goType,
+				ArrowType:    "arrow.BinaryTypes.Binary",
+				ArrowBuilder: "*array.BinaryBuilder",
+				CastType:     "[]byte",
+				IsPointer:    isPointer,
+			}, nil
+		}
+
+		eltInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("slice element: %w", err)
+		}
+
+		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
+		if eltInfo.IsStruct {
+			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
+		}
+
+		goType := "[]" + eltInfo.GoType
+		if isPointer {
+			goType = "*" + goType
+		}
+		return FieldInfo{
+			Name: name, GoType: goType, ArrowType: arrowType,
+			ArrowBuilder: "*array.ListBuilder", IsList: true,
+			EltInfo: &eltInfo, IsPointer: isPointer,
+		}, nil
+
+	case *types.Map:
+		keyInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Key(), false, queue, processed)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("map key: %w", err)
+		}
+		if keyInfo.IsStruct {
+			return FieldInfo{}, fmt.Errorf("struct map keys are not supported")
+		}
+
+		valInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("map value: %w", err)
+		}
+
+		valArrowType := valInfo.ArrowType
+		if valInfo.IsStruct {
+			valArrowType = fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", valInfo.StructName)
+		}
+
+		goType := fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType)
+		if isPointer {
+			goType = "*" + goType
+		}
+		return FieldInfo{
+			Name: name, GoType: goType,
+			ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
+			ArrowBuilder: "*array.MapBuilder",
+			IsMap:        true,
+			KeyInfo:      &keyInfo,
+			EltInfo:      &valInfo,
+			IsPointer:    isPointer,
+		}, nil
+
+	case *types.Array:
+		eltInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
+		if err != nil {
+			return FieldInfo{}, fmt.Errorf("array element: %w", err)
+		}
+
+		lenStr := fmt.Sprintf("%d", t.Len())
+		arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltInfo.ArrowType)
+		if eltInfo.IsStruct {
+			arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lenStr, eltInfo.StructName)
+		}
+
+		goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
+		if isPointer {
+			goType = "*" + goType
+		}
+		return FieldInfo{
+			Name: name, GoType: goType, ArrowType: arrowType,
+			ArrowBuilder:    "*array.FixedSizeListBuilder",
+			IsFixedSizeList: true,
+			FixedSizeLen:    lenStr,
+			EltInfo:         &eltInfo,
+			IsPointer:       isPointer,
+		}, nil
+	}
+
+	return FieldInfo{}, fmt.Errorf("unsupported type: %s", typ)
+}
+
+// fieldInfoFromBasic maps a types.Basic to a FieldInfo with the corresponding
+// Arrow primitive type.
+func fieldInfoFromBasic(name string, basic *types.Basic, isPointer bool) (FieldInfo, error) {
+	var arrowType, arrowBuilder, castType string
+	switch basic.Kind() {
+	case types.Int8:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Int8", "*array.Int8Builder", "int8"
+	case types.Int16:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Int16", "*array.Int16Builder", "int16"
+	case types.Int32:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Int32", "*array.Int32Builder", "int32"
+	case types.Int, types.Int64:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Int64", "*array.Int64Builder", "int64"
+	case types.Uint8:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Uint8", "*array.Uint8Builder", "uint8"
+	case types.Uint16:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Uint16", "*array.Uint16Builder", "uint16"
+	case types.Uint32:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Uint32", "*array.Uint32Builder", "uint32"
+	case types.Uint, types.Uint64:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Uint64", "*array.Uint64Builder", "uint64"
+	case types.Float32:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Float32", "*array.Float32Builder", "float32"
+	case types.Float64:
+		arrowType, arrowBuilder, castType = "arrow.PrimitiveTypes.Float64", "*array.Float64Builder", "float64"
+	case types.String:
+		arrowType, arrowBuilder, castType = "arrow.BinaryTypes.String", "*array.StringBuilder", "string"
+	case types.Bool:
+		arrowType, arrowBuilder, castType = "arrow.FixedWidthTypes.Boolean", "*array.BooleanBuilder", "bool"
+	default:
+		return FieldInfo{}, fmt.Errorf("unsupported basic type: %s", basic.Name())
+	}
+
+	goType := castType
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name: name, GoType: goType, ArrowType: arrowType,
+		ArrowBuilder: arrowBuilder, CastType: castType, IsPointer: isPointer,
+	}, nil
 }
 
 // resolveEmbeddedFields resolves an embedded struct field and returns its

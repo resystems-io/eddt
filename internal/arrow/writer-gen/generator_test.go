@@ -814,6 +814,140 @@ type Device struct {
 				`{Name: "secret",`,
 			},
 		},
+		{
+			name: "named-slice-string",
+			goCode: `package mypkg
+
+type Tags []string
+
+type Device struct {
+	ID   int32
+	Tags Tags
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				`{Name: "Tags",`,
+				"arrow.ListOf(arrow.BinaryTypes.String)",
+				"for _, v0 := range",
+			},
+		},
+		{
+			name: "named-bytes",
+			goCode: `package mypkg
+
+type MyBytes []byte
+
+type Packet struct {
+	ID   int32
+	Data MyBytes
+}
+`,
+			targetStruct: "Packet",
+			mustContain: []string{
+				`{Name: "Data",`,
+				"arrow.BinaryTypes.Binary",
+			},
+			mustNotContain: []string{
+				"arrow.ListOf",
+			},
+		},
+		{
+			name: "named-map",
+			goCode: `package mypkg
+
+type Config map[string]int32
+
+type Device struct {
+	ID       int32
+	Settings Config
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				`{Name: "Settings",`,
+				"arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int32)",
+				"v0KeyBldr",
+				"v0ValBldr",
+			},
+		},
+		{
+			name: "named-nested-slice",
+			goCode: `package mypkg
+
+type Matrix [][]int32
+
+type Data struct {
+	ID   int32
+	Grid Matrix
+}
+`,
+			targetStruct: "Data",
+			mustContain: []string{
+				`{Name: "Grid",`,
+				"arrow.ListOf(arrow.ListOf(arrow.PrimitiveTypes.Int32))",
+				"v0Bldr",
+				"v1Bldr",
+			},
+		},
+		{
+			name: "named-slice-of-struct",
+			goCode: `package mypkg
+
+type Person struct {
+	Name string
+}
+
+type People []Person
+
+type Team struct {
+	ID      int32
+	Members People
+}
+`,
+			targetStruct: "Team",
+			mustContain: []string{
+				`{Name: "Members",`,
+				"arrow.ListOf(arrow.StructOf(NewPersonSchema().Fields()...))",
+				"AppendPersonStruct",
+			},
+		},
+		{
+			name: "pointer-to-named-slice",
+			goCode: `package mypkg
+
+type Tags []string
+
+type Device struct {
+	ID   int32
+	Tags *Tags
+}
+`,
+			targetStruct: "Device",
+			mustContain: []string{
+				`{Name: "Tags",`,
+				"AppendNull",
+				"arrow.ListOf(arrow.BinaryTypes.String)",
+			},
+		},
+		{
+			name: "named-fixed-size-array",
+			goCode: `package mypkg
+
+type MAC [6]byte
+
+type NIC struct {
+	ID      int32
+	Address MAC
+}
+`,
+			targetStruct: "NIC",
+			mustContain: []string{
+				`{Name: "Address",`,
+				"FixedSizeListOfNonNullable(6",
+				"FixedSizeListBuilder",
+			},
+		},
 	}
 
 	for _, tt := range tests {
