@@ -4,3 +4,5 @@ build/
 .vscode/
 cpu.prof
 bench.prof
+CLAUDE.md
+.claude
