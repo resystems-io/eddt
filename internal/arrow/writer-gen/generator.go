@@ -318,15 +318,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 				// External type: fall back to marshal method detection.
 				method := detectMarshalMethod(typ)
 				if method != "" {
-					arrowType, arrowBuilder := marshalMethodArrowType(method)
-					return FieldInfo{
-						Name:          name,
-						GoType:        "*" + typ.String(),
-						ArrowType:     arrowType,
-						ArrowBuilder:  arrowBuilder,
-						MarshalMethod: method,
-						IsPointer:     true,
-					}, nil
+					return buildMarshalFieldInfo(name, "*"+typ.String(), method, true), nil
 				}
 				return FieldInfo{}, fmt.Errorf("external type *%s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 			}
@@ -347,31 +339,12 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 				return FieldInfo{}, fmt.Errorf("fixed-size array element %w", err)
 			}
 
-			arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lit.Value, eltInfo.ArrowType)
-			if eltInfo.IsStruct {
-				arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lit.Value, eltInfo.StructName)
-			}
-
-			return FieldInfo{
-				Name:            name,
-				GoType:          fmt.Sprintf("[%s]%s", lit.Value, eltInfo.GoType),
-				ArrowType:       arrowType,
-				ArrowBuilder:    "*array.FixedSizeListBuilder",
-				IsFixedSizeList: true,
-				FixedSizeLen:    lit.Value,
-				EltInfo:         &eltInfo,
-			}, nil
+			return buildFixedArrayFieldInfo(name, lit.Value, eltInfo, false), nil
 		}
 
 		// []byte is represented as Arrow Binary, not a List of Uint8.
 		if eltIdent, ok := t.Elt.(*ast.Ident); ok && eltIdent.Name == "byte" {
-			return FieldInfo{
-				Name:         name,
-				GoType:       "[]byte",
-				ArrowType:    "arrow.BinaryTypes.Binary",
-				ArrowBuilder: "*array.BinaryBuilder",
-				CastType:     "[]byte",
-			}, nil
+			return buildByteSliceFieldInfo(name, false), nil
 		}
 
 		// Slice type
@@ -380,19 +353,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
 
-		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
-		if eltInfo.IsStruct {
-			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
-		}
-
-		return FieldInfo{
-			Name:         name,
-			GoType:       "[]" + eltInfo.GoType,
-			ArrowType:    arrowType,
-			ArrowBuilder: "*array.ListBuilder",
-			IsList:       true,
-			EltInfo:      &eltInfo,
-		}, nil
+		return buildSliceFieldInfo(name, eltInfo, false), nil
 
 	case *ast.MapType:
 		// Map type
@@ -409,20 +370,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			return FieldInfo{}, fmt.Errorf("map value %w", err)
 		}
 
-		valArrowType := valInfo.ArrowType
-		if valInfo.IsStruct {
-			valArrowType = fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", valInfo.StructName)
-		}
-
-		return FieldInfo{
-			Name:         name,
-			GoType:       fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType),
-			ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
-			ArrowBuilder: "*array.MapBuilder",
-			IsMap:        true,
-			KeyInfo:      &keyInfo,
-			EltInfo:      &valInfo,
-		}, nil
+		return buildMapFieldInfo(name, keyInfo, valInfo, false), nil
 
 	case *ast.SelectorExpr:
 		// External package type (e.g., netip.Addr, time.Time, or pkg2.Inner)
@@ -458,14 +406,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 		if method == "" {
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 		}
-		arrowType, arrowBuilder := marshalMethodArrowType(method)
-		return FieldInfo{
-			Name:          name,
-			GoType:        typ.String(),
-			ArrowType:     arrowType,
-			ArrowBuilder:  arrowBuilder,
-			MarshalMethod: method,
-		}, nil
+		return buildMarshalFieldInfo(name, typ.String(), method, false), nil
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
@@ -681,6 +622,97 @@ func mapStructField(name string, structName string, pkgName string, pkgPath stri
 	}
 }
 
+// eltArrowType returns the Arrow type expression for a FieldInfo, using the
+// struct schema constructor when the field is a struct type.
+func eltArrowType(fi FieldInfo) string {
+	if fi.IsStruct {
+		return fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", fi.StructName)
+	}
+	return fi.ArrowType
+}
+
+// buildSliceFieldInfo constructs a FieldInfo for a slice type from its resolved element.
+func buildSliceFieldInfo(name string, eltInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := "[]" + eltInfo.GoType
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.ListOf(%s)", eltArrowType(eltInfo)),
+		ArrowBuilder: "*array.ListBuilder",
+		IsList:       true,
+		EltInfo:      &eltInfo,
+		IsPointer:    isPointer,
+	}
+}
+
+// buildMapFieldInfo constructs a FieldInfo for a map type from its resolved key and value.
+func buildMapFieldInfo(name string, keyInfo, valInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType)
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, eltArrowType(valInfo)),
+		ArrowBuilder: "*array.MapBuilder",
+		IsMap:        true,
+		KeyInfo:      &keyInfo,
+		EltInfo:      &valInfo,
+		IsPointer:    isPointer,
+	}
+}
+
+// buildFixedArrayFieldInfo constructs a FieldInfo for a fixed-size array from its resolved element.
+func buildFixedArrayFieldInfo(name string, lenStr string, eltInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:            name,
+		GoType:          goType,
+		ArrowType:       fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltArrowType(eltInfo)),
+		ArrowBuilder:    "*array.FixedSizeListBuilder",
+		IsFixedSizeList: true,
+		FixedSizeLen:    lenStr,
+		EltInfo:         &eltInfo,
+		IsPointer:       isPointer,
+	}
+}
+
+// buildByteSliceFieldInfo constructs a FieldInfo for a []byte field (Arrow Binary).
+func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
+	goType := "[]byte"
+	if isPointer {
+		goType = "*[]byte"
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    "arrow.BinaryTypes.Binary",
+		ArrowBuilder: "*array.BinaryBuilder",
+		CastType:     "[]byte",
+		IsPointer:    isPointer,
+	}
+}
+
+// buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.
+func buildMarshalFieldInfo(name string, goType string, method string, isPointer bool) FieldInfo {
+	arrowType, arrowBuilder := marshalMethodArrowType(method)
+	return FieldInfo{
+		Name:          name,
+		GoType:        goType,
+		ArrowType:     arrowType,
+		ArrowBuilder:  arrowBuilder,
+		MarshalMethod: method,
+		IsPointer:     isPointer,
+	}
+}
+
 // fieldInfoFromType resolves a types.Type to a FieldInfo. Used to map element,
 // key, and value types of named slice/map/array types where the underlying
 // structure is available from the type checker but no AST expression exists.
@@ -706,15 +738,11 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			// External struct — try marshal methods.
 			method := detectMarshalMethod(t)
 			if method != "" {
-				arrowType, arrowBuilder := marshalMethodArrowType(method)
 				goType := t.String()
 				if isPointer {
 					goType = "*" + goType
 				}
-				return FieldInfo{
-					Name: name, GoType: goType, ArrowType: arrowType,
-					ArrowBuilder: arrowBuilder, MarshalMethod: method, IsPointer: isPointer,
-				}, nil
+				return buildMarshalFieldInfo(name, goType, method, isPointer), nil
 			}
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", t)
 
@@ -727,15 +755,11 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 		default:
 			method := detectMarshalMethod(t)
 			if method != "" {
-				arrowType, arrowBuilder := marshalMethodArrowType(method)
 				goType := t.String()
 				if isPointer {
 					goType = "*" + goType
 				}
-				return FieldInfo{
-					Name: name, GoType: goType, ArrowType: arrowType,
-					ArrowBuilder: arrowBuilder, MarshalMethod: method, IsPointer: isPointer,
-				}, nil
+				return buildMarshalFieldInfo(name, goType, method, isPointer), nil
 			}
 			return FieldInfo{}, fmt.Errorf("unsupported named type %s", t)
 		}
@@ -746,17 +770,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 	case *types.Slice:
 		// []byte special case.
 		if basic, ok := t.Elem().(*types.Basic); ok && basic.Kind() == types.Byte {
-			goType := "[]byte"
-			if isPointer {
-				goType = "*[]byte"
-			}
-			return FieldInfo{
-				Name: name, GoType: goType,
-				ArrowType:    "arrow.BinaryTypes.Binary",
-				ArrowBuilder: "*array.BinaryBuilder",
-				CastType:     "[]byte",
-				IsPointer:    isPointer,
-			}, nil
+			return buildByteSliceFieldInfo(name, isPointer), nil
 		}
 
 		eltInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
@@ -764,20 +778,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			return FieldInfo{}, fmt.Errorf("slice element: %w", err)
 		}
 
-		arrowType := fmt.Sprintf("arrow.ListOf(%s)", eltInfo.ArrowType)
-		if eltInfo.IsStruct {
-			arrowType = fmt.Sprintf("arrow.ListOf(arrow.StructOf(New%sSchema().Fields()...))", eltInfo.StructName)
-		}
-
-		goType := "[]" + eltInfo.GoType
-		if isPointer {
-			goType = "*" + goType
-		}
-		return FieldInfo{
-			Name: name, GoType: goType, ArrowType: arrowType,
-			ArrowBuilder: "*array.ListBuilder", IsList: true,
-			EltInfo: &eltInfo, IsPointer: isPointer,
-		}, nil
+		return buildSliceFieldInfo(name, eltInfo, isPointer), nil
 
 	case *types.Map:
 		keyInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Key(), false, queue, processed)
@@ -793,24 +794,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			return FieldInfo{}, fmt.Errorf("map value: %w", err)
 		}
 
-		valArrowType := valInfo.ArrowType
-		if valInfo.IsStruct {
-			valArrowType = fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", valInfo.StructName)
-		}
-
-		goType := fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType)
-		if isPointer {
-			goType = "*" + goType
-		}
-		return FieldInfo{
-			Name: name, GoType: goType,
-			ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, valArrowType),
-			ArrowBuilder: "*array.MapBuilder",
-			IsMap:        true,
-			KeyInfo:      &keyInfo,
-			EltInfo:      &valInfo,
-			IsPointer:    isPointer,
-		}, nil
+		return buildMapFieldInfo(name, keyInfo, valInfo, isPointer), nil
 
 	case *types.Array:
 		eltInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
@@ -819,23 +803,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 		}
 
 		lenStr := fmt.Sprintf("%d", t.Len())
-		arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltInfo.ArrowType)
-		if eltInfo.IsStruct {
-			arrowType = fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, arrow.StructOf(New%sSchema().Fields()...))", lenStr, eltInfo.StructName)
-		}
-
-		goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
-		if isPointer {
-			goType = "*" + goType
-		}
-		return FieldInfo{
-			Name: name, GoType: goType, ArrowType: arrowType,
-			ArrowBuilder:    "*array.FixedSizeListBuilder",
-			IsFixedSizeList: true,
-			FixedSizeLen:    lenStr,
-			EltInfo:         &eltInfo,
-			IsPointer:       isPointer,
-		}, nil
+		return buildFixedArrayFieldInfo(name, lenStr, eltInfo, isPointer), nil
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported type: %s", typ)
