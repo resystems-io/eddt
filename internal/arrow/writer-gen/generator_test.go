@@ -3,6 +3,7 @@ package writergen
 import (
 	"go/ast"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1046,4 +1047,158 @@ type Person struct {
 			t.Errorf("Expected 'invalid --pkg-alias' error, got: %v", err)
 		}
 	})
+}
+
+// TestGenerator_RunOutput_Protobuf tests code generation for protobuf well-known types.
+// These tests require google.golang.org/protobuf as a dependency in the dummy module,
+// so they use a shared temp dir with an explicit go get step before running the generator.
+func TestGenerator_RunOutput_Protobuf(t *testing.T) {
+	tests := []struct {
+		name           string
+		goCode         string
+		targetStruct   string
+		mustContain    []string
+		mustNotContain []string
+	}{
+		{
+			name: "protobuf-duration-pointer",
+			goCode: `package mypkg
+
+import "google.golang.org/protobuf/types/known/durationpb"
+
+type Event struct {
+	ID       int32
+	Duration *durationpb.Duration
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "Duration",`,
+				"Int64Builder",
+				"int64(",
+				".AsDuration()",
+				"AppendNull",
+			},
+			mustNotContain: []string{
+				"String()",
+				"StringBuilder",
+			},
+		},
+		{
+			name: "protobuf-duration-value",
+			goCode: `package mypkg
+
+import "google.golang.org/protobuf/types/known/durationpb"
+
+type Event struct {
+	ID       int32
+	Duration durationpb.Duration
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "Duration",`,
+				"Int64Builder",
+				"int64(",
+				".AsDuration()",
+			},
+			mustNotContain: []string{
+				"String()",
+				"StringBuilder",
+				"AppendNull",
+			},
+		},
+		{
+			name: "protobuf-timestamp-pointer",
+			goCode: `package mypkg
+
+import "google.golang.org/protobuf/types/known/timestamppb"
+
+type Event struct {
+	ID        int32
+	CreatedAt *timestamppb.Timestamp
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "CreatedAt",`,
+				"TimestampBuilder",
+				"Timestamp_ns",
+				".AsTime().UnixNano()",
+				"arrow.Timestamp(",
+				"AppendNull",
+			},
+			mustNotContain: []string{
+				"String()",
+				"StringBuilder",
+				"MarshalText",
+			},
+		},
+		{
+			name: "protobuf-timestamp-value",
+			goCode: `package mypkg
+
+import "google.golang.org/protobuf/types/known/timestamppb"
+
+type Event struct {
+	ID        int32
+	CreatedAt timestamppb.Timestamp
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "CreatedAt",`,
+				"TimestampBuilder",
+				".AsTime().UnixNano()",
+			},
+			mustNotContain: []string{
+				"String()",
+				"StringBuilder",
+				"AppendNull",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tmpDir, "test_structs.go"), []byte(tt.goCode), 0644); err != nil {
+				t.Fatalf("Failed to write test file: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+				t.Fatalf("Failed to write go.mod: %v", err)
+			}
+
+			// Fetch protobuf dependency so packages.Load can resolve imports.
+			cmd := exec.Command("go", "get", "google.golang.org/protobuf/types/known/durationpb", "google.golang.org/protobuf/types/known/timestamppb")
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("go get protobuf failed: %v\n%s", err, out)
+			}
+
+			outPath := filepath.Join(tmpDir, "out_writer.go")
+			g := NewGenerator([]string{tmpDir}, []string{tt.targetStruct}, outPath, false, nil)
+
+			if err := g.Run(""); err != nil {
+				t.Fatalf("Run() failed: %v", err)
+			}
+
+			outBytes, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("Failed to read output file: %v", err)
+			}
+			outStr := string(outBytes)
+
+			for _, want := range tt.mustContain {
+				if !strings.Contains(outStr, want) {
+					t.Errorf("Expected output to contain %q, got:\n%s", want, outStr)
+				}
+			}
+			for _, unwanted := range tt.mustNotContain {
+				if strings.Contains(outStr, unwanted) {
+					t.Errorf("Expected output NOT to contain %q, got:\n%s", unwanted, outStr)
+				}
+			}
+		})
+	}
 }

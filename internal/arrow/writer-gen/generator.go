@@ -519,6 +519,38 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 		}, true
 	}
 
+	if pkgPath == "google.golang.org/protobuf/types/known/durationpb" && typeName == "Duration" {
+		goType := "durationpb.Duration"
+		if isPointer {
+			goType = "*durationpb.Duration"
+		}
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:  "*array.Int64Builder",
+			CastType:      "int64",
+			ConvertMethod: "AsDuration",
+			IsPointer:     isPointer,
+		}, true
+	}
+
+	if pkgPath == "google.golang.org/protobuf/types/known/timestamppb" && typeName == "Timestamp" {
+		goType := "timestamppb.Timestamp"
+		if isPointer {
+			goType = "*timestamppb.Timestamp"
+		}
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:  "*array.TimestampBuilder",
+			CastType:      "arrow.Timestamp",
+			ConvertMethod: "AsTime().UnixNano",
+			IsPointer:     isPointer,
+		}, true
+	}
+
 	return FieldInfo{}, false
 }
 

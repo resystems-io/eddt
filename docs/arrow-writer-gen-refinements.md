@@ -44,6 +44,8 @@ when each item is completed.
 | Named primitive (`type X int`) | Underlying Arrow type | Cast to underlying |
 | `time.Duration` | `Int64` | Stored as nanoseconds via `int64(d)` |
 | `time.Time` | `Timestamp_ns` (UTC) | Stored via `arrow.Timestamp(t.UnixNano())` |
+| `durationpb.Duration` | `Int64` | Via `int64(d.AsDuration())` — nanoseconds |
+| `timestamppb.Timestamp` | `Timestamp_ns` (UTC) | Via `arrow.Timestamp(t.AsTime().UnixNano())` |
 | External type (`MarshalText`) | `String` | e.g. `netip.Addr` |
 | External type (`String()`) | `String` | e.g. `url.URL` |
 | External type (`MarshalBinary`) | `Binary` | |
@@ -205,6 +207,62 @@ These must be fixed first because they produce output that does not compile.
     `template.go` (new `ConvertMethod` branch in `appendValue`),
     `generator_test.go` (2 new cases), `integration_test.go` (new subtest)
 
+- [x] **D4: `durationpb.Duration` as Int64 nanoseconds** *(2026-03-14)* —
+  `durationpb.Duration` (from `google.golang.org/protobuf/types/known/durationpb`)
+  is a protobuf well-known type wrapping a duration as `Seconds int64` + `Nanos int32`.
+  It currently resolves via the `SelectorExpr` path → `detectMarshalMethod` →
+  `String()` (proto debug format), producing opaque strings like
+  `"seconds:7200"` that are neither human-readable nor machine-parseable.
+
+  **Approach:** Extend `resolveWellKnownType` with an entry for package path
+  `"google.golang.org/protobuf/types/known/durationpb"`, type name `"Duration"`.
+  Map to `arrow.PrimitiveTypes.Int64` with `ConvertMethod: "AsDuration"` and
+  `CastType: "int64"`. The generated code becomes `int64(row.Field.AsDuration())`
+  — this calls `durationpb.Duration.AsDuration() time.Duration`, and since
+  `time.Duration` is `int64` (nanoseconds), the cast is lossless. Mirrors D2
+  exactly, just with an extra conversion step through the protobuf accessor.
+
+  Both value (`durationpb.Duration`) and pointer (`*durationpb.Duration`) fields
+  are supported — pointer fields get nil → `AppendNull` handling. The template's
+  `ConvertMethod` path auto-dereferences via Go method call semantics.
+
+  **Note:** `AsDuration()` performs saturation arithmetic for out-of-range values
+  (durations exceeding `±math.MaxInt64` nanoseconds clamp to `math.MinInt64` or
+  `math.MaxInt64`). This matches `time.Duration`'s own range limitations.
+
+  - Files: `generator.go` (`resolveWellKnownType` — add entry),
+    `generator_test.go` (2 new cases: value + pointer),
+    `integration_test.go` (new subtest with Parquet/DuckDB round-trip)
+
+- [x] **D5: `timestamppb.Timestamp` as Arrow Timestamp (nanosecond, UTC)** *(2026-03-14)* —
+  `timestamppb.Timestamp` (from `google.golang.org/protobuf/types/known/timestamppb`)
+  is a protobuf well-known type wrapping a point in time as `Seconds int64` +
+  `Nanos int32`. It currently resolves via the `SelectorExpr` path →
+  `detectMarshalMethod` → `String()` (proto debug format), producing opaque
+  strings like `"seconds:1710417600"`.
+
+  **Approach:** Extend `resolveWellKnownType` with an entry for package path
+  `"google.golang.org/protobuf/types/known/timestamppb"`, type name `"Timestamp"`.
+  Map to `arrow.FixedWidthTypes.Timestamp_ns` with `ConvertMethod: "AsTime().UnixNano"`
+  and `CastType: "arrow.Timestamp"`. The generated code becomes
+  `arrow.Timestamp(row.Field.AsTime().UnixNano())` — this chains
+  `timestamppb.Timestamp.AsTime() time.Time` with `time.Time.UnixNano() int64`.
+  The `ConvertMethod` template already supports chained calls since it interpolates
+  the string directly: `{{$var}}.{{$info.ConvertMethod}}()`. Mirrors D3 exactly,
+  just with an extra conversion step through the protobuf accessor.
+
+  Both value (`timestamppb.Timestamp`) and pointer (`*timestamppb.Timestamp`)
+  fields are supported. The same DuckDB microsecond-precision caveat from D3
+  applies — nanosecond precision is preserved in Arrow/Parquet but DuckDB reads
+  at microsecond granularity.
+
+  **Note:** `AsTime()` returns `time.Unix(seconds, nanos).UTC()`, so the resulting
+  `time.Time` is always UTC — consistent with the `Timestamp_ns` timezone annotation.
+
+  - Files: `generator.go` (`resolveWellKnownType` — add entry),
+    `generator_test.go` (2 new cases: value + pointer),
+    `integration_test.go` (new subtest with Parquet/DuckDB round-trip)
+
 ---
 
 ## 3. Testing Strategy
@@ -237,3 +295,5 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | S1   | Embedded struct fields flattened into parent Arrow schema |
 | 2026-03-14 | D2   | `time.Duration` → Int64 nanoseconds via `resolveWellKnownType` |
 | 2026-03-14 | D3   | `time.Time` → `Timestamp_ns` (UTC) via `resolveWellKnownType` + `ConvertMethod` |
+| 2026-03-14 | D4   | `durationpb.Duration` → Int64 nanoseconds via `AsDuration()` |
+| 2026-03-14 | D5   | `timestamppb.Timestamp` → `Timestamp_ns` (UTC) via `AsTime().UnixNano` |

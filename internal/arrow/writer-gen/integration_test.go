@@ -1999,6 +1999,310 @@ func TestTimeTimestamp(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestTimeTimestamp")
 	})
 
+	t.Run("protobuf-duration", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		goCode := `package dummy
+
+import "google.golang.org/protobuf/types/known/durationpb"
+
+type Event struct {
+	ID       int32
+	Duration *durationpb.Duration
+	Timeout  durationpb.Duration
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+			t.Fatalf("write dummy.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		// Fetch protobuf so packages.Load can resolve imports.
+		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/durationpb")
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator([]string{tmpDir}, []string{"Event"}, outPath, false, nil)
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/durationpb"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestProtobufDuration(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewEventArrowWriter(pool)
+	defer writer.Release()
+
+	dur2h := durationpb.New(2 * time.Hour)
+	r1 := Event{
+		ID:       1,
+		Duration: dur2h,
+		Timeout:  *durationpb.New(500 * time.Millisecond),
+	}
+	r2 := Event{
+		ID:       2,
+		Duration: nil, // nil pointer
+		Timeout:  *durationpb.New(150 * time.Millisecond),
+	}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "pb_duration.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("pqarrow.NewFileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf(` + "`" + `SELECT "ID", "Duration", "Timeout" FROM read_parquet('%s')` + "`" + `, parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id       int32
+		duration *int64
+		timeout  int64
+	}
+	var results []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.duration, &r.timeout); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1: duration = 2h, timeout = 500ms
+	if results[0].duration == nil || *results[0].duration != int64(2*time.Hour) {
+		t.Errorf("row 1 duration: want %d, got %v", int64(2*time.Hour), results[0].duration)
+	}
+	if results[0].timeout != int64(500*time.Millisecond) {
+		t.Errorf("row 1 timeout: want %d, got %d", int64(500*time.Millisecond), results[0].timeout)
+	}
+
+	// Row 2: duration = nil, timeout = 150ms
+	if results[1].duration != nil {
+		t.Errorf("row 2 duration: want nil, got %d", *results[1].duration)
+	}
+	if results[1].timeout != int64(150*time.Millisecond) {
+		t.Errorf("row 2 timeout: want %d, got %d", int64(150*time.Millisecond), results[1].timeout)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestProtobufDuration")
+	})
+
+	t.Run("protobuf-timestamp", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		goCode := `package dummy
+
+import "google.golang.org/protobuf/types/known/timestamppb"
+
+type Record struct {
+	ID        int32
+	CreatedAt *timestamppb.Timestamp
+	UpdatedAt timestamppb.Timestamp
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+			t.Fatalf("write dummy.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		// Fetch protobuf so packages.Load can resolve imports.
+		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/timestamppb")
+
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator([]string{tmpDir}, []string{"Record"}, outPath, false, nil)
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestProtobufTimestamp(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewRecordArrowWriter(pool)
+	defer writer.Release()
+
+	t1 := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	// DuckDB reads Parquet timestamps at microsecond precision, so use
+	// microsecond-aligned values for the round-trip verification.
+	t2 := time.Date(2025, 6, 15, 8, 30, 0, 456000000, time.UTC)
+
+	created := timestamppb.New(t1)
+	r1 := Record{
+		ID:        1,
+		CreatedAt: created,
+		UpdatedAt: *timestamppb.New(t2),
+	}
+	r2 := Record{
+		ID:        2,
+		CreatedAt: nil, // nil pointer
+		UpdatedAt: *timestamppb.New(t1),
+	}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "pb_timestamps.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("pqarrow.NewFileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf(` + "`" + `
+		SELECT "ID",
+		       epoch_ns("CreatedAt") AS created_ns,
+		       epoch_ns("UpdatedAt") AS updated_ns
+		FROM read_parquet('%s')
+	` + "`" + `, parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id        int32
+		createdNs *int64
+		updatedNs int64
+	}
+	var results []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.createdNs, &r.updatedNs); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1: created = t1, updated = t2
+	if results[0].createdNs == nil || *results[0].createdNs != t1.UnixNano() {
+		t.Errorf("row 1 created: want %d, got %v", t1.UnixNano(), results[0].createdNs)
+	}
+	if results[0].updatedNs != t2.UnixNano() {
+		t.Errorf("row 1 updated: want %d, got %d", t2.UnixNano(), results[0].updatedNs)
+	}
+
+	// Row 2: created = nil, updated = t1
+	if results[1].createdNs != nil {
+		t.Errorf("row 2 created: want nil, got %d", *results[1].createdNs)
+	}
+	if results[1].updatedNs != t1.UnixNano() {
+		t.Errorf("row 2 updated: want %d, got %d", t1.UnixNano(), results[1].updatedNs)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestProtobufTimestamp")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that
