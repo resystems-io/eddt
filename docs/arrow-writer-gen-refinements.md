@@ -9,7 +9,7 @@ when each item is completed.
 
 ## 1. Audit Summary
 
-### 1.1 Supported Types (as of 2026-03-13)
+### 1.1 Supported Types (as of 2026-03-14)
 
 **Primitives:**
 
@@ -86,10 +86,10 @@ the user's build.
 | ID | Go Pattern | Issue |
 |----|-----------|-------|
 | S1 | Embedded structs (`type T struct { Base; Name string }`) | ~~Embedded fields have `len(field.Names) == 0` and are silently skipped.~~ **Fixed (2026-03-14).** Promoted fields are now flattened into the parent schema. Pointer-embedded structs (`*Base`) are skipped with warning (future work). |
-| S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | `FieldInfo` uses flat `Val*` fields to describe one level of element nesting, limiting nested slices to depth 2 and requiring ad-hoc fields for each new nesting pattern (B4, B5). A recursive `FieldInfo` (with `EltInfo *FieldInfo` and `KeyInfo *FieldInfo`) would remove the depth limit and unify the duplicated element dispatch logic in the template. |
+| S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | ~~`FieldInfo` uses flat `Val*` fields limiting nesting to depth 2.~~ **Fixed (2026-03-14).** Recursive `FieldInfo` with `EltInfo`/`KeyInfo` removes the depth limit. Also resolves B4 and B5. |
 | S3 | Struct name collision across packages | The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If pkg1 and pkg2 both define `Inner`, the second is silently skipped. The generated code would reference only one `AppendInnerStruct`, which may correspond to the wrong package's struct. Fix: key `processed` by qualified name (`pkgPath + "." + structName`). |
 | S4 | Named slice/map types (`type Tags []string`, `type MyBytes []byte`) | Named types whose underlying type is a slice or map fall through `resolveIdent` (which checks `*types.Struct` and `*types.Basic` but not `*types.Slice` or `*types.Map`) and hit `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add `*types.Slice` and `*types.Map` checks to `resolveIdent` and recurse into the underlying element/key/value types. |
-| S5 | `--pkg` accepts only local directories | `loadPackages()` forces `cfg.Dir`-based loading with `packages.Load(cfg, ".")`, rejecting Go import paths like `github.com/user/repo/pkg`. Other Go tools (mockery, go-sumtype, gqlgen) pass patterns directly to `packages.Load`, which natively handles both filesystem paths and import paths. See section 1.5 for full analysis and recommended approach (Option A: direct pass-through). |
+| S5 | `--pkg` accepts only local directories | `loadPackages()` forces `cfg.Dir`-based loading with `packages.Load(cfg, ".")`, rejecting Go import paths like `github.com/user/repo/pkg`. Other Go tools (mockery, go-sumtype, gqlgen) pass patterns directly to `packages.Load`, which natively handles both filesystem paths and import paths. See section 1.5 for full analysis. |
 
 ### 1.5 Package Input — Go Import Paths vs Local Directories
 
@@ -206,256 +206,113 @@ fully available. This should be evaluated during implementation.
 | ID | Go Type | Notes |
 |----|---------|-------|
 | D1 | `complex64` / `complex128` | No native Arrow complex type. Could decompose into a two-field struct (`real float32, imag float32`) but practical demand is low. |
-| D2 | `time.Duration` stored as string | ~~Currently `time.Duration` resolves via the `SelectorExpr` path and hits `String()` → stored as `"1h30m0s"`.~~ **Fixed (2026-03-14).** See D2 checklist entry. |
+| D2 | `time.Duration` | ~~Resolved via `String()` → stored as `"1h30m0s"`.~~ **Fixed (2026-03-14).** Now stored as Int64 nanoseconds. Arrow `DurationType` was investigated but Parquet has no native Duration logical type (`pqarrow` returns `ErrNotImplemented`). Int64 nanoseconds is lossless, sortable, and Parquet-compatible. |
+| D3 | `time.Time` | ~~Resolved via `MarshalText()` → stored as RFC 3339 string.~~ **Fixed (2026-03-14).** Now stored as `Timestamp_ns` (UTC) via `arrow.Timestamp(t.UnixNano())`. |
+| D4 | `durationpb.Duration` | ~~Resolved via proto `String()` → opaque `"seconds:7200"`.~~ **Fixed (2026-03-14).** Now stored as Int64 nanoseconds via `AsDuration()` conversion to `time.Duration`. `AsDuration()` performs saturation arithmetic for out-of-range values, matching `time.Duration`'s own range. |
+| D5 | `timestamppb.Timestamp` | ~~Resolved via proto `String()` → opaque `"seconds:1710417600"`.~~ **Fixed (2026-03-14).** Now stored as `Timestamp_ns` (UTC) via `AsTime().UnixNano()`. DuckDB reads at microsecond precision; nanosecond precision is preserved in Arrow/Parquet. |
 
 ---
 
 ## 2. Refinement Checklist
 
 Items are grouped by priority. Within each group, the suggested order reflects
-dependency and effort.
+dependency and effort. Completed items note the date; see the change log (section 4)
+and git blame for commit details.
 
 ### Priority 1 — Fix Broken Code Generation
 
 These must be fixed first because they produce output that does not compile.
 
-- [x] **B1: Support fixed-size arrays** *(2026-03-13)* — `[N]T` is now mapped to
-  `arrow.FixedSizeListOfNonNullable(N, T)` with `*array.FixedSizeListBuilder`.
-  No nil check is generated (arrays are value types). Element iteration uses
-  the same dispatch logic as variable-length lists.
-  - Files: `generator.go` (`mapToFieldInfo` ArrayType case, `FieldInfo` struct),
-    `template.go` (new `IsFixedSizeList` branch), `generator_test.go`
+- [x] **B1: Support fixed-size arrays** *(2026-03-13)* — Map `[N]T` to
+  `arrow.FixedSizeListOfNonNullable(N, T)`. No nil check (arrays are value types).
+  - Files: `generator.go`, `template.go`, `generator_test.go`
 
-- [x] **B2: Skip blank-identifier fields** *(2026-03-13)* — In `Parse()`, blank-
-  identifier fields (`_ T`) are now filtered out with a `fieldName == "_"` guard.
-  This prevents the generator from emitting `row._` which does not compile.
-  - Files: `generator.go` (parse loop), `generator_test.go` (new table case),
-    `integration_test.go` (new `blank-identifier-field` subtest)
+- [x] **B2: Skip blank-identifier fields** *(2026-03-13)* — Filter `_ T` fields
+  in `Parse()` to prevent generating `row._`.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
-- [x] **B3: Support nested slices (`[][]T`)** *(2026-03-13, superseded by S2 on 2026-03-14)* —
-  Initially implemented with flat `Val*` fields for depth-2 support. Now handled
-  by the recursive `FieldInfo`/`appendValue` architecture (S2) which supports
-  arbitrary nesting depth.
-  - Files: `generator.go`, `template.go`, `generator_test.go`,
-    `integration_test.go` (nested-slices subtest)
+- [x] **B3: Support nested slices (`[][]T`)** *(2026-03-13, superseded by S2)* —
+  Now handled by the recursive `FieldInfo`/`appendValue` architecture (S2).
+  - Files: `generator.go`, `template.go`, `generator_test.go`, `integration_test.go`
 
-- [x] **B4: Handle `map[K][]V`** *(2026-03-14)* — Resolved by S2. The recursive
-  `FieldInfo` and `appendValue` template naturally handle map values of any type,
-  including slices. No ad-hoc fields needed.
-  - Files: resolved as part of S2 refactor
+- [x] **B4: Handle `map[K][]V`** *(2026-03-14)* — Resolved by S2.
 
-- [x] **B5: Handle `map[K]map[K2]V`** *(2026-03-14)* — Resolved by S2. Same as B4;
-  the recursive template dispatches inner maps through the same `IsMap` branch.
-  - Files: resolved as part of S2 refactor
+- [x] **B5: Handle `map[K]map[K2]V`** *(2026-03-14)* — Resolved by S2.
 
 - [x] **B6: Skip unexported fields in cross-package generation** *(2026-03-14)* —
-  When `--pkg-name` differs from the input package, the generated code accesses
-  fields via `row *mypkg.Foo`, but unexported fields (`row.name`) are inaccessible
-  from another package and produce a compile error. Added `filterUnexportedFields`
-  helper in `template.go` that uses `token.IsExported` to filter fields on structs
-  with a non-empty `Qualifier` (cross-package signal). Called in `Run()` between
-  Qualifier-setting and template execution. Emits a warning for each skipped field.
-  Same-package generation is unaffected. Promoted unexported fields from embedded
-  structs are also filtered since they appear as top-level fields on the StructInfo.
-  - Files: `template.go` (`filterUnexportedFields` + call in `Run()`),
-    `generator_test.go` (4 new test cases), `integration_test.go` (new
-    `cross-package-unexported-fields` subtest with compile verification)
+  Filter unexported fields via `token.IsExported` on cross-package structs
+  (non-empty `Qualifier`). Emits a warning per skipped field. Same-package
+  generation is unaffected.
+  - Files: `template.go`, `generator_test.go`, `integration_test.go`
 
 ### Priority 2 — Easy Wins
 
-- [x] **M1: Add `rune` alias** *(2026-03-13)* — Add `"rune"` to the `case "int32":` branch in
-  `mapToArrowType`, mirroring the existing `"byte"` → `"uint8"` pattern.
-  - Files: `generator.go` (`mapToArrowType`), `generator_test.go` (`TestMapToArrowType`
-    — add `{"rune", "rune", "arrow.PrimitiveTypes.Int32", "*array.Int32Builder", false}`)
+- [x] **M1: Add `rune` alias** *(2026-03-13)* — Add `"rune"` to the `case "int32"`
+  branch in `mapToArrowType`.
+  - Files: `generator.go`, `generator_test.go`
 
 ### Priority 3 — Structural Enhancements
 
-- [x] **S1: Flatten embedded struct fields** *(2026-03-14)* — Embedded struct
-  fields (`type T struct { Base; ... }`) are now flattened: promoted fields
-  appear as top-level Arrow columns rather than a nested struct. A two-pass
-  approach in the parse loop handles shadowing (explicit field wins) and
-  cross-embedding ambiguity (field promoted by multiple embeddings is skipped).
-  Pointer-embedded structs (`*Base`) are skipped with a warning (future work).
-  Embedded non-struct types are skipped. Depth-1 flattening only (nested
-  embeddings within the embedded struct are not recursed).
-  - Files: `generator.go` (`resolveEmbeddedFields` helper, parse loop restructured),
-    `generator_test.go` (6 new test cases), `integration_test.go` (new `embedded-struct`
-    subtest with Parquet/DuckDB round-trip)
+- [x] **S1: Flatten embedded struct fields** *(2026-03-14)* — Promoted fields
+  appear as top-level Arrow columns. Handles shadowing and cross-embedding
+  ambiguity. Pointer-embedded structs skipped with warning (future work).
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
 - [x] **S2: Recursive `FieldInfo` for arbitrary nesting depth** *(2026-03-14)* —
-  Replaced 11 flat `Val*`/`Key*` fields with two recursive pointers:
-  `EltInfo *FieldInfo` (element info for lists, fixed-size-lists, and map values)
-  and `KeyInfo *FieldInfo` (key info for maps). The template's three near-identical
-  element dispatch blocks were collapsed into a single recursive `appendValue`
-  sub-template. Intermediate builder variables are stored as `array.Builder`
-  (interface) to allow type assertions at each recursive dispatch point.
-  This naturally resolves B4 and B5 without additional special-case code.
-  - Files: `generator.go` (`FieldInfo` restructure, `mapToFieldInfo` simplified),
-    `template.go` (recursive `appendValue` sub-template),
-    `generator_test.go` (updated assertions, new test cases for B4/B5/list-of-maps),
-    `integration_test.go` (new subtests: triple-nested-slices, map-with-slice-value,
-    nested-maps)
+  Replaced flat `Val*`/`Key*` fields with recursive `EltInfo`/`KeyInfo` pointers
+  and a single recursive `appendValue` sub-template. Also resolves B4 and B5.
+  - Files: `generator.go`, `template.go`, `generator_test.go`, `integration_test.go`
 
-- [ ] **S3: Qualify struct names in `processed` map to avoid cross-package collisions** —
-  The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If two
-  input packages both define a struct named `Inner`, the second is silently skipped
-  and the generated `AppendInnerStruct` may reference the wrong type. Fix: key
-  `processed` by `pkgPath + "." + structName` instead of bare name.
-  - Files: `generator.go` (`Parse()` — update `processed` map key and `queue`
-    deduplication), `generator_test.go` (new test case with same-named structs
-    from different packages)
+- [ ] **S3: Qualify struct names in `processed` map** — Key by
+  `pkgPath + "." + structName` instead of bare name to avoid cross-package
+  collisions. See section 1.4.
+  - Files: `generator.go`, `generator_test.go`
 
-- [ ] **S4: Support named slice/map types (`type Tags []string`)** —
-  Named types whose underlying type is `*types.Slice` or `*types.Map` fall through
-  `resolveIdent` (which only checks `*types.Struct` and `*types.Basic`) and hit
-  `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add
-  `*types.Slice` and `*types.Map` branches to `resolveIdent` that unwrap the
-  underlying type and recurse into element/key/value types.
-  - Files: `generator.go` (`resolveIdent` — add slice/map underlying type handling),
-    `generator_test.go` (new test cases for named slices and maps),
-    `integration_test.go` (optional — round-trip verification)
+- [ ] **S4: Support named slice/map types** — Add `*types.Slice` and `*types.Map`
+  branches to `resolveIdent` to unwrap underlying types. See section 1.4.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go` (optional)
 
-- [ ] **S5: Accept Go import paths in `--pkg` (not just local directories)** —
-  Currently `--pkg` only accepts local filesystem directories. The `loadPackages()`
-  method sets `cfg.Dir = dir` for each input and calls `packages.Load(cfg, ".")`,
-  which forces directory-only resolution. This should be changed to pass `--pkg`
-  values directly as patterns to `packages.Load`, which natively handles both
-  filesystem paths (starting with `.`, `..`, `/`) and Go import paths (everything
-  else). See section 1.5 for full analysis.
+- [ ] **S5: Accept Go import paths in `--pkg`** — Pass `--pkg` values directly as
+  patterns to `packages.Load` (Option A). Classify inputs using `go help packages`
+  convention: filesystem paths (`.`, `..`, `/` prefix) use current `cfg.Dir`-based
+  loading; everything else is treated as an import path. See section 1.5 for full
+  analysis.
 
-  **Approach (Option A — direct pass-through):** Classify each input using the
-  `go help packages` convention: filesystem paths start with `.`, `..`, or `/`;
-  everything else is treated as a Go import path. For filesystem paths, preserve
-  the current `cfg.Dir`-based loading (supports separate modules). For import
-  paths, pass the pattern directly to `packages.Load` with `cfg.Dir` set to the
-  invoking module's root directory (the module that will consume the generated code).
+  Key requirements:
+  - Import paths must already be in the caller's `go.mod` (no automatic `go get`)
+  - Actionable error message with `go get` remediation when package is missing
+  - CLI `--help` and docs must document the `go get` prerequisite
+  - Evaluate adding `NeedImports | NeedDeps` to `packages.Config.Mode`
+  - All existing filesystem-path usage must continue to work unchanged
 
-  **Prerequisite / `go get` dependency:** Import paths are resolved via the Go
-  module system and must already be in the caller's `go.mod` build list. The tool
-  does **not** run `go get` or otherwise modify `go.mod` — this is intentional to
-  avoid surprising side effects. When an import path cannot be resolved, the tool
-  must emit an actionable error:
-  ```
-  Error: failed to load package "github.com/user/repo/pkg":
-    no required module provides this package.
-
-    To add it to your module's dependencies, run:
-      go get github.com/user/repo/pkg
-
-    Then re-run the generator.
-  ```
-
-  **Documentation requirements:**
-  - CLI `--help` text must state that import paths require a prior `go get`
-  - README/usage docs must include examples of both filesystem and import path usage
-  - Error messages must always include the `go get` remediation command
-
-  **LoadMode consideration:** Adding `NeedImports | NeedDeps` to the
-  `packages.Config.Mode` may be needed for robust cross-module interface
-  implementation checks. Evaluate during implementation.
-
-  **Backward compatibility:** All existing filesystem-path usage continues to work
-  unchanged. The classification heuristic matches Go's own `go help packages` rules.
-
-  - Files: `generator.go` (`loadPackages()` — input classification + dual-path
-    loading, error message enhancement), `cmd/arrow-writer-gen/main.go` (update
-    `--pkg` help text), `generator_test.go` (new tests for import-path loading,
-    error cases), `integration_test.go` (new subtest loading a real published
-    package via import path from a temp module)
+  - Files: `generator.go` (`loadPackages()`), `cmd/arrow-writer-gen/main.go`
+    (`--pkg` help text), `generator_test.go`, `integration_test.go`
 
 ### Priority 4 — Debatable / Future
 
-- [ ] **D1: `complex64` / `complex128` support** — If there is demand, decompose
-  into a two-field Arrow struct `{real: Float32/Float64, imag: Float32/Float64}`.
-  Low priority unless a concrete use case arises.
+- [ ] **D1: `complex64` / `complex128` support** — Low priority unless a concrete
+  use case arises. See section 1.6.
   - Files: `generator.go`, `template.go`, `generator_test.go`
 
-- [x] **D2: `time.Duration` as Int64 nanoseconds** *(2026-03-14)* —
-  `time.Duration` is now intercepted in the `SelectorExpr` path (and the
-  `*StarExpr` → `SelectorExpr` path for pointers) via a `resolveWellKnownType`
-  helper, before the marshal method fallback. Mapped to `arrow.PrimitiveTypes.Int64`
-  with `int64(d)` cast — lossless, sortable, Parquet-compatible. Previously stored
-  as a string via `String()` (`"1h30m0s"`).
+- [x] **D2: `time.Duration` as Int64 nanoseconds** *(2026-03-14)* — Intercepted
+  via `resolveWellKnownType` before marshal fallback. Mapped to Int64 with
+  `int64(d)` cast. See section 1.6 for options investigated.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
-  **Options investigated:**
-  - (a) Arrow `DurationType` — not viable (Parquet has no native Duration logical
-    type; `pqarrow` returns `ErrNotImplemented`).
-  - (b) **Int64 nanoseconds — selected.** Lossless, Parquet-compatible.
-  - (c) `String` (previous behaviour) — human-readable but not sortable/queryable.
-  - (d) `ARROW:schema` footer metadata — investigated, not viable (error occurs
-    at schema conversion before any data can be written).
-  - Files: `generator.go` (`resolveWellKnownType` helper, `SelectorExpr` and
-    `*StarExpr` cases), `template.go` (no change — primitive path works),
-    `generator_test.go` (2 new cases), `integration_test.go` (new subtest)
+- [x] **D3: `time.Time` as Arrow Timestamp** *(2026-03-14)* — Mapped to
+  `Timestamp_ns` (UTC) via `arrow.Timestamp(t.UnixNano())`. Added `ConvertMethod`
+  field to `FieldInfo` for method-call-based value conversion in the template.
+  - Files: `generator.go`, `template.go`, `generator_test.go`, `integration_test.go`
 
-- [x] **D3: `time.Time` as Arrow Timestamp (nanosecond, UTC)** *(2026-03-14)* —
-  `time.Time` is now intercepted in the `SelectorExpr` path via the same
-  `resolveWellKnownType` helper. Mapped to `arrow.FixedWidthTypes.Timestamp_ns`
-  with `arrow.Timestamp(t.UnixNano())` conversion. Previously stored as a string
-  via `MarshalText()` (RFC 3339). A new `ConvertMethod` field on `FieldInfo`
-  enables method-call-based value conversion in the template (e.g., `.UnixNano()`)
-  without conflating with the `MarshalMethod` path. Pointer `*time.Time` fields
-  get nil → `AppendNull` handling. DuckDB reads these as `TIMESTAMP WITH TIME ZONE`
-  at microsecond precision; nanosecond precision is preserved in Arrow/Parquet.
-  - Files: `generator.go` (`FieldInfo.ConvertMethod`, `resolveWellKnownType`),
-    `template.go` (new `ConvertMethod` branch in `appendValue`),
-    `generator_test.go` (2 new cases), `integration_test.go` (new subtest)
+- [x] **D4: `durationpb.Duration` as Int64 nanoseconds** *(2026-03-14)* — Extended
+  `resolveWellKnownType` for the protobuf package. Uses `AsDuration()` conversion
+  to `time.Duration`, then `int64()` cast. Supports both value and pointer fields.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
-- [x] **D4: `durationpb.Duration` as Int64 nanoseconds** *(2026-03-14)* —
-  `durationpb.Duration` (from `google.golang.org/protobuf/types/known/durationpb`)
-  is a protobuf well-known type wrapping a duration as `Seconds int64` + `Nanos int32`.
-  It currently resolves via the `SelectorExpr` path → `detectMarshalMethod` →
-  `String()` (proto debug format), producing opaque strings like
-  `"seconds:7200"` that are neither human-readable nor machine-parseable.
-
-  **Approach:** Extend `resolveWellKnownType` with an entry for package path
-  `"google.golang.org/protobuf/types/known/durationpb"`, type name `"Duration"`.
-  Map to `arrow.PrimitiveTypes.Int64` with `ConvertMethod: "AsDuration"` and
-  `CastType: "int64"`. The generated code becomes `int64(row.Field.AsDuration())`
-  — this calls `durationpb.Duration.AsDuration() time.Duration`, and since
-  `time.Duration` is `int64` (nanoseconds), the cast is lossless. Mirrors D2
-  exactly, just with an extra conversion step through the protobuf accessor.
-
-  Both value (`durationpb.Duration`) and pointer (`*durationpb.Duration`) fields
-  are supported — pointer fields get nil → `AppendNull` handling. The template's
-  `ConvertMethod` path auto-dereferences via Go method call semantics.
-
-  **Note:** `AsDuration()` performs saturation arithmetic for out-of-range values
-  (durations exceeding `±math.MaxInt64` nanoseconds clamp to `math.MinInt64` or
-  `math.MaxInt64`). This matches `time.Duration`'s own range limitations.
-
-  - Files: `generator.go` (`resolveWellKnownType` — add entry),
-    `generator_test.go` (2 new cases: value + pointer),
-    `integration_test.go` (new subtest with Parquet/DuckDB round-trip)
-
-- [x] **D5: `timestamppb.Timestamp` as Arrow Timestamp (nanosecond, UTC)** *(2026-03-14)* —
-  `timestamppb.Timestamp` (from `google.golang.org/protobuf/types/known/timestamppb`)
-  is a protobuf well-known type wrapping a point in time as `Seconds int64` +
-  `Nanos int32`. It currently resolves via the `SelectorExpr` path →
-  `detectMarshalMethod` → `String()` (proto debug format), producing opaque
-  strings like `"seconds:1710417600"`.
-
-  **Approach:** Extend `resolveWellKnownType` with an entry for package path
-  `"google.golang.org/protobuf/types/known/timestamppb"`, type name `"Timestamp"`.
-  Map to `arrow.FixedWidthTypes.Timestamp_ns` with `ConvertMethod: "AsTime().UnixNano"`
-  and `CastType: "arrow.Timestamp"`. The generated code becomes
-  `arrow.Timestamp(row.Field.AsTime().UnixNano())` — this chains
-  `timestamppb.Timestamp.AsTime() time.Time` with `time.Time.UnixNano() int64`.
-  The `ConvertMethod` template already supports chained calls since it interpolates
-  the string directly: `{{$var}}.{{$info.ConvertMethod}}()`. Mirrors D3 exactly,
-  just with an extra conversion step through the protobuf accessor.
-
-  Both value (`timestamppb.Timestamp`) and pointer (`*timestamppb.Timestamp`)
-  fields are supported. The same DuckDB microsecond-precision caveat from D3
-  applies — nanosecond precision is preserved in Arrow/Parquet but DuckDB reads
-  at microsecond granularity.
-
-  **Note:** `AsTime()` returns `time.Unix(seconds, nanos).UTC()`, so the resulting
-  `time.Time` is always UTC — consistent with the `Timestamp_ns` timezone annotation.
-
-  - Files: `generator.go` (`resolveWellKnownType` — add entry),
-    `generator_test.go` (2 new cases: value + pointer),
-    `integration_test.go` (new subtest with Parquet/DuckDB round-trip)
+- [x] **D5: `timestamppb.Timestamp` as Arrow Timestamp** *(2026-03-14)* — Extended
+  `resolveWellKnownType` for the protobuf package. Uses chained
+  `AsTime().UnixNano()` conversion. Supports both value and pointer fields.
+  - Files: `generator.go`, `generator_test.go`, `integration_test.go`
 
 ---
 
@@ -465,7 +322,7 @@ Each fix above should include:
 
 1. **Unit test in `generator_test.go`** — verifies `Parse()` and/or `Run()` produce
    correct `StructInfo`/`FieldInfo` (or the expected skip/warning).
-2. **Compilation check** — for bug fixes (B1–B5), verify the generated `.go` file
+2. **Compilation check** — for bug fixes (B1–B6), verify the generated `.go` file
    compiles by writing it to a temp dir and running `go build`.
 3. **Integration test in `integration_test.go`** (for S1 and any B-series items that
    implement support rather than skipping) — full Parquet round-trip with DuckDB
