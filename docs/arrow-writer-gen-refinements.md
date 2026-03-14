@@ -89,13 +89,124 @@ the user's build.
 | S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | `FieldInfo` uses flat `Val*` fields to describe one level of element nesting, limiting nested slices to depth 2 and requiring ad-hoc fields for each new nesting pattern (B4, B5). A recursive `FieldInfo` (with `EltInfo *FieldInfo` and `KeyInfo *FieldInfo`) would remove the depth limit and unify the duplicated element dispatch logic in the template. |
 | S3 | Struct name collision across packages | The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If pkg1 and pkg2 both define `Inner`, the second is silently skipped. The generated code would reference only one `AppendInnerStruct`, which may correspond to the wrong package's struct. Fix: key `processed` by qualified name (`pkgPath + "." + structName`). |
 | S4 | Named slice/map types (`type Tags []string`, `type MyBytes []byte`) | Named types whose underlying type is a slice or map fall through `resolveIdent` (which checks `*types.Struct` and `*types.Basic` but not `*types.Slice` or `*types.Map`) and hit `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add `*types.Slice` and `*types.Map` checks to `resolveIdent` and recurse into the underlying element/key/value types. |
+| S5 | `--pkg` accepts only local directories | `loadPackages()` forces `cfg.Dir`-based loading with `packages.Load(cfg, ".")`, rejecting Go import paths like `github.com/user/repo/pkg`. Other Go tools (mockery, go-sumtype, gqlgen) pass patterns directly to `packages.Load`, which natively handles both filesystem paths and import paths. See section 1.5 for full analysis and recommended approach (Option A: direct pass-through). |
 
-### 1.5 Debatable / Low Priority
+### 1.5 Package Input — Go Import Paths vs Local Directories
+
+Currently `--pkg` only accepts local filesystem directory paths. The `loadPackages()`
+method iterates over `InputPkgs`, sets `cfg.Dir = dir` for each, and calls
+`packages.Load(cfg, ".")`. This means every input must be a directory on disk
+containing `.go` files and a `go.mod`.
+
+Most modern Go tools (mockery, go-sumtype, gqlgen) accept **Go import paths**
+(e.g., `github.com/user/repo/pkg`) in addition to filesystem paths. This is more
+ergonomic and consistent with how developers reference packages in Go code.
+
+#### How `packages.Load` Pattern Resolution Works
+
+`packages.Load` delegates to `go list` and natively distinguishes two pattern types:
+
+| Pattern type | Examples | How identified |
+|---|---|---|
+| Filesystem paths | `"."`, `"./internal/foo"`, `"/absolute/path"` | Starts with `.`, `..`, or `/` |
+| Import paths | `"fmt"`, `"github.com/user/repo/pkg"` | Everything else — resolved via module system |
+
+The resolution chain for import paths: `packages.Load` → `go list` → module system
+→ `go.mod` build list → module cache (`$GOMODCACHE`) → `GOPROXY` download.
+
+**Critical constraint**: Since Go 1.16, the default is `-mod=readonly`. If the import
+path is not already in the build list (`go.mod`), `go list` fails:
+```
+no required module provides package X; to add it: go get X
+```
+
+This constraint is standard Go tooling behaviour and is the expected workflow —
+the user adds the dependency to their module first with `go get`, then references
+it in tools.
+
+#### Options Investigated
+
+**Option A: Direct pass-through to `packages.Load` (recommended).**
+Pass `--pkg` values directly as patterns to `packages.Load` instead of forcing
+`cfg.Dir`-based directory loading. `packages.Load` natively handles both filesystem
+paths and import paths. Requires the import path to be in the caller's `go.mod`
+build list (standard Go convention). Minimal code change; consistent with mockery,
+go-sumtype, gqlgen.
+
+**Option B: Auto-download via `go get` before load.**
+Detect import-path inputs, shell out to `go get <package>`, then load. Fully
+automatic but modifies the user's `go.mod` as a side effect — surprising behaviour
+for a code generator. Requires network access. Rejected.
+
+**Option C: Temporary module scaffold.**
+Create a temp module that `require`s the target, run `go mod download`, load from
+there. No side effects on user's module but complex, slow, and loses the user's
+`replace` directives. Rejected.
+
+#### How Other Go Tools Handle This
+
+| Tool | Import paths? | Approach |
+|---|---|---|
+| mockery | Yes | Passes import paths directly to `packages.Load` |
+| go-sumtype | Yes | Passes `os.Args[1:]` directly to `packages.Load` |
+| gqlgen | Yes | Passes import paths; light load first, full on demand |
+| stringer | No | Directory-only, sets `cfg.Dir`, loads `"."` |
+| mockgen (uber) | Yes | Shells out to `go list -json` directly |
+
+#### Path Classification Heuristic
+
+The same rule used by `go help packages`:
+
+> An import path that is a rooted path or that begins with a `.` or `..` element
+> is interpreted as a file system path.
+
+```go
+func isFilesystemPath(s string) bool {
+    return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || filepath.IsAbs(s)
+}
+```
+
+Filesystem paths → set `cfg.Dir` and load `"."` (current behaviour, preserved
+for backward compatibility and separate-module support). Import paths → load the
+pattern directly, with `cfg.Dir` set to the invoking module's root.
+
+#### Error Handling and User Guidance
+
+When `packages.Load` fails for an import path because the package is not in
+`go.mod`, the tool must provide a clear, actionable error message:
+
+```
+Error: failed to load package "github.com/user/repo/pkg":
+  no required module provides this package.
+
+  To add it to your module's dependencies, run:
+    go get github.com/user/repo/pkg
+
+  Then re-run the generator.
+```
+
+This is the standard Go tooling workflow. The tool does not download packages
+automatically — this is intentional to avoid modifying the user's `go.mod`
+without explicit consent. Documentation (CLI `--help`, README) must clearly state:
+
+1. Import paths require the package to be in the caller's `go.mod` dependency graph.
+2. Run `go get <package>` if the package is not yet a dependency.
+3. Filesystem paths (starting with `.`, `..`, or `/`) continue to work as before.
+
+#### LoadMode Consideration
+
+The current `packages.Config.Mode` (`NeedName | NeedFiles | NeedSyntax | NeedTypes
+| NeedTypesInfo`) is sufficient for same-module loading. For robust cross-module
+type resolution (interface implementation checks on types from external packages),
+adding `NeedImports | NeedDeps` ensures transitive dependency type information is
+fully available. This should be evaluated during implementation.
+
+### 1.6 Debatable / Low Priority
 
 | ID | Go Type | Notes |
 |----|---------|-------|
 | D1 | `complex64` / `complex128` | No native Arrow complex type. Could decompose into a two-field struct (`real float32, imag float32`) but practical demand is low. |
-| D2 | `time.Duration` stored as string | Currently `time.Duration` (named `int64` from the `time` package) resolves via the `SelectorExpr` path and hits `String()` → stored as `"1h30m0s"`. Arrow has a native `DurationType` with `DurationBuilder` (int64 storage, configurable time unit: s/ms/us/ns). However, **Parquet has no native Duration logical type** — `pqarrow` returns `ErrNotImplemented` when converting `arrow.DURATION` to a Parquet schema. This means Arrow Duration columns cannot be written to Parquet, which is the primary serialization target. See D2 checklist entry for options. |
+| D2 | `time.Duration` stored as string | ~~Currently `time.Duration` resolves via the `SelectorExpr` path and hits `String()` → stored as `"1h30m0s"`.~~ **Fixed (2026-03-14).** See D2 checklist entry. |
 
 ---
 
@@ -203,6 +314,54 @@ These must be fixed first because they produce output that does not compile.
   - Files: `generator.go` (`resolveIdent` — add slice/map underlying type handling),
     `generator_test.go` (new test cases for named slices and maps),
     `integration_test.go` (optional — round-trip verification)
+
+- [ ] **S5: Accept Go import paths in `--pkg` (not just local directories)** —
+  Currently `--pkg` only accepts local filesystem directories. The `loadPackages()`
+  method sets `cfg.Dir = dir` for each input and calls `packages.Load(cfg, ".")`,
+  which forces directory-only resolution. This should be changed to pass `--pkg`
+  values directly as patterns to `packages.Load`, which natively handles both
+  filesystem paths (starting with `.`, `..`, `/`) and Go import paths (everything
+  else). See section 1.5 for full analysis.
+
+  **Approach (Option A — direct pass-through):** Classify each input using the
+  `go help packages` convention: filesystem paths start with `.`, `..`, or `/`;
+  everything else is treated as a Go import path. For filesystem paths, preserve
+  the current `cfg.Dir`-based loading (supports separate modules). For import
+  paths, pass the pattern directly to `packages.Load` with `cfg.Dir` set to the
+  invoking module's root directory (the module that will consume the generated code).
+
+  **Prerequisite / `go get` dependency:** Import paths are resolved via the Go
+  module system and must already be in the caller's `go.mod` build list. The tool
+  does **not** run `go get` or otherwise modify `go.mod` — this is intentional to
+  avoid surprising side effects. When an import path cannot be resolved, the tool
+  must emit an actionable error:
+  ```
+  Error: failed to load package "github.com/user/repo/pkg":
+    no required module provides this package.
+
+    To add it to your module's dependencies, run:
+      go get github.com/user/repo/pkg
+
+    Then re-run the generator.
+  ```
+
+  **Documentation requirements:**
+  - CLI `--help` text must state that import paths require a prior `go get`
+  - README/usage docs must include examples of both filesystem and import path usage
+  - Error messages must always include the `go get` remediation command
+
+  **LoadMode consideration:** Adding `NeedImports | NeedDeps` to the
+  `packages.Config.Mode` may be needed for robust cross-module interface
+  implementation checks. Evaluate during implementation.
+
+  **Backward compatibility:** All existing filesystem-path usage continues to work
+  unchanged. The classification heuristic matches Go's own `go help packages` rules.
+
+  - Files: `generator.go` (`loadPackages()` — input classification + dual-path
+    loading, error message enhancement), `cmd/arrow-writer-gen/main.go` (update
+    `--pkg` help text), `generator_test.go` (new tests for import-path loading,
+    error cases), `integration_test.go` (new subtest loading a real published
+    package via import path from a temp module)
 
 ### Priority 4 — Debatable / Future
 
