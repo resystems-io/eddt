@@ -73,6 +73,7 @@ the user's build.
 | B3 | `[][]T` (nested slice) | Schema is correct (`ListOf(ListOf(T))`), but the generated Append code calls `valBldr.Append(v)` where `v` is a `[]T` — the inner `ListBuilder` does not accept a slice argument. The inner list elements are never iterated. |
 | B4 | `map[K][]V` (map with slice value) | Same root cause as B3 — the map's value builder is a `ListBuilder` but the generated code tries to pass the entire slice as a single Append argument instead of iterating it. |
 | B5 | `map[K]map[K2]V` (nested map) | Same pattern — the inner `MapBuilder` receives a `map` value directly instead of being iterated key-by-key. |
+| B6 | Unexported fields in cross-package mode | When `--pkg-name` differs from the input package, the generated `Append` function receives `row *mypkg.Foo` but emits `row.unexportedField` — accessing unexported fields from another package is a compile error. The parse loop has no `ast.IsExported` guard. Only triggered with `--pkg-name` override; same-package generation (the default) is unaffected. |
 
 ### 1.3 Missing Primitive — Easy Win
 
@@ -86,6 +87,8 @@ the user's build.
 |----|-----------|-------|
 | S1 | Embedded structs (`type T struct { Base; Name string }`) | ~~Embedded fields have `len(field.Names) == 0` and are silently skipped.~~ **Fixed (2026-03-14).** Promoted fields are now flattened into the parent schema. Pointer-embedded structs (`*Base`) are skipped with warning (future work). |
 | S2 | Arbitrary nesting depth (`[][][]T`, `[][]map[K]V`, etc.) | `FieldInfo` uses flat `Val*` fields to describe one level of element nesting, limiting nested slices to depth 2 and requiring ad-hoc fields for each new nesting pattern (B4, B5). A recursive `FieldInfo` (with `EltInfo *FieldInfo` and `KeyInfo *FieldInfo`) would remove the depth limit and unify the duplicated element dispatch logic in the template. |
+| S3 | Struct name collision across packages | The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If pkg1 and pkg2 both define `Inner`, the second is silently skipped. The generated code would reference only one `AppendInnerStruct`, which may correspond to the wrong package's struct. Fix: key `processed` by qualified name (`pkgPath + "." + structName`). |
+| S4 | Named slice/map types (`type Tags []string`, `type MyBytes []byte`) | Named types whose underlying type is a slice or map fall through `resolveIdent` (which checks `*types.Struct` and `*types.Basic` but not `*types.Slice` or `*types.Map`) and hit `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add `*types.Slice` and `*types.Map` checks to `resolveIdent` and recurse into the underlying element/key/value types. |
 
 ### 1.5 Debatable / Low Priority
 
@@ -134,6 +137,25 @@ These must be fixed first because they produce output that does not compile.
   the recursive template dispatches inner maps through the same `IsMap` branch.
   - Files: resolved as part of S2 refactor
 
+- [ ] **B6: Skip unexported fields in cross-package generation** —
+  When `--pkg-name` differs from the input package, the generated code accesses
+  fields via `row *mypkg.Foo`, but unexported fields (`row.name`) are inaccessible
+  from another package and produce a compile error. The fix needs to filter
+  unexported fields when the output package differs from the struct's origin
+  package. This check cannot live in `Parse()` (which doesn't know the output
+  package name), so it should be applied in `Run()` after determining the
+  effective package name — iterate `structs` and remove fields where
+  `!ast.IsExported(field.Name)` when `packageName != si.PkgName`. Emit a warning
+  for each skipped field.
+
+  Note: `resolveEmbeddedFields` also needs the same guard — promoted unexported
+  fields from an embedded struct in the same package would be inaccessible from
+  a different output package.
+
+  - Files: `generator.go` (`Run()` — add post-parse filtering loop),
+    `generator_test.go` (new test case: cross-package with unexported fields),
+    `integration_test.go` (optional — compile verification)
+
 ### Priority 2 — Easy Wins
 
 - [x] **M1: Add `rune` alias** *(2026-03-13)* — Add `"rune"` to the `case "int32":` branch in
@@ -168,6 +190,25 @@ These must be fixed first because they produce output that does not compile.
     `generator_test.go` (updated assertions, new test cases for B4/B5/list-of-maps),
     `integration_test.go` (new subtests: triple-nested-slices, map-with-slice-value,
     nested-maps)
+
+- [ ] **S3: Qualify struct names in `processed` map to avoid cross-package collisions** —
+  The `processed` map and `queue` use bare struct names (e.g. `"Inner"`). If two
+  input packages both define a struct named `Inner`, the second is silently skipped
+  and the generated `AppendInnerStruct` may reference the wrong type. Fix: key
+  `processed` by `pkgPath + "." + structName` instead of bare name.
+  - Files: `generator.go` (`Parse()` — update `processed` map key and `queue`
+    deduplication), `generator_test.go` (new test case with same-named structs
+    from different packages)
+
+- [ ] **S4: Support named slice/map types (`type Tags []string`)** —
+  Named types whose underlying type is `*types.Slice` or `*types.Map` fall through
+  `resolveIdent` (which only checks `*types.Struct` and `*types.Basic`) and hit
+  `mapToArrowType`, which fails. The field is skipped with a warning. Fix: add
+  `*types.Slice` and `*types.Map` branches to `resolveIdent` that unwrap the
+  underlying type and recurse into element/key/value types.
+  - Files: `generator.go` (`resolveIdent` — add slice/map underlying type handling),
+    `generator_test.go` (new test cases for named slices and maps),
+    `integration_test.go` (optional — round-trip verification)
 
 ### Priority 4 — Debatable / Future
 
