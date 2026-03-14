@@ -1747,6 +1747,258 @@ func TestEmbeddedStruct(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestEmbeddedStruct")
 	})
 
+	t.Run("time-duration", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+import "time"
+
+type Event struct {
+	ID       int32
+	Duration time.Duration
+	Timeout  *time.Duration
+}
+`, []string{"Event"}, "")
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestTimeDuration(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewEventArrowWriter(pool)
+	defer writer.Release()
+
+	timeout := 500 * time.Millisecond
+
+	r1 := Event{ID: 1, Duration: 2 * time.Hour, Timeout: &timeout}
+	r2 := Event{ID: 2, Duration: 150 * time.Millisecond, Timeout: nil} // nil pointer
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "duration.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("pqarrow.NewFileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(fmt.Sprintf(` + "`" + `SELECT "ID", "Duration", "Timeout" FROM read_parquet('%s')` + "`" + `, parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id       int32
+		duration int64
+		timeout  *int64
+	}
+	var results []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.duration, &r.timeout); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1: 2h = 7200000000000 ns, timeout = 500ms = 500000000 ns
+	if results[0].duration != int64(2*time.Hour) {
+		t.Errorf("row 1 duration: want %d, got %d", int64(2*time.Hour), results[0].duration)
+	}
+	if results[0].timeout == nil || *results[0].timeout != int64(500*time.Millisecond) {
+		t.Errorf("row 1 timeout: want %d, got %v", int64(500*time.Millisecond), results[0].timeout)
+	}
+
+	// Row 2: 150ms = 150000000 ns, timeout = nil
+	if results[1].duration != int64(150*time.Millisecond) {
+		t.Errorf("row 2 duration: want %d, got %d", int64(150*time.Millisecond), results[1].duration)
+	}
+	if results[1].timeout != nil {
+		t.Errorf("row 2 timeout: want nil, got %d", *results[1].timeout)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTimeDuration")
+	})
+
+	t.Run("time-time-timestamp", func(t *testing.T) {
+		tmpDir, _ := setupIntegrationTest(t, `package dummy
+
+import "time"
+
+type Record struct {
+	ID        int32
+	CreatedAt time.Time
+	DeletedAt *time.Time
+}
+`, []string{"Record"}, "")
+
+		testCode := `package dummy
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow/go/v18/parquet"
+	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	_ "github.com/duckdb/duckdb-go/v2"
+)
+
+func TestTimeTimestamp(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewRecordArrowWriter(pool)
+	defer writer.Release()
+
+	t1 := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	// DuckDB reads Parquet timestamps at microsecond precision, so use
+	// microsecond-aligned values for the round-trip verification.
+	t2 := time.Date(2025, 1, 1, 0, 0, 0, 123456000, time.UTC) // 123.456ms
+	deleted := time.Date(2026, 6, 1, 18, 30, 0, 0, time.UTC)
+
+	r1 := Record{ID: 1, CreatedAt: t1, DeletedAt: &deleted}
+	r2 := Record{ID: 2, CreatedAt: t2, DeletedAt: nil} // nil pointer
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	record := writer.NewRecord()
+	defer record.Release()
+
+	if record.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", record.NumRows())
+	}
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "timestamps.parquet")
+
+	file, err := os.Create(parquetPath)
+	if err != nil {
+		t.Fatalf("create parquet: %v", err)
+	}
+	defer file.Close()
+
+	props := parquet.NewWriterProperties()
+	pqWriter, err := pqarrow.NewFileWriter(record.Schema(), file, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		t.Fatalf("pqarrow.NewFileWriter: %v", err)
+	}
+	if err := pqWriter.Write(record); err != nil {
+		t.Fatalf("pqWriter.Write: %v", err)
+	}
+	if err := pqWriter.Close(); err != nil {
+		t.Fatalf("pqWriter.Close: %v", err)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open DuckDB: %v", err)
+	}
+	defer db.Close()
+
+	// DuckDB reads nanosecond timestamps; extract as epoch_ns for exact comparison.
+	rows, err := db.Query(fmt.Sprintf(` + "`" + `
+		SELECT "ID",
+		       epoch_ns("CreatedAt") AS created_ns,
+		       epoch_ns("DeletedAt") AS deleted_ns
+		FROM read_parquet('%s')
+	` + "`" + `, parquetPath))
+	if err != nil {
+		t.Fatalf("DuckDB query: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id        int32
+		createdNs int64
+		deletedNs *int64
+	}
+	var results []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.createdNs, &r.deletedNs); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows from DuckDB, got %d", len(results))
+	}
+
+	// Row 1: t1 and deleted timestamp
+	if results[0].createdNs != t1.UnixNano() {
+		t.Errorf("row 1 created: want %d, got %d", t1.UnixNano(), results[0].createdNs)
+	}
+	if results[0].deletedNs == nil || *results[0].deletedNs != deleted.UnixNano() {
+		t.Errorf("row 1 deleted: want %d, got %v", deleted.UnixNano(), results[0].deletedNs)
+	}
+
+	// Row 2: t2 and nil deleted
+	if results[1].createdNs != t2.UnixNano() {
+		t.Errorf("row 2 created: want %d, got %d", t2.UnixNano(), results[1].createdNs)
+	}
+	if results[1].deletedNs != nil {
+		t.Errorf("row 2 deleted: want nil, got %d", *results[1].deletedNs)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTimeTimestamp")
+	})
+
 	t.Run("multi-package-structs", func(t *testing.T) {
 		// Two separate packages: pkg1 contains Outer which references pkg2.Inner.
 		// This tests that Inner is resolved natively (Arrow StructBuilder) and that

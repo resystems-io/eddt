@@ -27,6 +27,7 @@ type FieldInfo struct {
 	IsFixedSizeList bool       // True if the field is a fixed-size array ([N]T)
 	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
 	MarshalMethod   string     // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
+	ConvertMethod   string     // Method to call on the value before casting (e.g. "UnixNano" for time.Time)
 	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
 	KeyInfo         *FieldInfo // Key info for maps
 }
@@ -255,6 +256,12 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 						}
 					}
 				}
+				// Check for well-known stdlib types with dedicated Arrow mappings.
+				if named, ok := typ.(*types.Named); ok {
+					if fi, ok := resolveWellKnownType(name, named, true); ok {
+						return fi, nil
+					}
+				}
 				// External type: fall back to marshal method detection.
 				method := detectMarshalMethod(typ)
 				if method != "" {
@@ -386,6 +393,13 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			}
 		}
 
+		// Check for well-known stdlib types with dedicated Arrow mappings.
+		if named, ok := typ.(*types.Named); ok {
+			if fi, ok := resolveWellKnownType(name, named, false); ok {
+				return fi, nil
+			}
+		}
+
 		// External type not in any loaded package: fall back to marshal method detection.
 		method := detectMarshalMethod(typ)
 		if method == "" {
@@ -462,6 +476,50 @@ func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name strin
 		CastType:     castType,
 		IsPointer:    isPointer,
 	}, nil
+}
+
+// resolveWellKnownType checks if a named type is a well-known stdlib type with
+// a dedicated Arrow mapping (e.g., time.Duration → Int64, time.Time → Timestamp).
+// Returns (FieldInfo, true) if matched, or (FieldInfo{}, false) if not.
+func resolveWellKnownType(name string, named *types.Named, isPointer bool) (FieldInfo, bool) {
+	if named.Obj().Pkg() == nil {
+		return FieldInfo{}, false
+	}
+	pkgPath := named.Obj().Pkg().Path()
+	typeName := named.Obj().Name()
+
+	if pkgPath == "time" && typeName == "Duration" {
+		goType := "time.Duration"
+		if isPointer {
+			goType = "*time.Duration"
+		}
+		return FieldInfo{
+			Name:         name,
+			GoType:       goType,
+			ArrowType:    "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder: "*array.Int64Builder",
+			CastType:     "int64",
+			IsPointer:    isPointer,
+		}, true
+	}
+
+	if pkgPath == "time" && typeName == "Time" {
+		goType := "time.Time"
+		if isPointer {
+			goType = "*time.Time"
+		}
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:  "*array.TimestampBuilder",
+			CastType:      "arrow.Timestamp",
+			ConvertMethod: "UnixNano",
+			IsPointer:     isPointer,
+		}, true
+	}
+
+	return FieldInfo{}, false
 }
 
 // detectMarshalMethod checks if a type implements serialization interfaces.

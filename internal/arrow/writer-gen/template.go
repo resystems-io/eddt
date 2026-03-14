@@ -171,6 +171,16 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 	}
 	{{- end}}
 	{{- end}}
+{{- else if $info.ConvertMethod}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}.{{$info.ConvertMethod}}()))
+	}
+	{{- else}}
+	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}.{{$info.ConvertMethod}}()))
+	{{- end}}
 {{- else}}
 	{{- if $info.IsPointer}}
 	if {{$var}} == nil {

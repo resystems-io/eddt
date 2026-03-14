@@ -42,7 +42,9 @@ when each item is completed.
 | `map[K]V` (primitives) | `MapOf(K, V)` | nil map → `AppendNull` |
 | `map[K]struct` | `MapOf(K, Struct)` | |
 | Named primitive (`type X int`) | Underlying Arrow type | Cast to underlying |
-| External type (`MarshalText`) | `String` | e.g. `netip.Addr`, `time.Time` |
+| `time.Duration` | `Int64` | Stored as nanoseconds via `int64(d)` |
+| `time.Time` | `Timestamp_ns` (UTC) | Stored via `arrow.Timestamp(t.UnixNano())` |
+| External type (`MarshalText`) | `String` | e.g. `netip.Addr` |
 | External type (`String()`) | `String` | e.g. `url.URL` |
 | External type (`MarshalBinary`) | `Binary` | |
 | `[]*ExternalType` | `ListOf(String/Binary)` | Via marshal fallback on elements |
@@ -88,7 +90,7 @@ the user's build.
 | ID | Go Type | Notes |
 |----|---------|-------|
 | D1 | `complex64` / `complex128` | No native Arrow complex type. Could decompose into a two-field struct (`real float32, imag float32`) but practical demand is low. |
-| D2 | `time.Duration` stored as string | Currently `time.Duration` (named `int64` from the `time` package) resolves via the `SelectorExpr` path and hits `String()` → stored as `"1h30m0s"`. An alternative would be to store the underlying `int64` (nanoseconds), which is lossless and sortable. This is a domain-specific tradeoff. |
+| D2 | `time.Duration` stored as string | Currently `time.Duration` (named `int64` from the `time` package) resolves via the `SelectorExpr` path and hits `String()` → stored as `"1h30m0s"`. Arrow has a native `DurationType` with `DurationBuilder` (int64 storage, configurable time unit: s/ms/us/ns). However, **Parquet has no native Duration logical type** — `pqarrow` returns `ErrNotImplemented` when converting `arrow.DURATION` to a Parquet schema. This means Arrow Duration columns cannot be written to Parquet, which is the primary serialization target. See D2 checklist entry for options. |
 
 ---
 
@@ -172,12 +174,36 @@ These must be fixed first because they produce output that does not compile.
   Low priority unless a concrete use case arises.
   - Files: `generator.go`, `template.go`, `generator_test.go`
 
-- [ ] **D2: `time.Duration` as int64** — Consider adding special-case detection for
-  `time.Duration` to store as `Int64` (nanoseconds) rather than the current
-  `String()` serialization. This is lossless and preserves sort order, but changes
-  the column semantics for anyone already relying on the string representation.
-  Could be gated behind a flag or annotation if both behaviours are desired.
-  - Files: `generator.go` (`SelectorExpr` case), `generator_test.go`
+- [x] **D2: `time.Duration` as Int64 nanoseconds** *(2026-03-14)* —
+  `time.Duration` is now intercepted in the `SelectorExpr` path (and the
+  `*StarExpr` → `SelectorExpr` path for pointers) via a `resolveWellKnownType`
+  helper, before the marshal method fallback. Mapped to `arrow.PrimitiveTypes.Int64`
+  with `int64(d)` cast — lossless, sortable, Parquet-compatible. Previously stored
+  as a string via `String()` (`"1h30m0s"`).
+
+  **Options investigated:**
+  - (a) Arrow `DurationType` — not viable (Parquet has no native Duration logical
+    type; `pqarrow` returns `ErrNotImplemented`).
+  - (b) **Int64 nanoseconds — selected.** Lossless, Parquet-compatible.
+  - (c) `String` (previous behaviour) — human-readable but not sortable/queryable.
+  - (d) `ARROW:schema` footer metadata — investigated, not viable (error occurs
+    at schema conversion before any data can be written).
+  - Files: `generator.go` (`resolveWellKnownType` helper, `SelectorExpr` and
+    `*StarExpr` cases), `template.go` (no change — primitive path works),
+    `generator_test.go` (2 new cases), `integration_test.go` (new subtest)
+
+- [x] **D3: `time.Time` as Arrow Timestamp (nanosecond, UTC)** *(2026-03-14)* —
+  `time.Time` is now intercepted in the `SelectorExpr` path via the same
+  `resolveWellKnownType` helper. Mapped to `arrow.FixedWidthTypes.Timestamp_ns`
+  with `arrow.Timestamp(t.UnixNano())` conversion. Previously stored as a string
+  via `MarshalText()` (RFC 3339). A new `ConvertMethod` field on `FieldInfo`
+  enables method-call-based value conversion in the template (e.g., `.UnixNano()`)
+  without conflating with the `MarshalMethod` path. Pointer `*time.Time` fields
+  get nil → `AppendNull` handling. DuckDB reads these as `TIMESTAMP WITH TIME ZONE`
+  at microsecond precision; nanosecond precision is preserved in Arrow/Parquet.
+  - Files: `generator.go` (`FieldInfo.ConvertMethod`, `resolveWellKnownType`),
+    `template.go` (new `ConvertMethod` branch in `appendValue`),
+    `generator_test.go` (2 new cases), `integration_test.go` (new subtest)
 
 ---
 
@@ -209,3 +235,5 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-03-14 | B4   | `map[K][]V` resolved by S2                              |
 | 2026-03-14 | B5   | `map[K]map[K2]V` resolved by S2                         |
 | 2026-03-14 | S1   | Embedded struct fields flattened into parent Arrow schema |
+| 2026-03-14 | D2   | `time.Duration` → Int64 nanoseconds via `resolveWellKnownType` |
+| 2026-03-14 | D3   | `time.Time` → `Timestamp_ns` (UTC) via `resolveWellKnownType` + `ConvertMethod` |

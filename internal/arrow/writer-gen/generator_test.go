@@ -488,6 +488,100 @@ type Device struct {
 			mustContain:  []string{`{Name: "ID",`, `{Name: "State",`},
 		},
 		{
+			name: "time-duration-as-int64",
+			goCode: `package mypkg
+
+import "time"
+
+type Event struct {
+	ID       int32
+	Duration time.Duration
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "Duration",`,
+				"Int64Builder",
+				"int64(",
+			},
+			mustNotContain: []string{
+				"String()",
+				"MarshalText",
+				"StringBuilder",
+			},
+		},
+		{
+			name: "pointer-to-time-duration",
+			goCode: `package mypkg
+
+import "time"
+
+type Event struct {
+	ID      int32
+	Timeout *time.Duration
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "Timeout",`,
+				"Int64Builder",
+				"int64(",
+				"AppendNull",
+			},
+			mustNotContain: []string{
+				"String()",
+				"MarshalText",
+			},
+		},
+		{
+			name: "time-time-as-timestamp",
+			goCode: `package mypkg
+
+import "time"
+
+type Event struct {
+	ID        int32
+	CreatedAt time.Time
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "CreatedAt",`,
+				"TimestampBuilder",
+				"Timestamp_ns",
+				".UnixNano()",
+				"arrow.Timestamp(",
+			},
+			mustNotContain: []string{
+				"MarshalText",
+				"StringBuilder",
+				"String()",
+			},
+		},
+		{
+			name: "pointer-to-time-time",
+			goCode: `package mypkg
+
+import "time"
+
+type Event struct {
+	ID        int32
+	DeletedAt *time.Time
+}
+`,
+			targetStruct: "Event",
+			mustContain: []string{
+				`{Name: "DeletedAt",`,
+				"TimestampBuilder",
+				".UnixNano()",
+				"AppendNull",
+			},
+			mustNotContain: []string{
+				"MarshalText",
+				"StringBuilder",
+			},
+		},
+		{
 			name: "embedded-struct-flattened",
 			goCode: `package mypkg
 
