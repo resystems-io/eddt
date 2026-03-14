@@ -110,7 +110,7 @@ type IgnoredStruct struct {
 	}
 }
 
-func TestMapToArrowType(t *testing.T) {
+func TestPrimitiveArrowType(t *testing.T) {
 	tests := []struct {
 		goType      string
 		expectedGo  string
@@ -131,20 +131,20 @@ func TestMapToArrowType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.goType, func(t *testing.T) {
 			ident := &ast.Ident{Name: tt.goType}
-			gotGo, gotArr, gotBld, _, err := mapToArrowType(ident)
+			gotGo, gotArr, gotBld, _, err := primitiveArrowType(ident)
 			if (err != nil) != tt.expectErr {
-				t.Errorf("mapToArrowType(%s) error = %v, expectErr %v", tt.goType, err, tt.expectErr)
+				t.Errorf("primitiveArrowType(%s) error = %v, expectErr %v", tt.goType, err, tt.expectErr)
 				return
 			}
 			if err == nil {
 				if gotGo != tt.expectedGo {
-					t.Errorf("mapToArrowType(%s) gotGo = %v, want %v", tt.goType, gotGo, tt.expectedGo)
+					t.Errorf("primitiveArrowType(%s) gotGo = %v, want %v", tt.goType, gotGo, tt.expectedGo)
 				}
 				if gotArr != tt.expectedArr {
-					t.Errorf("mapToArrowType(%s) gotArr = %v, want %v", tt.goType, gotArr, tt.expectedArr)
+					t.Errorf("primitiveArrowType(%s) gotArr = %v, want %v", tt.goType, gotArr, tt.expectedArr)
 				}
 				if gotBld != tt.expectedBld {
-					t.Errorf("mapToArrowType(%s) gotBld = %v, want %v", tt.goType, gotBld, tt.expectedBld)
+					t.Errorf("primitiveArrowType(%s) gotBld = %v, want %v", tt.goType, gotBld, tt.expectedBld)
 				}
 			}
 		})

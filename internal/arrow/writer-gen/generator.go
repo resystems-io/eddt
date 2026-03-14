@@ -11,6 +11,8 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// -- types: Core data structures and constructor for the generator.
+
 // FieldInfo contains information about a parsed struct field.
 // For container types (list, fixed-size-list, map), element and key metadata
 // is carried recursively via EltInfo and KeyInfo pointers, enabling arbitrary
@@ -63,6 +65,8 @@ func NewGenerator(inputPkgs []string, targetStructs []string, outPath string, ve
 		PkgAliases:    pkgAliases,
 	}
 }
+
+// -- package-loading: Load and validate Go packages via golang.org/x/tools/go/packages.
 
 // collectPackageErrors counts the number of errors across loaded packages
 // without printing to stderr (unlike packages.PrintErrors).
@@ -154,6 +158,8 @@ func findPkgByPath(pkgs []*packages.Package, pkgPath string) *packages.Package {
 	}
 	return nil
 }
+
+// -- parsing: Top-level orchestration that walks targeted structs and their fields.
 
 // Parse extracts StructInfo for the targeted structs and discovers the primary package name and path.
 // The returned pkgName and pkgPath refer to the first loaded input package (used for output package
@@ -250,7 +256,7 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 						if fieldName == "_" {
 							continue // blank-identifier fields are padding; skip
 						}
-						fieldInfo, err := mapToFieldInfo(pkg, allPkgs, fieldName, field.Type, &queue, processed)
+						fieldInfo, err := fieldInfoFromExpr(pkg, allPkgs, fieldName, field.Type, &queue, processed)
 						if err != nil {
 							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
 							continue
@@ -279,16 +285,119 @@ func (g *Generator) Parse() (string, string, []StructInfo, error) {
 	return parsedPkgName, parsedPkgPath, results, nil
 }
 
-// mapToFieldInfo maps an AST expression to a FieldInfo struct.
-func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+// resolveEmbeddedFields resolves an embedded struct field and returns its
+// promoted fields as flattened FieldInfo entries. The embedded struct itself
+// is NOT added to the processing queue — only struct types referenced by its
+// fields are queued (via fieldInfoFromExpr).
+//
+// Returns nil if the embedded type cannot be resolved, is not a struct, is a
+// pointer embedding, or its package is not loaded.
+func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, field *ast.Field, queue *[]string, processed map[string]bool) []FieldInfo {
+	// Detect pointer embedding (*Base) — skip for now.
+	fieldType := field.Type
+	if _, isPtr := fieldType.(*ast.StarExpr); isPtr {
+		fmt.Println("Warning: Skipping pointer-embedded struct (not yet supported)")
+		return nil
+	}
+
+	// Resolve the type via the type checker.
+	typ := pkg.TypesInfo.TypeOf(fieldType)
+	if typ == nil {
+		return nil
+	}
+
+	named, ok := typ.(*types.Named)
+	if !ok {
+		fmt.Printf("Warning: Embedded type %s is not a named type; skipping\n", typ)
+		return nil
+	}
+
+	if _, isStruct := named.Underlying().(*types.Struct); !isStruct {
+		fmt.Printf("Warning: Embedded type %s is not a struct; skipping\n", named.Obj().Name())
+		return nil
+	}
+
+	// Find the loaded package containing the embedded struct.
+	embObjPkg := named.Obj().Pkg()
+	if embObjPkg == nil {
+		return nil
+	}
+	loadedPkg := findPkgByPath(allPkgs, embObjPkg.Path())
+	if loadedPkg == nil {
+		fmt.Printf("Warning: Package %s for embedded struct %s is not loaded; skipping\n",
+			embObjPkg.Path(), named.Obj().Name())
+		return nil
+	}
+
+	// Find the struct's AST declaration.
+	structName := named.Obj().Name()
+	var structType *ast.StructType
+	for _, file := range loadedPkg.Syntax {
+		ast.Inspect(file, func(n ast.Node) bool {
+			ts, ok := n.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != structName {
+				return true
+			}
+			if st, ok := ts.Type.(*ast.StructType); ok {
+				structType = st
+			}
+			return false
+		})
+		if structType != nil {
+			break
+		}
+	}
+
+	if structType == nil {
+		fmt.Printf("Warning: Could not find AST declaration for embedded struct %s\n", structName)
+		return nil
+	}
+
+	// Iterate fields and build FieldInfo entries.
+	var fields []FieldInfo
+	for _, embField := range structType.Fields.List {
+		if len(embField.Names) == 0 {
+			// Nested embedding — skip (depth-1 flattening only).
+			continue
+		}
+
+		embFieldName := embField.Names[0].Name
+		if embFieldName == "_" {
+			continue
+		}
+
+		fieldInfo, err := fieldInfoFromExpr(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
+		if err != nil {
+			fmt.Printf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
+			continue
+		}
+
+		fields = append(fields, fieldInfo)
+	}
+
+	return fields
+}
+
+// -- ast-resolution: AST-based field resolution path.
+//
+// This path is the primary entry point for struct field resolution. It
+// dispatches on AST node type (Ident, StarExpr, ArrayType, MapType,
+// SelectorExpr) and delegates to the type checker (via TypesInfo) for
+// cross-package types, named types, and selector expressions. For named
+// slice/map/array types, it bridges to fieldInfoFromType.
+
+// fieldInfoFromExpr resolves an AST expression to a FieldInfo. This is the
+// primary entry point called by Parse for each declared struct field and by
+// resolveEmbeddedFields for promoted fields.
+func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name string, expr ast.Expr, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	switch t := expr.(type) {
 	case *ast.Ident:
-		return resolveIdent(pkg, allPkgs, name, t, false, queue, processed)
+		return fieldInfoFromIdent(pkg, allPkgs, name, t, false, queue, processed)
 
 	case *ast.StarExpr:
 		// Pointer type - this could be to a struct or a primitive
 		if ident, ok := t.X.(*ast.Ident); ok {
-			return resolveIdent(pkg, allPkgs, name, ident, true, queue, processed)
+			return fieldInfoFromIdent(pkg, allPkgs, name, ident, true, queue, processed)
 		}
 
 		// Check for selector expression (e.g. *netip.Addr, *pkg2.Inner)
@@ -304,7 +413,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 							if findPkgByPath(allPkgs, pkgPath) != nil {
 								structName := named.Obj().Name()
 								pkgName := named.Obj().Pkg().Name()
-								return mapStructField(name, structName, pkgName, pkgPath, true, queue, processed), nil
+								return buildStructFieldInfo(name, structName, pkgName, pkgPath, true, queue, processed), nil
 							}
 						}
 					}
@@ -334,7 +443,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			}
 
 			// []byte special case does not apply to [N]byte — treat as fixed-size list of uint8.
-			eltInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Elt, queue, processed)
+			eltInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", t.Elt, queue, processed)
 			if err != nil {
 				return FieldInfo{}, fmt.Errorf("fixed-size array element %w", err)
 			}
@@ -348,7 +457,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 		}
 
 		// Slice type
-		eltInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Elt, queue, processed)
+		eltInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", t.Elt, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("slice element %w", err)
 		}
@@ -357,7 +466,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 
 	case *ast.MapType:
 		// Map type
-		keyInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Key, queue, processed)
+		keyInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", t.Key, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key %w", err)
 		}
@@ -365,7 +474,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 			return FieldInfo{}, fmt.Errorf("struct maps keys are not supported")
 		}
 
-		valInfo, err := mapToFieldInfo(pkg, allPkgs, "", t.Value, queue, processed)
+		valInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", t.Value, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map value %w", err)
 		}
@@ -388,7 +497,7 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 					if findPkgByPath(allPkgs, pkgPath) != nil {
 						structName := named.Obj().Name()
 						pkgName := named.Obj().Pkg().Name()
-						return mapStructField(name, structName, pkgName, pkgPath, false, queue, processed), nil
+						return buildStructFieldInfo(name, structName, pkgName, pkgPath, false, queue, processed), nil
 					}
 				}
 			}
@@ -412,8 +521,10 @@ func mapToFieldInfo(pkg *packages.Package, allPkgs []*packages.Package, name str
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
 }
 
-// resolveIdent handles unified type resolution for ast.Ident, tracking if it was accessed via a pointer.
-func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
+// fieldInfoFromIdent resolves an ast.Ident to a FieldInfo. Handles local struct
+// references, named types over primitives, named types over composites
+// (delegating to fieldInfoFromType), and bare primitives.
+func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name string, ident *ast.Ident, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	// Check for struct reference or named primitive
 	obj := pkg.TypesInfo.ObjectOf(ident)
 	if obj != nil {
@@ -424,13 +535,13 @@ func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name strin
 				structPkgPath = obj.Pkg().Path()
 				structPkgName = obj.Pkg().Name()
 			}
-			return mapStructField(name, obj.Name(), structPkgName, structPkgPath, isPointer, queue, processed), nil
+			return buildStructFieldInfo(name, obj.Name(), structPkgName, structPkgPath, isPointer, queue, processed), nil
 		}
 
 		// Check for named type over a primitive (e.g., type MyStates int)
 		if basic, ok := obj.Type().Underlying().(*types.Basic); ok {
 			syntheticIdent := &ast.Ident{Name: basic.Name()}
-			_, arrowType, arrowBuilder, castType, err := mapToArrowType(syntheticIdent)
+			_, arrowType, arrowBuilder, castType, err := primitiveArrowType(syntheticIdent)
 			if err == nil {
 				goTypeName := obj.Name()
 				if isPointer {
@@ -465,7 +576,7 @@ func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name strin
 	}
 
 	// Primitive type
-	goType, arrowType, arrowBuilder, castType, err := mapToArrowType(ident)
+	goType, arrowType, arrowBuilder, castType, err := primitiveArrowType(ident)
 	if err != nil {
 		if isPointer {
 			return FieldInfo{}, fmt.Errorf("unsupported pointer type: %w", err)
@@ -488,234 +599,85 @@ func resolveIdent(pkg *packages.Package, allPkgs []*packages.Package, name strin
 	}, nil
 }
 
-// resolveWellKnownType checks if a named type is a well-known stdlib type with
-// a dedicated Arrow mapping (e.g., time.Duration → Int64, time.Time → Timestamp).
-// Returns (FieldInfo, true) if matched, or (FieldInfo{}, false) if not.
-func resolveWellKnownType(name string, named *types.Named, isPointer bool) (FieldInfo, bool) {
-	if named.Obj().Pkg() == nil {
-		return FieldInfo{}, false
-	}
-	pkgPath := named.Obj().Pkg().Path()
-	typeName := named.Obj().Name()
-
-	if pkgPath == "time" && typeName == "Duration" {
-		goType := "time.Duration"
-		if isPointer {
-			goType = "*time.Duration"
-		}
-		return FieldInfo{
-			Name:         name,
-			GoType:       goType,
-			ArrowType:    "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder: "*array.Int64Builder",
-			CastType:     "int64",
-			IsPointer:    isPointer,
-		}, true
+// primitiveArrowType maps a primitive Go AST identifier to its Arrow type
+// representation, returning the Go type string, Arrow type string, Builder
+// type string, cast type, and an error if unsupported.
+func primitiveArrowType(expr ast.Expr) (string, string, string, string, error) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return "", "", "", "", fmt.Errorf("complex types not supported in Phase 1 primitives list")
 	}
 
-	if pkgPath == "time" && typeName == "Time" {
-		goType := "time.Time"
-		if isPointer {
-			goType = "*time.Time"
-		}
-		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:  "*array.TimestampBuilder",
-			CastType:      "arrow.Timestamp",
-			ConvertMethod: "UnixNano",
-			IsPointer:     isPointer,
-		}, true
+	goType := ident.Name
+	var arrowType string
+	var arrowBuilder string
+	var castType string
+
+	switch goType {
+	case "int8":
+		arrowType = "arrow.PrimitiveTypes.Int8"
+		arrowBuilder = "*array.Int8Builder"
+		castType = "int8"
+	case "int16":
+		arrowType = "arrow.PrimitiveTypes.Int16"
+		arrowBuilder = "*array.Int16Builder"
+		castType = "int16"
+	case "int32", "rune":
+		arrowType = "arrow.PrimitiveTypes.Int32"
+		arrowBuilder = "*array.Int32Builder"
+		castType = "int32"
+	case "int64", "int":
+		arrowType = "arrow.PrimitiveTypes.Int64"
+		arrowBuilder = "*array.Int64Builder"
+		castType = "int64"
+	case "uint8", "byte":
+		arrowType = "arrow.PrimitiveTypes.Uint8"
+		arrowBuilder = "*array.Uint8Builder"
+		castType = "uint8"
+	case "uint16":
+		arrowType = "arrow.PrimitiveTypes.Uint16"
+		arrowBuilder = "*array.Uint16Builder"
+		castType = "uint16"
+	case "uint32":
+		arrowType = "arrow.PrimitiveTypes.Uint32"
+		arrowBuilder = "*array.Uint32Builder"
+		castType = "uint32"
+	case "uint64", "uint":
+		arrowType = "arrow.PrimitiveTypes.Uint64"
+		arrowBuilder = "*array.Uint64Builder"
+		castType = "uint64"
+	case "float32":
+		arrowType = "arrow.PrimitiveTypes.Float32"
+		arrowBuilder = "*array.Float32Builder"
+		castType = "float32"
+	case "float64":
+		arrowType = "arrow.PrimitiveTypes.Float64"
+		arrowBuilder = "*array.Float64Builder"
+		castType = "float64"
+	case "string":
+		arrowType = "arrow.BinaryTypes.String"
+		arrowBuilder = "*array.StringBuilder"
+		castType = "string"
+	case "bool":
+		arrowType = "arrow.FixedWidthTypes.Boolean"
+		arrowBuilder = "*array.BooleanBuilder"
+		castType = "bool"
+	default:
+		return "", "", "", "", fmt.Errorf("unsupported primitive type: %s", goType)
 	}
 
-	if pkgPath == "google.golang.org/protobuf/types/known/durationpb" && typeName == "Duration" {
-		goType := "durationpb.Duration"
-		if isPointer {
-			goType = "*durationpb.Duration"
-		}
-		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder:  "*array.Int64Builder",
-			CastType:      "int64",
-			ConvertMethod: "AsDuration",
-			IsPointer:     isPointer,
-		}, true
-	}
-
-	if pkgPath == "google.golang.org/protobuf/types/known/timestamppb" && typeName == "Timestamp" {
-		goType := "timestamppb.Timestamp"
-		if isPointer {
-			goType = "*timestamppb.Timestamp"
-		}
-		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:  "*array.TimestampBuilder",
-			CastType:      "arrow.Timestamp",
-			ConvertMethod: "AsTime().UnixNano",
-			IsPointer:     isPointer,
-		}, true
-	}
-
-	return FieldInfo{}, false
+	return goType, arrowType, arrowBuilder, castType, nil
 }
 
-// detectMarshalMethod checks if a type implements serialization interfaces.
-// Priority: MarshalText (encoding.TextMarshaler) > String (fmt.Stringer) > MarshalBinary (encoding.BinaryMarshaler).
-// Returns the method name to use, or "" if none is found.
-func detectMarshalMethod(typ types.Type) string {
-	// Use pointer method set to include both value and pointer receiver methods.
-	// This is safe because struct fields are always addressable.
-	var checkType types.Type
-	if _, isPtr := typ.(*types.Pointer); isPtr {
-		checkType = typ
-	} else {
-		checkType = types.NewPointer(typ)
-	}
-	mset := types.NewMethodSet(checkType)
+// -- typechecker-resolution: Type-checker-based field resolution path.
+//
+// This path resolves go/types representations to FieldInfo. It is called by
+// fieldInfoFromIdent for named slice/map/array types (where the underlying
+// composite structure is available from the type checker but no AST expression
+// exists), and recursively for element/key/value types of containers.
 
-	if mset.Lookup(nil, "MarshalText") != nil {
-		return "MarshalText"
-	}
-	if mset.Lookup(nil, "String") != nil {
-		return "String"
-	}
-	if mset.Lookup(nil, "MarshalBinary") != nil {
-		return "MarshalBinary"
-	}
-	return ""
-}
-
-// marshalMethodArrowType returns the Arrow type and builder for a given marshal method.
-// MarshalText and String produce string columns; MarshalBinary produces binary columns.
-func marshalMethodArrowType(method string) (string, string) {
-	if method == "MarshalBinary" {
-		return "arrow.BinaryTypes.Binary", "*array.BinaryBuilder"
-	}
-	return "arrow.BinaryTypes.String", "*array.StringBuilder"
-}
-
-// mapStructField builds a FieldInfo for a struct field (value or pointer).
-// pkgName and pkgPath record the origin package of the referenced struct.
-func mapStructField(name string, structName string, pkgName string, pkgPath string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
-	if !processed[structName] {
-		*queue = append(*queue, structName)
-	}
-
-	goType := structName
-	if isPointer {
-		goType = "*" + structName
-	}
-
-	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", structName),
-		ArrowBuilder: "*array.StructBuilder",
-		IsStruct:     true,
-		IsPointer:    isPointer,
-		StructName:   structName,
-	}
-}
-
-// eltArrowType returns the Arrow type expression for a FieldInfo, using the
-// struct schema constructor when the field is a struct type.
-func eltArrowType(fi FieldInfo) string {
-	if fi.IsStruct {
-		return fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", fi.StructName)
-	}
-	return fi.ArrowType
-}
-
-// buildSliceFieldInfo constructs a FieldInfo for a slice type from its resolved element.
-func buildSliceFieldInfo(name string, eltInfo FieldInfo, isPointer bool) FieldInfo {
-	goType := "[]" + eltInfo.GoType
-	if isPointer {
-		goType = "*" + goType
-	}
-	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.ListOf(%s)", eltArrowType(eltInfo)),
-		ArrowBuilder: "*array.ListBuilder",
-		IsList:       true,
-		EltInfo:      &eltInfo,
-		IsPointer:    isPointer,
-	}
-}
-
-// buildMapFieldInfo constructs a FieldInfo for a map type from its resolved key and value.
-func buildMapFieldInfo(name string, keyInfo, valInfo FieldInfo, isPointer bool) FieldInfo {
-	goType := fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType)
-	if isPointer {
-		goType = "*" + goType
-	}
-	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, eltArrowType(valInfo)),
-		ArrowBuilder: "*array.MapBuilder",
-		IsMap:        true,
-		KeyInfo:      &keyInfo,
-		EltInfo:      &valInfo,
-		IsPointer:    isPointer,
-	}
-}
-
-// buildFixedArrayFieldInfo constructs a FieldInfo for a fixed-size array from its resolved element.
-func buildFixedArrayFieldInfo(name string, lenStr string, eltInfo FieldInfo, isPointer bool) FieldInfo {
-	goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
-	if isPointer {
-		goType = "*" + goType
-	}
-	return FieldInfo{
-		Name:            name,
-		GoType:          goType,
-		ArrowType:       fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltArrowType(eltInfo)),
-		ArrowBuilder:    "*array.FixedSizeListBuilder",
-		IsFixedSizeList: true,
-		FixedSizeLen:    lenStr,
-		EltInfo:         &eltInfo,
-		IsPointer:       isPointer,
-	}
-}
-
-// buildByteSliceFieldInfo constructs a FieldInfo for a []byte field (Arrow Binary).
-func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
-	goType := "[]byte"
-	if isPointer {
-		goType = "*[]byte"
-	}
-	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    "arrow.BinaryTypes.Binary",
-		ArrowBuilder: "*array.BinaryBuilder",
-		CastType:     "[]byte",
-		IsPointer:    isPointer,
-	}
-}
-
-// buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.
-func buildMarshalFieldInfo(name string, goType string, method string, isPointer bool) FieldInfo {
-	arrowType, arrowBuilder := marshalMethodArrowType(method)
-	return FieldInfo{
-		Name:          name,
-		GoType:        goType,
-		ArrowType:     arrowType,
-		ArrowBuilder:  arrowBuilder,
-		MarshalMethod: method,
-		IsPointer:     isPointer,
-	}
-}
-
-// fieldInfoFromType resolves a types.Type to a FieldInfo. Used to map element,
-// key, and value types of named slice/map/array types where the underlying
-// structure is available from the type checker but no AST expression exists.
+// fieldInfoFromType resolves a types.Type to a FieldInfo. Operates purely on
+// go/types representations, independent of the AST.
 func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name string, typ types.Type, isPointer bool, queue *[]string, processed map[string]bool) (FieldInfo, error) {
 	switch t := typ.(type) {
 	case *types.Basic:
@@ -732,7 +694,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			if t.Obj().Pkg() != nil {
 				pkgPath := t.Obj().Pkg().Path()
 				if findPkgByPath(allPkgs, pkgPath) != nil {
-					return mapStructField(name, t.Obj().Name(), t.Obj().Pkg().Name(), pkgPath, isPointer, queue, processed), nil
+					return buildStructFieldInfo(name, t.Obj().Name(), t.Obj().Pkg().Name(), pkgPath, isPointer, queue, processed), nil
 				}
 			}
 			// External struct — try marshal methods.
@@ -852,164 +814,231 @@ func fieldInfoFromBasic(name string, basic *types.Basic, isPointer bool) (FieldI
 	}, nil
 }
 
-// resolveEmbeddedFields resolves an embedded struct field and returns its
-// promoted fields as flattened FieldInfo entries. The embedded struct itself
-// is NOT added to the processing queue — only struct types referenced by its
-// fields are queued (via mapToFieldInfo).
-//
-// Returns nil if the embedded type cannot be resolved, is not a struct, is a
-// pointer embedding, or its package is not loaded.
-func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, field *ast.Field, queue *[]string, processed map[string]bool) []FieldInfo {
-	// Detect pointer embedding (*Base) — skip for now.
-	fieldType := field.Type
-	if _, isPtr := fieldType.(*ast.StarExpr); isPtr {
-		fmt.Println("Warning: Skipping pointer-embedded struct (not yet supported)")
-		return nil
-	}
+// -- shared-resolution: Type resolution helpers used by both the AST and type-checker paths.
 
-	// Resolve the type via the type checker.
-	typ := pkg.TypesInfo.TypeOf(fieldType)
-	if typ == nil {
-		return nil
+// resolveWellKnownType checks if a named type is a well-known stdlib type with
+// a dedicated Arrow mapping (e.g., time.Duration → Int64, time.Time → Timestamp).
+// Returns (FieldInfo, true) if matched, or (FieldInfo{}, false) if not.
+func resolveWellKnownType(name string, named *types.Named, isPointer bool) (FieldInfo, bool) {
+	if named.Obj().Pkg() == nil {
+		return FieldInfo{}, false
 	}
+	pkgPath := named.Obj().Pkg().Path()
+	typeName := named.Obj().Name()
 
-	named, ok := typ.(*types.Named)
-	if !ok {
-		fmt.Printf("Warning: Embedded type %s is not a named type; skipping\n", typ)
-		return nil
-	}
-
-	if _, isStruct := named.Underlying().(*types.Struct); !isStruct {
-		fmt.Printf("Warning: Embedded type %s is not a struct; skipping\n", named.Obj().Name())
-		return nil
-	}
-
-	// Find the loaded package containing the embedded struct.
-	embObjPkg := named.Obj().Pkg()
-	if embObjPkg == nil {
-		return nil
-	}
-	loadedPkg := findPkgByPath(allPkgs, embObjPkg.Path())
-	if loadedPkg == nil {
-		fmt.Printf("Warning: Package %s for embedded struct %s is not loaded; skipping\n",
-			embObjPkg.Path(), named.Obj().Name())
-		return nil
-	}
-
-	// Find the struct's AST declaration.
-	structName := named.Obj().Name()
-	var structType *ast.StructType
-	for _, file := range loadedPkg.Syntax {
-		ast.Inspect(file, func(n ast.Node) bool {
-			ts, ok := n.(*ast.TypeSpec)
-			if !ok || ts.Name.Name != structName {
-				return true
-			}
-			if st, ok := ts.Type.(*ast.StructType); ok {
-				structType = st
-			}
-			return false
-		})
-		if structType != nil {
-			break
+	if pkgPath == "time" && typeName == "Duration" {
+		goType := "time.Duration"
+		if isPointer {
+			goType = "*time.Duration"
 		}
+		return FieldInfo{
+			Name:         name,
+			GoType:       goType,
+			ArrowType:    "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder: "*array.Int64Builder",
+			CastType:     "int64",
+			IsPointer:    isPointer,
+		}, true
 	}
 
-	if structType == nil {
-		fmt.Printf("Warning: Could not find AST declaration for embedded struct %s\n", structName)
-		return nil
+	if pkgPath == "time" && typeName == "Time" {
+		goType := "time.Time"
+		if isPointer {
+			goType = "*time.Time"
+		}
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:  "*array.TimestampBuilder",
+			CastType:      "arrow.Timestamp",
+			ConvertMethod: "UnixNano",
+			IsPointer:     isPointer,
+		}, true
 	}
 
-	// Iterate fields and build FieldInfo entries.
-	var fields []FieldInfo
-	for _, embField := range structType.Fields.List {
-		if len(embField.Names) == 0 {
-			// Nested embedding — skip (depth-1 flattening only).
-			continue
+	if pkgPath == "google.golang.org/protobuf/types/known/durationpb" && typeName == "Duration" {
+		goType := "durationpb.Duration"
+		if isPointer {
+			goType = "*durationpb.Duration"
 		}
-
-		embFieldName := embField.Names[0].Name
-		if embFieldName == "_" {
-			continue
-		}
-
-		fieldInfo, err := mapToFieldInfo(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
-		if err != nil {
-			fmt.Printf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
-			continue
-		}
-
-		fields = append(fields, fieldInfo)
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:  "*array.Int64Builder",
+			CastType:      "int64",
+			ConvertMethod: "AsDuration",
+			IsPointer:     isPointer,
+		}, true
 	}
 
-	return fields
+	if pkgPath == "google.golang.org/protobuf/types/known/timestamppb" && typeName == "Timestamp" {
+		goType := "timestamppb.Timestamp"
+		if isPointer {
+			goType = "*timestamppb.Timestamp"
+		}
+		return FieldInfo{
+			Name:          name,
+			GoType:        goType,
+			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:  "*array.TimestampBuilder",
+			CastType:      "arrow.Timestamp",
+			ConvertMethod: "AsTime().UnixNano",
+			IsPointer:     isPointer,
+		}, true
+	}
+
+	return FieldInfo{}, false
 }
 
-// mapToArrowType maps a primitive Go AST expression to its primitive Arrow type representation
-// returning the Go type string, the Arrow type string, the Builder type string, and an error if unsupported.
-func mapToArrowType(expr ast.Expr) (string, string, string, string, error) {
-	ident, ok := expr.(*ast.Ident)
-	if !ok {
-		return "", "", "", "", fmt.Errorf("complex types not supported in Phase 1 primitives list")
+// detectMarshalMethod checks if a type implements serialization interfaces.
+// Priority: MarshalText (encoding.TextMarshaler) > String (fmt.Stringer) > MarshalBinary (encoding.BinaryMarshaler).
+// Returns the method name to use, or "" if none is found.
+func detectMarshalMethod(typ types.Type) string {
+	// Use pointer method set to include both value and pointer receiver methods.
+	// This is safe because struct fields are always addressable.
+	var checkType types.Type
+	if _, isPtr := typ.(*types.Pointer); isPtr {
+		checkType = typ
+	} else {
+		checkType = types.NewPointer(typ)
+	}
+	mset := types.NewMethodSet(checkType)
+
+	if mset.Lookup(nil, "MarshalText") != nil {
+		return "MarshalText"
+	}
+	if mset.Lookup(nil, "String") != nil {
+		return "String"
+	}
+	if mset.Lookup(nil, "MarshalBinary") != nil {
+		return "MarshalBinary"
+	}
+	return ""
+}
+
+// marshalMethodArrowType returns the Arrow type and builder for a given marshal method.
+// MarshalText and String produce string columns; MarshalBinary produces binary columns.
+func marshalMethodArrowType(method string) (string, string) {
+	if method == "MarshalBinary" {
+		return "arrow.BinaryTypes.Binary", "*array.BinaryBuilder"
+	}
+	return "arrow.BinaryTypes.String", "*array.StringBuilder"
+}
+
+// -- builders: Shared FieldInfo construction helpers used by both resolution paths.
+
+// buildStructFieldInfo constructs a FieldInfo for a struct field (value or pointer)
+// and enqueues the struct name for recursive processing.
+func buildStructFieldInfo(name string, structName string, pkgName string, pkgPath string, isPointer bool, queue *[]string, processed map[string]bool) FieldInfo {
+	if !processed[structName] {
+		*queue = append(*queue, structName)
 	}
 
-	goType := ident.Name
-	var arrowType string
-	var arrowBuilder string
-	var castType string
-
-	switch goType {
-	case "int8":
-		arrowType = "arrow.PrimitiveTypes.Int8"
-		arrowBuilder = "*array.Int8Builder"
-		castType = "int8"
-	case "int16":
-		arrowType = "arrow.PrimitiveTypes.Int16"
-		arrowBuilder = "*array.Int16Builder"
-		castType = "int16"
-	case "int32", "rune":
-		arrowType = "arrow.PrimitiveTypes.Int32"
-		arrowBuilder = "*array.Int32Builder"
-		castType = "int32"
-	case "int64", "int":
-		arrowType = "arrow.PrimitiveTypes.Int64"
-		arrowBuilder = "*array.Int64Builder"
-		castType = "int64"
-	case "uint8", "byte":
-		arrowType = "arrow.PrimitiveTypes.Uint8"
-		arrowBuilder = "*array.Uint8Builder"
-		castType = "uint8"
-	case "uint16":
-		arrowType = "arrow.PrimitiveTypes.Uint16"
-		arrowBuilder = "*array.Uint16Builder"
-		castType = "uint16"
-	case "uint32":
-		arrowType = "arrow.PrimitiveTypes.Uint32"
-		arrowBuilder = "*array.Uint32Builder"
-		castType = "uint32"
-	case "uint64", "uint":
-		arrowType = "arrow.PrimitiveTypes.Uint64"
-		arrowBuilder = "*array.Uint64Builder"
-		castType = "uint64"
-	case "float32":
-		arrowType = "arrow.PrimitiveTypes.Float32"
-		arrowBuilder = "*array.Float32Builder"
-		castType = "float32"
-	case "float64":
-		arrowType = "arrow.PrimitiveTypes.Float64"
-		arrowBuilder = "*array.Float64Builder"
-		castType = "float64"
-	case "string":
-		arrowType = "arrow.BinaryTypes.String"
-		arrowBuilder = "*array.StringBuilder"
-		castType = "string"
-	case "bool":
-		arrowType = "arrow.FixedWidthTypes.Boolean"
-		arrowBuilder = "*array.BooleanBuilder"
-		castType = "bool"
-	default:
-		return "", "", "", "", fmt.Errorf("unsupported primitive type: %s", goType)
+	goType := structName
+	if isPointer {
+		goType = "*" + structName
 	}
 
-	return goType, arrowType, arrowBuilder, castType, nil
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", structName),
+		ArrowBuilder: "*array.StructBuilder",
+		IsStruct:     true,
+		IsPointer:    isPointer,
+		StructName:   structName,
+	}
+}
+
+// eltArrowType returns the Arrow type expression for a FieldInfo, using the
+// struct schema constructor when the field is a struct type.
+func eltArrowType(fi FieldInfo) string {
+	if fi.IsStruct {
+		return fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", fi.StructName)
+	}
+	return fi.ArrowType
+}
+
+// buildSliceFieldInfo constructs a FieldInfo for a slice type from its resolved element.
+func buildSliceFieldInfo(name string, eltInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := "[]" + eltInfo.GoType
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.ListOf(%s)", eltArrowType(eltInfo)),
+		ArrowBuilder: "*array.ListBuilder",
+		IsList:       true,
+		EltInfo:      &eltInfo,
+		IsPointer:    isPointer,
+	}
+}
+
+// buildMapFieldInfo constructs a FieldInfo for a map type from its resolved key and value.
+func buildMapFieldInfo(name string, keyInfo, valInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := fmt.Sprintf("map[%s]%s", keyInfo.GoType, valInfo.GoType)
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, eltArrowType(valInfo)),
+		ArrowBuilder: "*array.MapBuilder",
+		IsMap:        true,
+		KeyInfo:      &keyInfo,
+		EltInfo:      &valInfo,
+		IsPointer:    isPointer,
+	}
+}
+
+// buildFixedArrayFieldInfo constructs a FieldInfo for a fixed-size array from its resolved element.
+func buildFixedArrayFieldInfo(name string, lenStr string, eltInfo FieldInfo, isPointer bool) FieldInfo {
+	goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
+	if isPointer {
+		goType = "*" + goType
+	}
+	return FieldInfo{
+		Name:            name,
+		GoType:          goType,
+		ArrowType:       fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltArrowType(eltInfo)),
+		ArrowBuilder:    "*array.FixedSizeListBuilder",
+		IsFixedSizeList: true,
+		FixedSizeLen:    lenStr,
+		EltInfo:         &eltInfo,
+		IsPointer:       isPointer,
+	}
+}
+
+// buildByteSliceFieldInfo constructs a FieldInfo for a []byte field (Arrow Binary).
+func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
+	goType := "[]byte"
+	if isPointer {
+		goType = "*[]byte"
+	}
+	return FieldInfo{
+		Name:         name,
+		GoType:       goType,
+		ArrowType:    "arrow.BinaryTypes.Binary",
+		ArrowBuilder: "*array.BinaryBuilder",
+		CastType:     "[]byte",
+		IsPointer:    isPointer,
+	}
+}
+
+// buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.
+func buildMarshalFieldInfo(name string, goType string, method string, isPointer bool) FieldInfo {
+	arrowType, arrowBuilder := marshalMethodArrowType(method)
+	return FieldInfo{
+		Name:          name,
+		GoType:        goType,
+		ArrowType:     arrowType,
+		ArrowBuilder:  arrowBuilder,
+		MarshalMethod: method,
+		IsPointer:     isPointer,
+	}
 }
