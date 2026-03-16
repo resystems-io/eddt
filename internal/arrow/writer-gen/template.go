@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"go/format"
 	"os"
-	"sort"
-	"strings"
 	"text/template"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
@@ -235,14 +233,9 @@ type templateData struct {
 // If the external type does not implement any of these interfaces, the field is skipped
 // and a warning is emitted during generation.
 func (g *Generator) Run(outPkgNameOverride string) error {
-	// Parse pkg aliases early so bad input is caught before touching the filesystem.
-	pkgAliases := map[string]string{}
-	for _, a := range g.PkgAliases {
-		parts := strings.SplitN(a, "=", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return fmt.Errorf("invalid --pkg-alias %q: expected format 'original=replacement'", a)
-		}
-		pkgAliases[parts[0]] = parts[1]
+	pkgAliases, err := gencommon.ParsePkgAliases(g.PkgAliases)
+	if err != nil {
+		return err
 	}
 
 	parsedPkgName, _, structs, err := g.Parse()
@@ -250,95 +243,12 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
-	if len(structs) == 0 {
-		return fmt.Errorf("no target structs found matching specifications")
-	}
-
-	// Check for struct name collisions across packages — same-named structs
-	// would produce duplicate generated helper functions (e.g. AppendInnerStruct).
-	if err := gencommon.DetectStructNameCollisions(structs); err != nil {
+	// Writer-gen always imports arrow, array, and memory.
+	reserved := map[string]bool{"arrow": true, "array": true, "memory": true}
+	packageName, imports, err := gencommon.ResolveOutputContext(parsedPkgName, structs, outPkgNameOverride, pkgAliases, reserved)
+	if err != nil {
 		return err
 	}
-
-	// Determine output package name.
-	packageName := outPkgNameOverride
-	if packageName == "" {
-		packageName = parsedPkgName
-		if packageName == "" {
-			return fmt.Errorf("could not determine package name from input; use --pkg-name to specify one explicitly")
-		}
-	}
-
-	// resolveAlias returns the alias for a given package import path, or "".
-	// The key must be the full Go import path — no short-name or suffix matching.
-	resolveAlias := func(pkgPath string) string {
-		if alias, ok := pkgAliases[pkgPath]; ok {
-			return alias
-		}
-		return ""
-	}
-
-	// Build the import map: collect unique packages that need to be imported.
-	// A package needs importing when:
-	//   - its name differs from the output package name, OR
-	//   - an alias mapping explicitly targets it (forces import even if names match).
-	type importKey = string // pkgPath
-	importMap := map[importKey]gencommon.ImportInfo{}
-	for _, si := range structs {
-		if si.PkgPath == "" {
-			continue
-		}
-		if _, exists := importMap[si.PkgPath]; exists {
-			continue
-		}
-		alias := resolveAlias(si.PkgPath)
-		if si.PkgName != packageName || alias != "" {
-			importMap[si.PkgPath] = gencommon.ImportInfo{
-				Path:  si.PkgPath,
-				Name:  si.PkgName,
-				Alias: alias,
-			}
-		}
-	}
-
-	// Convert import map to a sorted slice for deterministic output.
-	imports := make([]gencommon.ImportInfo, 0, len(importMap))
-	for _, imp := range importMap {
-		imports = append(imports, imp)
-	}
-	sort.Slice(imports, func(i, j int) bool { return imports[i].Path < imports[j].Path })
-
-	// Validate that reserved Arrow import names don't collide with the output package or any alias.
-	hardReserved := map[string]bool{"arrow": true, "array": true, "memory": true}
-	for _, imp := range imports {
-		effectiveName := imp.Name
-		if imp.Alias != "" {
-			effectiveName = imp.Alias
-		}
-		if hardReserved[effectiveName] {
-			return fmt.Errorf("imported package alias/name %q collides with a required Arrow import; use --pkg-alias to choose a different alias", effectiveName)
-		}
-	}
-	if hardReserved[packageName] {
-		return fmt.Errorf("output package name %q collides with an import used in generated code; choose a different --pkg-name", packageName)
-	}
-
-	// Set Qualifier on each StructInfo based on whether it needs an import.
-	for i := range structs {
-		si := &structs[i]
-		if imp, ok := importMap[si.PkgPath]; ok {
-			qualifier := imp.Name
-			if imp.Alias != "" {
-				qualifier = imp.Alias
-			}
-			si.Qualifier = qualifier + "."
-		}
-		// else: struct is in the output package — no qualifier needed.
-	}
-
-	// Filter unexported fields from cross-package structs — accessing unexported
-	// fields from another package is a compile error in the generated code.
-	gencommon.FilterUnexportedFields(structs, packageName)
 
 	data := templateData{
 		PackageName: packageName,

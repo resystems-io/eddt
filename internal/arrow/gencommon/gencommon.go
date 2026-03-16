@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -32,6 +33,7 @@ type FieldInfo struct {
 	IsStruct        bool       // True if the field itself is a struct or pointer-to-struct
 	IsPointer       bool       // True if the field is a pointer
 	StructName      string     // If IsStruct=true, the name of the struct
+	StructQualifier string     // If IsStruct=true, the package qualifier (e.g. "otherpkg." or "")
 	CastType        string     // The Go type used when appending to the builder
 	IsFixedSizeList bool       // True if the field is a fixed-size array ([N]T)
 	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
@@ -444,5 +446,153 @@ func FilterUnexportedFields(structs []StructInfo, outputPkg string) {
 			filtered = append(filtered, f)
 		}
 		si.Fields = filtered
+	}
+}
+
+// -- output-context: Cross-package resolution pipeline shared by both generators.
+
+// ParsePkgAliases validates and parses raw "importpath=alias" strings into a map.
+func ParsePkgAliases(raw []string) (map[string]string, error) {
+	aliases := make(map[string]string, len(raw))
+	for _, a := range raw {
+		parts := strings.SplitN(a, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("invalid --pkg-alias %q: expected format 'original=replacement'", a)
+		}
+		aliases[parts[0]] = parts[1]
+	}
+	return aliases, nil
+}
+
+// ResolveOutputContext prepares parsed StructInfo results for template-based code
+// generation in the given output package. It performs the complete cross-package
+// resolution pipeline:
+//
+//  1. Determines the output package name (override or auto-detected from parsedPkgName).
+//  2. Detects struct name collisions across packages.
+//  3. Builds the import map from struct package origins vs the output package.
+//  4. Validates that no import name/alias collides with the reserved set.
+//  5. Sets Qualifier on each StructInfo for cross-package type references.
+//  6. Propagates StructQualifier to FieldInfo entries (recursively) for struct-typed fields.
+//  7. Filters unexported fields from cross-package structs.
+//
+// pkgAliases maps full import paths to desired aliases. reservedNames is the set
+// of identifier names already claimed by generator-specific imports (e.g.
+// {"arrow": true, "array": true, "memory": true} for writer-gen).
+//
+// Returns the determined package name and a sorted imports list.
+// Mutates structs in place (Qualifier, StructQualifier, field filtering).
+func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOverride string, pkgAliases map[string]string, reservedNames map[string]bool) (string, []ImportInfo, error) {
+	if len(structs) == 0 {
+		return "", nil, fmt.Errorf("no target structs found matching specifications")
+	}
+
+	// Detect struct name collisions across packages.
+	if err := DetectStructNameCollisions(structs); err != nil {
+		return "", nil, err
+	}
+
+	// Determine output package name.
+	packageName := outPkgOverride
+	if packageName == "" {
+		packageName = parsedPkgName
+		if packageName == "" {
+			return "", nil, fmt.Errorf("could not determine package name from input; use --pkg-name to specify one explicitly")
+		}
+	}
+
+	// resolveAlias returns the alias for a given package import path, or "".
+	resolveAlias := func(pkgPath string) string {
+		if alias, ok := pkgAliases[pkgPath]; ok {
+			return alias
+		}
+		return ""
+	}
+
+	// Build the import map: collect unique packages that need to be imported.
+	// A package needs importing when its name differs from the output package
+	// name, or an alias mapping explicitly targets it.
+	type importKey = string
+	importMap := map[importKey]ImportInfo{}
+	for _, si := range structs {
+		if si.PkgPath == "" {
+			continue
+		}
+		if _, exists := importMap[si.PkgPath]; exists {
+			continue
+		}
+		alias := resolveAlias(si.PkgPath)
+		if si.PkgName != packageName || alias != "" {
+			importMap[si.PkgPath] = ImportInfo{
+				Path:  si.PkgPath,
+				Name:  si.PkgName,
+				Alias: alias,
+			}
+		}
+	}
+
+	// Convert import map to a sorted slice for deterministic output.
+	imports := make([]ImportInfo, 0, len(importMap))
+	for _, imp := range importMap {
+		imports = append(imports, imp)
+	}
+	sort.Slice(imports, func(i, j int) bool { return imports[i].Path < imports[j].Path })
+
+	// Validate that reserved import names don't collide with any import or the output package.
+	for _, imp := range imports {
+		effectiveName := imp.Name
+		if imp.Alias != "" {
+			effectiveName = imp.Alias
+		}
+		if reservedNames[effectiveName] {
+			return "", nil, fmt.Errorf("imported package alias/name %q collides with a required Arrow import; use --pkg-alias to choose a different alias", effectiveName)
+		}
+	}
+	if reservedNames[packageName] {
+		return "", nil, fmt.Errorf("output package name %q collides with an import used in generated code; choose a different --pkg-name", packageName)
+	}
+
+	// Set Qualifier on each StructInfo based on whether it needs an import.
+	for i := range structs {
+		si := &structs[i]
+		if imp, ok := importMap[si.PkgPath]; ok {
+			qualifier := imp.Name
+			if imp.Alias != "" {
+				qualifier = imp.Alias
+			}
+			si.Qualifier = qualifier + "."
+		}
+	}
+
+	// Build a lookup from struct name → qualifier for propagation to FieldInfo.
+	structQualifiers := map[string]string{}
+	for _, si := range structs {
+		structQualifiers[si.Name] = si.Qualifier
+	}
+
+	// Propagate StructQualifier to all struct-typed FieldInfo entries (recursively).
+	for i := range structs {
+		for j := range structs[i].Fields {
+			setStructQualifiers(&structs[i].Fields[j], structQualifiers)
+		}
+	}
+
+	// Filter unexported fields from cross-package structs.
+	FilterUnexportedFields(structs, packageName)
+
+	return packageName, imports, nil
+}
+
+// setStructQualifiers recursively sets StructQualifier on struct-typed fields
+// and traverses EltInfo/KeyInfo trees for nested containers.
+func setStructQualifiers(fi *FieldInfo, qualifiers map[string]string) {
+	if fi.IsStruct && fi.StructName != "" {
+		fi.StructQualifier = qualifiers[fi.StructName]
+	}
+	if fi.EltInfo != nil {
+		setStructQualifiers(fi.EltInfo, qualifiers)
+	}
+	if fi.KeyInfo != nil {
+		setStructQualifiers(fi.KeyInfo, qualifiers)
 	}
 }
