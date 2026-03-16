@@ -372,6 +372,280 @@ func TestNestedListRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("fixed-size-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Packet struct {
+	ID     int32
+	Header [4]byte
+	Scores [3]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Packet"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestFixedSizeRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPacketArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-zero values
+	row0 := Packet{
+		ID:     1,
+		Header: [4]byte{0xDE, 0xAD, 0xBE, 0xEF},
+		Scores: [3]int32{10, 20, 30},
+	}
+	writer.Append(&row0)
+
+	// Row 1: Go zero values
+	row1 := Packet{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewPacketArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewPacketArrowReader: %v", err)
+	}
+
+	// --- Row 0: non-zero values ---
+	var got Packet
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if got.Header != [4]byte{0xDE, 0xAD, 0xBE, 0xEF} {
+		t.Errorf("row0 Header: got %v, want [DE AD BE EF]", got.Header)
+	}
+	if got.Scores != [3]int32{10, 20, 30} {
+		t.Errorf("row0 Scores: got %v, want [10 20 30]", got.Scores)
+	}
+
+	// --- Row 1: zero values ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Header != [4]byte{} {
+		t.Errorf("row1 Header: got %v, want zero", got.Header)
+	}
+	if got.Scores != [3]int32{} {
+		t.Errorf("row1 Scores: got %v, want zero", got.Scores)
+	}
+
+	// --- Zero-value overwrite: load row 0 then row 1, verify no dirty reads ---
+	reader.LoadRow(0, &got)
+	if got.Header != [4]byte{0xDE, 0xAD, 0xBE, 0xEF} {
+		t.Fatal("expected non-zero Header after loading row 0")
+	}
+	reader.LoadRow(1, &got)
+	if got.Header != [4]byte{} {
+		t.Errorf("dirty read: Header should be zero after loading row 1, got %v", got.Header)
+	}
+	if got.Scores != [3]int32{} {
+		t.Errorf("dirty read: Scores should be zero after loading row 1, got %v", got.Scores)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-fixed-size.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("nested-fixed-size-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Matrix struct {
+	ID   int32
+	Grid [2][3]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Matrix"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNestedFixedSizeRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMatrixArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: nested fixed-size values
+	row0 := Matrix{
+		ID:   1,
+		Grid: [2][3]int32{{1, 2, 3}, {4, 5, 6}},
+	}
+	writer.Append(&row0)
+
+	// Row 1: Go zero value
+	row1 := Matrix{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewMatrixArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMatrixArrowReader: %v", err)
+	}
+
+	// --- Row 0: nested values ---
+	var got Matrix
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Grid, [2][3]int32{{1, 2, 3}, {4, 5, 6}}) {
+		t.Errorf("row0 Grid: got %v, want [[1 2 3] [4 5 6]]", got.Grid)
+	}
+
+	// --- Row 1: zero value ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Grid != [2][3]int32{} {
+		t.Errorf("row1 Grid: got %v, want zero", got.Grid)
+	}
+
+	// --- Zero-value overwrite: load row 0 then row 1 ---
+	reader.LoadRow(0, &got)
+	if got.Grid == [2][3]int32{} {
+		t.Fatal("expected non-zero Grid after loading row 0")
+	}
+	reader.LoadRow(1, &got)
+	if got.Grid != [2][3]int32{} {
+		t.Errorf("dirty read: Grid should be zero after loading row 1, got %v", got.Grid)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-nested-fixed-size.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("mixed-list-fixed-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Mixed struct {
+	ID   int32
+	Rows [][3]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Mixed"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMixedListFixedRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMixedArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: list of fixed-size arrays
+	row0 := Mixed{
+		ID:   1,
+		Rows: [][3]int32{{1, 2, 3}, {4, 5, 6}},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil list (null)
+	row1 := Mixed{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: empty non-nil list
+	row2 := Mixed{
+		ID:   3,
+		Rows: [][3]int32{},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewMixedArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMixedArrowReader: %v", err)
+	}
+
+	// --- Row 0: list of fixed-size arrays ---
+	var got Mixed
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Rows, [][3]int32{{1, 2, 3}, {4, 5, 6}}) {
+		t.Errorf("row0 Rows: got %v, want [[1 2 3] [4 5 6]]", got.Rows)
+	}
+
+	// --- Row 1: nil list ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Rows != nil {
+		t.Errorf("row1 Rows: got %v, want nil", got.Rows)
+	}
+
+	// --- Row 2: empty non-nil list ---
+	reader.LoadRow(2, &got)
+	if got.ID != 3 {
+		t.Errorf("row2 ID: got %d, want 3", got.ID)
+	}
+	if got.Rows == nil || len(got.Rows) != 0 {
+		t.Errorf("row2 Rows: got %v, want non-nil empty slice", got.Rows)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-mixed-list-fixed.tar.gz", tmpDir)
+		}
+	})
+
 	t.Run("pointer-to-primitive-round-trip", func(t *testing.T) {
 		goCode := `package dummy
 

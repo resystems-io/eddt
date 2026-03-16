@@ -266,6 +266,113 @@ type ListStruct struct {
 	}
 }
 
+func TestGenerator_ParseFixedSizeListFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	testCode := `package testpkg
+
+type FixedStruct struct {
+	Header [4]byte
+	Scores [3]int32
+	Matrix [3][2]int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test_structs.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"FixedStruct"}, "out.go", false, nil)
+
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	if len(structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(structs))
+	}
+
+	expected := gencommon.StructInfo{
+		Name:    "FixedStruct",
+		PkgPath: "testpkg",
+		PkgName: "testpkg",
+		Fields: []gencommon.FieldInfo{
+			{
+				Name:            "Header",
+				GoType:          "[4]byte",
+				ArrowType:       "arrow.FixedSizeListOfNonNullable(4, arrow.PrimitiveTypes.Uint8)",
+				ArrowBuilder:    "*array.FixedSizeListBuilder",
+				IsFixedSizeList: true,
+				FixedSizeLen:    "4",
+				ArrowArrayType:  "*array.FixedSizeList",
+				ZeroExpr:        "[4]byte{}",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "byte",
+					ArrowType:      "arrow.PrimitiveTypes.Uint8",
+					ArrowBuilder:   "*array.Uint8Builder",
+					CastType:       "uint8",
+					ArrowArrayType: "*array.Uint8",
+					ValueMethod:    "Value",
+					ZeroExpr:       "0",
+				},
+			},
+			{
+				Name:            "Scores",
+				GoType:          "[3]int32",
+				ArrowType:       "arrow.FixedSizeListOfNonNullable(3, arrow.PrimitiveTypes.Int32)",
+				ArrowBuilder:    "*array.FixedSizeListBuilder",
+				IsFixedSizeList: true,
+				FixedSizeLen:    "3",
+				ArrowArrayType:  "*array.FixedSizeList",
+				ZeroExpr:        "[3]int32{}",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "int32",
+					ArrowType:      "arrow.PrimitiveTypes.Int32",
+					ArrowBuilder:   "*array.Int32Builder",
+					CastType:       "int32",
+					ArrowArrayType: "*array.Int32",
+					ValueMethod:    "Value",
+					ZeroExpr:       "0",
+				},
+			},
+			{
+				Name:            "Matrix",
+				GoType:          "[3][2]int32",
+				ArrowType:       "arrow.FixedSizeListOfNonNullable(3, arrow.FixedSizeListOfNonNullable(2, arrow.PrimitiveTypes.Int32))",
+				ArrowBuilder:    "*array.FixedSizeListBuilder",
+				IsFixedSizeList: true,
+				FixedSizeLen:    "3",
+				ArrowArrayType:  "*array.FixedSizeList",
+				ZeroExpr:        "[3][2]int32{}",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:          "[2]int32",
+					ArrowType:       "arrow.FixedSizeListOfNonNullable(2, arrow.PrimitiveTypes.Int32)",
+					ArrowBuilder:    "*array.FixedSizeListBuilder",
+					IsFixedSizeList: true,
+					FixedSizeLen:    "2",
+					ArrowArrayType:  "*array.FixedSizeList",
+					ZeroExpr:        "[2]int32{}",
+					EltInfo: &gencommon.FieldInfo{
+						GoType:         "int32",
+						ArrowType:      "arrow.PrimitiveTypes.Int32",
+						ArrowBuilder:   "*array.Int32Builder",
+						CastType:       "int32",
+						ArrowArrayType: "*array.Int32",
+						ValueMethod:    "Value",
+						ZeroExpr:       "0",
+					},
+				},
+			},
+		},
+	}
+
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestGenerator_RunReservedNames verifies that reader-gen uses "arrow" and "array"
 // (but not "memory") as reserved names, unlike writer-gen which also reserves "memory".
 func TestGenerator_RunReservedNames(t *testing.T) {

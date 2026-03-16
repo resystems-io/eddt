@@ -68,7 +68,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 }
 {{end}}
 {{- define "colField" -}}
-{{- if and .IsList (not .IsPointer)}}
+{{- if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	col{{.Name}} {{.ArrowArrayType}}
@@ -80,7 +80,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $info := .Info -}}
 {{- $d := .Depth}}
 	col{{$name}}{{repeat "Elts" $d}} {{$info.ArrowArrayType}}
-{{- if $info.EltInfo.IsList}}
+{{- if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 {{- template "colFieldList" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
 {{- else}}
 	col{{$name}}{{repeat "Elts" (add $d 1)}} {{$info.EltInfo.ArrowArrayType}}
@@ -89,7 +89,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 
 {{- define "initField" -}}
 {{- $f := .Field -}}
-{{- if and $f.IsList (not $f.IsPointer)}}
+{{- if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
 {{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
@@ -122,7 +122,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $parentCol := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
 {{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
 {{- $childType := $info.EltInfo.ArrowArrayType -}}
-{{- if $info.EltInfo.IsList}}
+{{- if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 		{
 			elts, ok := {{$parentCol}}.ListValues().({{$childType}})
 			if !ok {
@@ -145,6 +145,8 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- define "loadField" -}}
 {{- if and .IsList (not .IsPointer)}}
 {{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
+{{- else if and .IsFixedSizeList (not .IsPointer)}}
+{{- template "loadFieldFixedList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
 {{- else if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	if r.col{{.Name}} != nil {
 		if r.col{{.Name}}.IsNull(i) {
@@ -202,6 +204,50 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 			}
 			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
 {{- if $info.EltInfo.IsList}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = nil
+				} else {
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+				}
+{{- else if $info.EltInfo.IsFixedSizeList}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- else}}
+				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+{{- end}}
+			}
+{{- end}}
+
+{{- define "loadFieldFixedList" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target}}
+	if r.col{{$name}} != nil {
+		if r.col{{$name}}.IsNull(i) {
+			{{$target}} = {{$info.ZeroExpr}}
+		} else {
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+		}
+	}
+{{- end}}
+
+{{- define "loadFieldFixedListInner" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target -}}
+{{- $d := .Depth -}}
+{{- $idx := .IdxExpr -}}
+{{- $colName := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
+{{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
+{{- $s := printf "s%d" $d -}}
+{{- $j := printf "j%d" $d}}
+			{{$s}}, _ := {{$colName}}.ValueOffsets({{$idx}})
+			for {{$j}} := 0; {{$j}} < {{$info.FixedSizeLen}}; {{$j}}++ {
+{{- if $info.EltInfo.IsFixedSizeList}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- else if $info.EltInfo.IsList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = nil
