@@ -1,6 +1,7 @@
 package readergen
 
 import (
+	"strings"
 	"text/template"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
@@ -67,14 +68,30 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 }
 {{end}}
 {{- define "colField" -}}
-{{- if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- if and .IsList (not .IsPointer)}}
+{{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
+{{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	col{{.Name}} {{.ArrowArrayType}}
+{{- end}}
+{{- end}}
+
+{{- define "colFieldList" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $d := .Depth}}
+	col{{$name}}{{repeat "Elts" $d}} {{$info.ArrowArrayType}}
+{{- if $info.EltInfo.IsList}}
+{{- template "colFieldList" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+{{- else}}
+	col{{$name}}{{repeat "Elts" (add $d 1)}} {{$info.EltInfo.ArrowArrayType}}
 {{- end}}
 {{- end}}
 
 {{- define "initField" -}}
 {{- $f := .Field -}}
-{{- if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
+{{- if and $f.IsList (not $f.IsPointer)}}
+{{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
 		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
 		if !ok {
@@ -85,8 +102,50 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- end}}
 {{- end}}
 
+{{- define "initFieldList" -}}
+{{- $name := .Name -}}
+{{- $info := .Info}}
+	if indices := schema.FieldIndices("{{$name}}"); len(indices) > 0 {
+		col, ok := rec.Column(indices[0]).({{$info.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("column %q: expected {{$info.ArrowArrayType}}, got %T", "{{$name}}", rec.Column(indices[0]))
+		}
+		r.col{{$name}} = col
+{{- template "initFieldListChild" dict "Name" $name "Info" $info "Depth" 0}}
+	}
+{{- end}}
+
+{{- define "initFieldListChild" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $d := .Depth -}}
+{{- $parentCol := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
+{{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
+{{- $childType := $info.EltInfo.ArrowArrayType -}}
+{{- if $info.EltInfo.IsList}}
+		{
+			elts, ok := {{$parentCol}}.ListValues().({{$childType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q child: expected {{$childType}}, got %T", "{{$name}}", {{$parentCol}}.ListValues())
+			}
+			{{$childCol}} = elts
+{{- template "initFieldListChild" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+		}
+{{- else}}
+		{
+			elts, ok := {{$parentCol}}.ListValues().({{$childType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q child: expected {{$childType}}, got %T", "{{$name}}", {{$parentCol}}.ListValues())
+			}
+			{{$childCol}} = elts
+		}
+{{- end}}
+{{- end}}
+
 {{- define "loadField" -}}
-{{- if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- if and .IsList (not .IsPointer)}}
+{{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
+{{- else if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	if r.col{{.Name}} != nil {
 		if r.col{{.Name}}.IsNull(i) {
 			out.{{.Name}} = {{.ZeroExpr}}
@@ -108,6 +167,52 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 	}
 {{- end}}
 {{- end}}
+
+{{- define "loadFieldList" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target}}
+	if r.col{{$name}} != nil {
+		if r.col{{$name}}.IsNull(i) {
+			{{$target}} = nil
+		} else {
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+		}
+	}
+{{- end}}
+
+{{- define "loadFieldListInner" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target -}}
+{{- $d := .Depth -}}
+{{- $idx := .IdxExpr -}}
+{{- $colName := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
+{{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
+{{- $s := printf "s%d" $d -}}
+{{- $e := printf "e%d" $d -}}
+{{- $n := printf "n%d" $d -}}
+{{- $j := printf "j%d" $d}}
+			{{$s}}, {{$e}} := {{$colName}}.ValueOffsets({{$idx}})
+			{{$n}} := int({{$e}} - {{$s}})
+			if {{$n}} > 0 && cap({{$target}}) >= {{$n}} {
+				{{$target}} = {{$target}}[:{{$n}}]
+			} else {
+				{{$target}} = make({{$info.GoType}}, {{$n}})
+			}
+			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
+{{- if $info.EltInfo.IsList}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = nil
+				} else {
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+				}
+{{- else}}
+				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+{{- end}}
+			}
+{{- end}}
 `
 
 var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap{
@@ -124,6 +229,8 @@ var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap
 		}
 		return s
 	},
+	"add":    func(a, b int) int { return a + b },
+	"repeat": func(s string, n int) string { return strings.Repeat(s, n) },
 }).Parse(readerTemplateStr))
 
 type templateData struct {

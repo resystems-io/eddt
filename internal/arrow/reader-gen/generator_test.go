@@ -163,6 +163,109 @@ type PtrStruct struct {
 	}
 }
 
+func TestGenerator_ParseListFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	testCode := `package testpkg
+
+type ListStruct struct {
+	Tags  []string
+	Grid  [][]int32
+	Bytes [][]byte
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test_structs.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"ListStruct"}, "out.go", false, nil)
+
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	if len(structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(structs))
+	}
+
+	expected := gencommon.StructInfo{
+		Name:    "ListStruct",
+		PkgPath: "testpkg",
+		PkgName: "testpkg",
+		Fields: []gencommon.FieldInfo{
+			{
+				Name:           "Tags",
+				GoType:         "[]string",
+				ArrowType:      "arrow.ListOf(arrow.BinaryTypes.String)",
+				ArrowBuilder:   "*array.ListBuilder",
+				IsList:         true,
+				ArrowArrayType: "*array.List",
+				ZeroExpr:       "nil",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "string",
+					ArrowType:      "arrow.BinaryTypes.String",
+					ArrowBuilder:   "*array.StringBuilder",
+					CastType:       "string",
+					ArrowArrayType: "*array.String",
+					ValueMethod:    "Value",
+					ZeroExpr:       `""`,
+				},
+			},
+			{
+				Name:           "Grid",
+				GoType:         "[][]int32",
+				ArrowType:      "arrow.ListOf(arrow.ListOf(arrow.PrimitiveTypes.Int32))",
+				ArrowBuilder:   "*array.ListBuilder",
+				IsList:         true,
+				ArrowArrayType: "*array.List",
+				ZeroExpr:       "nil",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "[]int32",
+					ArrowType:      "arrow.ListOf(arrow.PrimitiveTypes.Int32)",
+					ArrowBuilder:   "*array.ListBuilder",
+					IsList:         true,
+					ArrowArrayType: "*array.List",
+					ZeroExpr:       "nil",
+					EltInfo: &gencommon.FieldInfo{
+						GoType:         "int32",
+						ArrowType:      "arrow.PrimitiveTypes.Int32",
+						ArrowBuilder:   "*array.Int32Builder",
+						CastType:       "int32",
+						ArrowArrayType: "*array.Int32",
+						ValueMethod:    "Value",
+						ZeroExpr:       "0",
+					},
+				},
+			},
+			{
+				Name:           "Bytes",
+				GoType:         "[][]byte",
+				ArrowType:      "arrow.ListOf(arrow.BinaryTypes.Binary)",
+				ArrowBuilder:   "*array.ListBuilder",
+				IsList:         true,
+				ArrowArrayType: "*array.List",
+				ZeroExpr:       "nil",
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "[]byte",
+					ArrowType:      "arrow.BinaryTypes.Binary",
+					ArrowBuilder:   "*array.BinaryBuilder",
+					CastType:       "[]byte",
+					ArrowArrayType: "*array.Binary",
+					ValueMethod:    "Value",
+					ZeroExpr:       "nil",
+				},
+			},
+		},
+	}
+
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestGenerator_RunReservedNames verifies that reader-gen uses "arrow" and "array"
 // (but not "memory") as reserved names, unlike writer-gen which also reserves "memory".
 func TestGenerator_RunReservedNames(t *testing.T) {

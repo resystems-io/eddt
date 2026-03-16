@@ -148,6 +148,230 @@ func TestPrimitiveRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("list-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type ListStruct struct {
+	ID   int32
+	Tags []string
+	Nums []int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"ListStruct"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+	"unsafe"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestListRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewListStructArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-empty lists
+	row0 := ListStruct{
+		ID:   1,
+		Tags: []string{"admin", "user"},
+		Nums: []int32{10, 20, 30},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil lists (null)
+	row1 := ListStruct{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: empty non-nil lists
+	row2 := ListStruct{
+		ID:   3,
+		Tags: []string{},
+		Nums: []int32{},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewListStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewListStructArrowReader: %v", err)
+	}
+
+	// --- Row 0: non-empty lists ---
+	var got ListStruct
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Tags, []string{"admin", "user"}) {
+		t.Errorf("row0 Tags: got %v, want [admin user]", got.Tags)
+	}
+	if !reflect.DeepEqual(got.Nums, []int32{10, 20, 30}) {
+		t.Errorf("row0 Nums: got %v, want [10 20 30]", got.Nums)
+	}
+
+	// --- R6 reuse: save backing array address, reload, verify same address ---
+	tagAddr := uintptr(unsafe.Pointer(&got.Tags[0]))
+	reader.LoadRow(0, &got)
+	tagAddr2 := uintptr(unsafe.Pointer(&got.Tags[0]))
+	if tagAddr != tagAddr2 {
+		t.Errorf("R6 reuse: Tags backing array changed (%x -> %x)", tagAddr, tagAddr2)
+	}
+
+	// --- Row 1: nil lists ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Tags != nil {
+		t.Errorf("row1 Tags: got %v, want nil", got.Tags)
+	}
+	if got.Nums != nil {
+		t.Errorf("row1 Nums: got %v, want nil", got.Nums)
+	}
+
+	// --- Null clearing: load row 0 then row 1 into same struct ---
+	reader.LoadRow(0, &got)
+	if got.Tags == nil {
+		t.Fatal("expected non-nil Tags after loading row 0")
+	}
+	reader.LoadRow(1, &got)
+	if got.Tags != nil {
+		t.Errorf("null clearing: Tags should be nil after loading null row, got %v", got.Tags)
+	}
+
+	// --- Row 2: empty non-nil lists ---
+	reader.LoadRow(2, &got)
+	if got.ID != 3 {
+		t.Errorf("row2 ID: got %d, want 3", got.ID)
+	}
+	if got.Tags == nil || len(got.Tags) != 0 {
+		t.Errorf("row2 Tags: got %v, want non-nil empty slice", got.Tags)
+	}
+	if got.Nums == nil || len(got.Nums) != 0 {
+		t.Errorf("row2 Nums: got %v, want non-nil empty slice", got.Nums)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-list.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("nested-list-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Matrix struct {
+	ID   int32
+	Grid [][]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Matrix"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNestedListRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMatrixArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: nested list with values
+	row0 := Matrix{
+		ID:   1,
+		Grid: [][]int32{{1, 2, 3}, {4, 5}},
+	}
+	writer.Append(&row0)
+
+	// Row 1: null outer list
+	row1 := Matrix{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: nil inner + non-nil inner
+	row2 := Matrix{
+		ID:   3,
+		Grid: [][]int32{nil, {7}},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewMatrixArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMatrixArrowReader: %v", err)
+	}
+
+	// --- Row 0: nested list ---
+	var got Matrix
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Grid, [][]int32{{1, 2, 3}, {4, 5}}) {
+		t.Errorf("row0 Grid: got %v, want [[1 2 3] [4 5]]", got.Grid)
+	}
+
+	// --- Row 1: null outer ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Grid != nil {
+		t.Errorf("row1 Grid: got %v, want nil", got.Grid)
+	}
+
+	// --- Row 2: nil inner + non-nil inner ---
+	reader.LoadRow(2, &got)
+	if got.ID != 3 {
+		t.Errorf("row2 ID: got %d, want 3", got.ID)
+	}
+	if got.Grid == nil {
+		t.Fatal("row2 Grid should not be nil")
+	}
+	if len(got.Grid) != 2 {
+		t.Fatalf("row2 Grid: got len %d, want 2", len(got.Grid))
+	}
+	if got.Grid[0] != nil {
+		t.Errorf("row2 Grid[0]: got %v, want nil", got.Grid[0])
+	}
+	if !reflect.DeepEqual(got.Grid[1], []int32{7}) {
+		t.Errorf("row2 Grid[1]: got %v, want [7]", got.Grid[1])
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-nested-list.tar.gz", tmpDir)
+		}
+	})
+
 	t.Run("pointer-to-primitive-round-trip", func(t *testing.T) {
 		goCode := `package dummy
 
