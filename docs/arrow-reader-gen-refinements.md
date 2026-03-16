@@ -49,14 +49,14 @@ Based on the `system-refinement` process, this work is divided into incremental 
 ### Phase 1: Refactoring (Shared Engine)
 > **Note:** This phase extracts the shared engine before the reader skeleton exists. The writer's parser is mature and the reader's needs are well-specified (F2), but a second pass on the `gencommon` boundary may be needed after Phase 2 once the reader template's actual consumption patterns are known.
 
-- [ ] **F1: Extract `gencommon`:** Move `StructInfo`, `FieldInfo`, `loadPackages()`, and AST resolution logic from `writer-gen/generator.go` to `internal/arrow/gencommon`.
+- [x] **F1: Extract `gencommon`:** Move `StructInfo`, `FieldInfo`, `loadPackages()`, and AST resolution logic from `writer-gen/generator.go` to `internal/arrow/gencommon`.
 - [ ] **F2: Augment `FieldInfo`:** Add reader-specific fields to `FieldInfo`. The following are needed for the reader template:
   - `ArrowArrayType` — concrete array type for downcast (e.g., `*array.Int32`, `*array.List`)
   - `ValueMethod` — extraction method (e.g., `.Value(i)`, `.ValueStr(i)`)
   - `UnmarshalMethod` — reciprocal of `MarshalMethod` (e.g., `UnmarshalText`, `UnmarshalBinary`; empty for Stringer-only types)
   - `ConvertBackExpr` — inverse of `ConvertMethod`; a template snippet since inverses are constructors, not methods (e.g., `time.Unix(0, %s)`)
   - `ZeroExpr` — zero-value expression for the Go type (e.g., `0`, `""`, `false`), used for R10 null handling
-- [ ] **F3: Verify `writer-gen`:** Run the existing `writer-gen` test suite to ensure the extraction did not break writer code generation.
+- [x] **F3: Verify `writer-gen`:** Run the existing `writer-gen` test suite to ensure the extraction did not break writer code generation.
 - [ ] **F4: Cross-Package Template Concerns:** Verify that the shared engine exposes sufficient information for the reader template to emit correct cross-package imports, qualify types in `LoadRow` (e.g., `out.Address = otherpkg.Address{...}`), and detect reserved-name collisions (`arrow`, `array`, `memory`). These concerns are handled by the writer today and must carry over to the reader template without duplication.
 
 ### Phase 2: Skeleton and Primitives
@@ -99,6 +99,7 @@ Based on the `system-refinement` process, this work is divided into incremental 
 
 Record completed items here with the date (check git blame for the git commit).
 
-| Date       | Item | Notes |
-|------------|------|-------|
-|            |      |       |
+| Date       | Item | Notes                                                   |
+|------------|------|---------------------------------------------------------|
+| 2026-03-16 | F1   | Extracted `internal/arrow/gencommon` with `FieldInfo`, `StructInfo`, `ImportInfo`, `Parse()`, all resolution and builder functions, `DetectStructNameCollisions`, `FilterUnexportedFields`. Writer-gen reduced to thin `Generator` wrapper + template. Five tests migrated to gencommon. |
+| 2026-03-16 | F3   | Full writer-gen test suite verified: unit tests, integration tests (DuckDB round-trip), and benchmarks all pass. |
