@@ -147,6 +147,126 @@ func TestPrimitiveRoundTrip(t *testing.T) {
 			tarball(t, "/tmp/arrow-reader-gen-primitive.tar.gz", tmpDir)
 		}
 	})
+
+	t.Run("pointer-to-primitive-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type MyID int32
+
+type PtrStruct struct {
+	ID       int32
+	OptScore *float64
+	OptValid *bool
+	OptName  *string
+	OptID    *MyID
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"PtrStruct"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"unsafe"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestPointerPrimitiveRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPtrStructArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: all pointers non-nil
+	score := 3.14
+	valid := true
+	name := "hello"
+	myID := MyID(7)
+	row0 := PtrStruct{
+		ID:       42,
+		OptScore: &score,
+		OptValid: &valid,
+		OptName:  &name,
+		OptID:    &myID,
+	}
+	writer.Append(&row0)
+
+	// Row 1: all pointers nil
+	row1 := PtrStruct{ID: 99}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 2 {
+		t.Fatalf("expected 2 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewPtrStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewPtrStructArrowReader: %v", err)
+	}
+
+	// --- Row 0: non-nil pointers ---
+	var got PtrStruct
+	reader.LoadRow(0, &got)
+
+	if got.ID != 42 {
+		t.Errorf("row0 ID: got %d, want 42", got.ID)
+	}
+	if got.OptScore == nil || *got.OptScore != 3.14 {
+		t.Errorf("row0 OptScore: got %v, want 3.14", got.OptScore)
+	}
+	if got.OptValid == nil || *got.OptValid != true {
+		t.Errorf("row0 OptValid: got %v, want true", got.OptValid)
+	}
+	if got.OptName == nil || *got.OptName != "hello" {
+		t.Errorf("row0 OptName: got %v, want hello", got.OptName)
+	}
+	if got.OptID == nil || *got.OptID != MyID(7) {
+		t.Errorf("row0 OptID: got %v, want 7", got.OptID)
+	}
+
+	// --- Row 1: nil pointers (loaded into same struct — tests null→nil clears) ---
+	reader.LoadRow(1, &got)
+
+	if got.ID != 99 {
+		t.Errorf("row1 ID: got %d, want 99", got.ID)
+	}
+	if got.OptScore != nil {
+		t.Errorf("row1 OptScore: got %v, want nil", got.OptScore)
+	}
+	if got.OptValid != nil {
+		t.Errorf("row1 OptValid: got %v, want nil", got.OptValid)
+	}
+	if got.OptName != nil {
+		t.Errorf("row1 OptName: got %v, want nil", got.OptName)
+	}
+	if got.OptID != nil {
+		t.Errorf("row1 OptID: got %v, want nil", got.OptID)
+	}
+
+	// --- R6 reuse assertion: dereference-assign reuses allocation ---
+	reader.LoadRow(0, &got)
+	if got.OptScore == nil {
+		t.Fatal("expected OptScore non-nil after reload row 0")
+	}
+	addr1 := uintptr(unsafe.Pointer(got.OptScore))
+	reader.LoadRow(0, &got)
+	addr2 := uintptr(unsafe.Pointer(got.OptScore))
+	if addr1 != addr2 {
+		t.Errorf("R6 reuse: OptScore pointer changed (%x → %x), expected same allocation", addr1, addr2)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-pointer.tar.gz", tmpDir)
+		}
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,

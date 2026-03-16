@@ -13,7 +13,9 @@ import (
 //   - Main template ("reader"): Generates per-struct reader struct, New constructor
 //     (validate-at-init with column downcast), and LoadRow method.
 //   - Sub-template ("loadField"): Emits the per-field load logic inside LoadRow.
-//     Only leaf primitives are handled (ValueMethod != "", no containers/structs/marshal/convert).
+//     Leaf primitives and pointer-to-primitives are handled (ValueMethod != "",
+//     no containers/structs/marshal/convert). Pointer fields use null→nil semantics
+//     and dereference-assign for zero-allocation reuse.
 //
 // Design:
 //   - Validate-at-init (R5): NewXxxArrowReader performs all type assertions. If a column
@@ -65,14 +67,14 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 }
 {{end}}
 {{- define "colField" -}}
-{{- if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	col{{.Name}} {{.ArrowArrayType}}
 {{- end}}
 {{- end}}
 
 {{- define "initField" -}}
 {{- $f := .Field -}}
-{{- if and $f.ValueMethod (not $f.IsPointer) (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
+{{- if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
 		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
 		if !ok {
@@ -90,6 +92,18 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 			out.{{.Name}} = {{.ZeroExpr}}
 		} else {
 			out.{{.Name}} = {{.GoType}}(r.col{{.Name}}.Value(i))
+		}
+	}
+{{- end}}
+{{- if and .ValueMethod .IsPointer (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+	if r.col{{.Name}} != nil {
+		if r.col{{.Name}}.IsNull(i) {
+			out.{{.Name}} = nil
+		} else if out.{{.Name}} == nil {
+			v := {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
+			out.{{.Name}} = &v
+		} else {
+			*out.{{.Name}} = {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
 		}
 	}
 {{- end}}
