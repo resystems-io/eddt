@@ -5,9 +5,44 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
+
+// arrowArrayType derives the concrete Arrow array type from the builder type
+// by stripping the "Builder" suffix. E.g. "*array.Int32Builder" → "*array.Int32".
+func arrowArrayType(builder string) string {
+	return strings.TrimSuffix(builder, "Builder")
+}
+
+// unmarshalForMarshal returns the reciprocal unmarshal method for a given marshal method.
+// MarshalText → UnmarshalText, MarshalBinary → UnmarshalBinary, String → "" (no inverse).
+func unmarshalForMarshal(method string) string {
+	switch method {
+	case "MarshalText":
+		return "UnmarshalText"
+	case "MarshalBinary":
+		return "UnmarshalBinary"
+	default:
+		return ""
+	}
+}
+
+// zeroExprForCast returns the Go zero-value expression for a given cast type.
+func zeroExprForCast(castType string) string {
+	switch castType {
+	case "string":
+		return `""`
+	case "bool":
+		return "false"
+	case "[]byte":
+		return "nil"
+	default:
+		// All numeric types (int8..float64, arrow.Timestamp) zero to 0.
+		return "0"
+	}
+}
 
 // -- ast-resolution: AST-based field resolution path.
 //
@@ -179,12 +214,15 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 					goTypeName = "*" + goTypeName
 				}
 				return FieldInfo{
-					Name:         name,
-					GoType:       goTypeName,
-					ArrowType:    arrowType,
-					ArrowBuilder: arrowBuilder,
-					CastType:     castType,
-					IsPointer:    isPointer,
+					Name:           name,
+					GoType:         goTypeName,
+					ArrowType:      arrowType,
+					ArrowBuilder:   arrowBuilder,
+					CastType:       castType,
+					IsPointer:      isPointer,
+					ArrowArrayType: arrowArrayType(arrowBuilder),
+					ValueMethod:    "Value",
+					ZeroExpr:       zeroExprForCast(castType),
 				}, nil
 			}
 		}
@@ -221,12 +259,15 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 	}
 
 	return FieldInfo{
-		Name:         name,
-		GoType:       goTypeName,
-		ArrowType:    arrowType,
-		ArrowBuilder: arrowBuilder,
-		CastType:     castType,
-		IsPointer:    isPointer,
+		Name:           name,
+		GoType:         goTypeName,
+		ArrowType:      arrowType,
+		ArrowBuilder:   arrowBuilder,
+		CastType:       castType,
+		IsPointer:      isPointer,
+		ArrowArrayType: arrowArrayType(arrowBuilder),
+		ValueMethod:    "Value",
+		ZeroExpr:       zeroExprForCast(castType),
 	}, nil
 }
 
@@ -442,6 +483,9 @@ func fieldInfoFromBasic(name string, basic *types.Basic, isPointer bool) (FieldI
 	return FieldInfo{
 		Name: name, GoType: goType, ArrowType: arrowType,
 		ArrowBuilder: arrowBuilder, CastType: castType, IsPointer: isPointer,
+		ArrowArrayType: arrowArrayType(arrowBuilder),
+		ValueMethod:    "Value",
+		ZeroExpr:       zeroExprForCast(castType),
 	}, nil
 }
 
@@ -463,12 +507,16 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*time.Duration"
 		}
 		return FieldInfo{
-			Name:         name,
-			GoType:       goType,
-			ArrowType:    "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder: "*array.Int64Builder",
-			CastType:     "int64",
-			IsPointer:    isPointer,
+			Name:            name,
+			GoType:          goType,
+			ArrowType:       "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:    "*array.Int64Builder",
+			CastType:        "int64",
+			IsPointer:       isPointer,
+			ArrowArrayType:  "*array.Int64",
+			ValueMethod:     "Value",
+			ConvertBackExpr: "time.Duration(%s)",
+			ZeroExpr:        "0",
 		}, true
 	}
 
@@ -478,13 +526,17 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*time.Time"
 		}
 		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:  "*array.TimestampBuilder",
-			CastType:      "arrow.Timestamp",
-			ConvertMethod: "UnixNano",
-			IsPointer:     isPointer,
+			Name:            name,
+			GoType:          goType,
+			ArrowType:       "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:    "*array.TimestampBuilder",
+			CastType:        "arrow.Timestamp",
+			ConvertMethod:   "UnixNano",
+			IsPointer:       isPointer,
+			ArrowArrayType:  "*array.Timestamp",
+			ValueMethod:     "Value",
+			ConvertBackExpr: "time.Unix(0, int64(%s))",
+			ZeroExpr:        "time.Time{}",
 		}, true
 	}
 
@@ -494,13 +546,17 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*durationpb.Duration"
 		}
 		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder:  "*array.Int64Builder",
-			CastType:      "int64",
-			ConvertMethod: "AsDuration",
-			IsPointer:     isPointer,
+			Name:            name,
+			GoType:          goType,
+			ArrowType:       "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:    "*array.Int64Builder",
+			CastType:        "int64",
+			ConvertMethod:   "AsDuration",
+			IsPointer:       isPointer,
+			ArrowArrayType:  "*array.Int64",
+			ValueMethod:     "Value",
+			ConvertBackExpr: "durationpb.New(time.Duration(%s))",
+			ZeroExpr:        "nil",
 		}, true
 	}
 
@@ -510,13 +566,17 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*timestamppb.Timestamp"
 		}
 		return FieldInfo{
-			Name:          name,
-			GoType:        goType,
-			ArrowType:     "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:  "*array.TimestampBuilder",
-			CastType:      "arrow.Timestamp",
-			ConvertMethod: "AsTime().UnixNano",
-			IsPointer:     isPointer,
+			Name:            name,
+			GoType:          goType,
+			ArrowType:       "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:    "*array.TimestampBuilder",
+			CastType:        "arrow.Timestamp",
+			ConvertMethod:   "AsTime().UnixNano",
+			IsPointer:       isPointer,
+			ArrowArrayType:  "*array.Timestamp",
+			ValueMethod:     "Value",
+			ConvertBackExpr: "timestamppb.New(time.Unix(0, int64(%s)))",
+			ZeroExpr:        "nil",
 		}, true
 	}
 
@@ -573,14 +633,21 @@ func buildStructFieldInfo(name string, structName string, pkgName string, pkgPat
 		goType = "*" + structName
 	}
 
+	zeroExpr := structName + "{}"
+	if isPointer {
+		zeroExpr = "nil"
+	}
+
 	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", structName),
-		ArrowBuilder: "*array.StructBuilder",
-		IsStruct:     true,
-		IsPointer:    isPointer,
-		StructName:   structName,
+		Name:           name,
+		GoType:         goType,
+		ArrowType:      fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", structName),
+		ArrowBuilder:   "*array.StructBuilder",
+		IsStruct:       true,
+		IsPointer:      isPointer,
+		StructName:     structName,
+		ArrowArrayType: "*array.Struct",
+		ZeroExpr:       zeroExpr,
 	}
 }
 
@@ -600,13 +667,15 @@ func buildSliceFieldInfo(name string, eltInfo FieldInfo, isPointer bool) FieldIn
 		goType = "*" + goType
 	}
 	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.ListOf(%s)", eltArrowType(eltInfo)),
-		ArrowBuilder: "*array.ListBuilder",
-		IsList:       true,
-		EltInfo:      &eltInfo,
-		IsPointer:    isPointer,
+		Name:           name,
+		GoType:         goType,
+		ArrowType:      fmt.Sprintf("arrow.ListOf(%s)", eltArrowType(eltInfo)),
+		ArrowBuilder:   "*array.ListBuilder",
+		IsList:         true,
+		EltInfo:        &eltInfo,
+		IsPointer:      isPointer,
+		ArrowArrayType: "*array.List",
+		ZeroExpr:       "nil",
 	}
 }
 
@@ -617,14 +686,16 @@ func buildMapFieldInfo(name string, keyInfo, valInfo FieldInfo, isPointer bool) 
 		goType = "*" + goType
 	}
 	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, eltArrowType(valInfo)),
-		ArrowBuilder: "*array.MapBuilder",
-		IsMap:        true,
-		KeyInfo:      &keyInfo,
-		EltInfo:      &valInfo,
-		IsPointer:    isPointer,
+		Name:           name,
+		GoType:         goType,
+		ArrowType:      fmt.Sprintf("arrow.MapOf(%s, %s)", keyInfo.ArrowType, eltArrowType(valInfo)),
+		ArrowBuilder:   "*array.MapBuilder",
+		IsMap:          true,
+		KeyInfo:        &keyInfo,
+		EltInfo:        &valInfo,
+		IsPointer:      isPointer,
+		ArrowArrayType: "*array.Map",
+		ZeroExpr:       "nil",
 	}
 }
 
@@ -643,6 +714,8 @@ func buildFixedArrayFieldInfo(name string, lenStr string, eltInfo FieldInfo, isP
 		FixedSizeLen:    lenStr,
 		EltInfo:         &eltInfo,
 		IsPointer:       isPointer,
+		ArrowArrayType:  "*array.FixedSizeList",
+		ZeroExpr:        fmt.Sprintf("[%s]%s{}", lenStr, eltInfo.GoType),
 	}
 }
 
@@ -653,12 +726,15 @@ func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
 		goType = "*[]byte"
 	}
 	return FieldInfo{
-		Name:         name,
-		GoType:       goType,
-		ArrowType:    "arrow.BinaryTypes.Binary",
-		ArrowBuilder: "*array.BinaryBuilder",
-		CastType:     "[]byte",
-		IsPointer:    isPointer,
+		Name:           name,
+		GoType:         goType,
+		ArrowType:      "arrow.BinaryTypes.Binary",
+		ArrowBuilder:   "*array.BinaryBuilder",
+		CastType:       "[]byte",
+		IsPointer:      isPointer,
+		ArrowArrayType: "*array.Binary",
+		ValueMethod:    "Value",
+		ZeroExpr:       "nil",
 	}
 }
 
@@ -666,11 +742,14 @@ func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
 func buildMarshalFieldInfo(name string, goType string, method string, isPointer bool) FieldInfo {
 	arrowType, arrowBuilder := marshalMethodArrowType(method)
 	return FieldInfo{
-		Name:          name,
-		GoType:        goType,
-		ArrowType:     arrowType,
-		ArrowBuilder:  arrowBuilder,
-		MarshalMethod: method,
-		IsPointer:     isPointer,
+		Name:            name,
+		GoType:          goType,
+		ArrowType:       arrowType,
+		ArrowBuilder:    arrowBuilder,
+		MarshalMethod:   method,
+		IsPointer:       isPointer,
+		ArrowArrayType:  arrowArrayType(arrowBuilder),
+		ValueMethod:     "Value",
+		UnmarshalMethod: unmarshalForMarshal(method),
 	}
 }

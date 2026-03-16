@@ -39,6 +39,14 @@ type FieldInfo struct {
 	ConvertMethod   string     // Method to call on the value before casting (e.g. "UnixNano" for time.Time)
 	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
 	KeyInfo         *FieldInfo // Key info for maps
+
+	// Reader-specific fields — populated during parsing for use by reader-gen templates.
+
+	ArrowArrayType  string // Concrete Arrow array type for downcast (e.g., "*array.Int32", "*array.List")
+	ValueMethod     string // Extraction method on the array type: "Value" for leaf types, "" for containers
+	UnmarshalMethod string // Reciprocal of MarshalMethod: "UnmarshalText", "UnmarshalBinary", or "" (Stringer has no inverse)
+	ConvertBackExpr string // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.Unix(0, int64(%s))")
+	ZeroExpr        string // Zero-value expression for the Go type, used for null handling (e.g., "0", `""`, "false", "nil")
 }
 
 // StructInfo contains information about a parsed Go struct.

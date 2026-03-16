@@ -50,7 +50,7 @@ Based on the `system-refinement` process, this work is divided into incremental 
 > **Note:** This phase extracts the shared engine before the reader skeleton exists. The writer's parser is mature and the reader's needs are well-specified (F2), but a second pass on the `gencommon` boundary may be needed after Phase 2 once the reader template's actual consumption patterns are known.
 
 - [x] **F1: Extract `gencommon`:** Move `StructInfo`, `FieldInfo`, `loadPackages()`, and AST resolution logic from `writer-gen/generator.go` to `internal/arrow/gencommon`.
-- [ ] **F2: Augment `FieldInfo`:** Add reader-specific fields to `FieldInfo`. The following are needed for the reader template:
+- [x] **F2: Augment `FieldInfo`:** Add reader-specific fields to `FieldInfo`. The following are needed for the reader template:
   - `ArrowArrayType` — concrete array type for downcast (e.g., `*array.Int32`, `*array.List`)
   - `ValueMethod` — extraction method (e.g., `.Value(i)`, `.ValueStr(i)`)
   - `UnmarshalMethod` — reciprocal of `MarshalMethod` (e.g., `UnmarshalText`, `UnmarshalBinary`; empty for Stringer-only types)
@@ -103,3 +103,4 @@ Record completed items here with the date (check git blame for the git commit).
 |------------|------|---------------------------------------------------------|
 | 2026-03-16 | F1   | Extracted `internal/arrow/gencommon` with `FieldInfo`, `StructInfo`, `ImportInfo`, `Parse()`, all resolution and builder functions, `DetectStructNameCollisions`, `FilterUnexportedFields`. Writer-gen reduced to thin `Generator` wrapper + template. Five tests migrated to gencommon. |
 | 2026-03-16 | F3   | Full writer-gen test suite verified: unit tests, integration tests (DuckDB round-trip), and benchmarks all pass. |
+| 2026-03-16 | F2   | Added five reader-specific fields to `FieldInfo`: `ArrowArrayType`, `ValueMethod`, `UnmarshalMethod`, `ConvertBackExpr`, `ZeroExpr`. Added three helper functions (`arrowArrayType`, `unmarshalForMarshal`, `zeroExprForCast`). Updated all 14 FieldInfo construction sites in resolve.go. Added `TestArrowArrayType`, `TestUnmarshalForMarshal`, `TestZeroExprForCast`, `TestReaderFieldsPopulated` in gencommon. Updated `TestGenerator_Parse` expected values. Full test suite verified (unit, integration, benchmarks). |
