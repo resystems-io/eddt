@@ -545,14 +545,23 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					}
 				}
 {{- else}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
 {{- if $info.EltInfo.ConvertBackExpr}}
 {{- if $info.EltInfo.ConvertBackIsPtr}}
-				{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+				} else {
+					{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(idx%d)" $childCol $d)}}
+				}
 {{- else}}
-				{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+				} else {
+					{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(idx%d)" $childCol $d)}}
+				}
 {{- end}}
 {{- else}}
-				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+				} else {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(idx{{$d}}))
+				}
 {{- end}}
 {{- end}}
 			}
@@ -627,14 +636,23 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					}
 				}
 {{- else}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
 {{- if $info.EltInfo.ConvertBackExpr}}
 {{- if $info.EltInfo.ConvertBackIsPtr}}
-				{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+				} else {
+					{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(idx%d)" $childCol $d)}}
+				}
 {{- else}}
-				{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+				} else {
+					{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(idx%d)" $childCol $d)}}
+				}
 {{- end}}
 {{- else}}
-				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+				} else {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(idx{{$d}}))
+				}
 {{- end}}
 {{- end}}
 			}
@@ -724,14 +742,23 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					}
 				}
 {{- else}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
+					{{$target}}[{{$k}}] = {{$info.EltInfo.ZeroExpr}}
 {{- if $info.EltInfo.ConvertBackExpr}}
 {{- if $info.EltInfo.ConvertBackIsPtr}}
-				{{$target}}[{{$k}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(int(%s) + %s)" $prefix $s $j)}}
+				} else {
+					{{$target}}[{{$k}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(midx%d)" $prefix $d)}}
+				}
 {{- else}}
-				{{$target}}[{{$k}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(int(%s) + %s)" $prefix $s $j)}}
+				} else {
+					{{$target}}[{{$k}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(midx%d)" $prefix $d)}}
+				}
 {{- end}}
 {{- else}}
-				{{$target}}[{{$k}}] = {{$info.EltInfo.GoType}}(r.col{{$prefix}}Items.Value(int({{$s}}) + {{$j}}))
+				} else {
+					{{$target}}[{{$k}}] = {{$info.EltInfo.GoType}}(r.col{{$prefix}}Items.Value(midx{{$d}}))
+				}
 {{- end}}
 {{- end}}
 			}

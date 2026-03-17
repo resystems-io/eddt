@@ -2374,6 +2374,95 @@ func TestStringerOnlySkip(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "TestStringerOnlySkip")
 	})
+
+	t.Run("null-elements-in-convert-list", func(t *testing.T) {
+		// Verify that null elements inside a []time.Time list produce the Go
+		// zero value (time.Time{}) rather than time.Unix(0,0) which the
+		// ConvertBackExpr would yield from a zero int64.
+		goCode := `package dummy
+
+import "time"
+
+type EventLog struct {
+	Timestamps []time.Time
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"EventLog"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNullElementsInConvertList(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	// Build an Arrow record manually with a null element inside a list.
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "Timestamps", Type: arrow.ListOf(arrow.FixedWidthTypes.Timestamp_ns), Nullable: true},
+	}, nil)
+
+	bldr := array.NewRecordBuilder(pool, schema)
+	defer bldr.Release()
+
+	lb := bldr.Field(0).(*array.ListBuilder)
+	vb := lb.ValueBuilder().(*array.TimestampBuilder)
+
+	// Row 0: list with [valid, null, valid]
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	lb.Append(true)
+	vb.Append(arrow.Timestamp(t1.UnixNano()))
+	vb.AppendNull()
+	vb.Append(arrow.Timestamp(t2.UnixNano()))
+
+	// Row 1: list with [null]
+	lb.Append(true)
+	vb.AppendNull()
+
+	rec := bldr.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewEventLogArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewEventLogArrowReader: %v", err)
+	}
+
+	var got EventLog
+
+	reader.LoadRow(0, &got)
+	if len(got.Timestamps) != 3 {
+		t.Fatalf("row0 len: got %d, want 3", len(got.Timestamps))
+	}
+	if !got.Timestamps[0].Equal(t1) {
+		t.Errorf("row0[0]: got %v, want %v", got.Timestamps[0], t1)
+	}
+	// Null element must be Go zero time, NOT time.Unix(0,0)
+	if !got.Timestamps[1].IsZero() {
+		t.Errorf("row0[1]: got %v, want zero time (null element)", got.Timestamps[1])
+	}
+	if !got.Timestamps[2].Equal(t2) {
+		t.Errorf("row0[2]: got %v, want %v", got.Timestamps[2], t2)
+	}
+
+	reader.LoadRow(1, &got)
+	if len(got.Timestamps) != 1 {
+		t.Fatalf("row1 len: got %d, want 1", len(got.Timestamps))
+	}
+	if !got.Timestamps[0].IsZero() {
+		t.Errorf("row1[0]: got %v, want zero time (null element)", got.Timestamps[0])
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestNullElementsInConvertList")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,
