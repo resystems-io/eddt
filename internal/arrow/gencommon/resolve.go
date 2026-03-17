@@ -93,7 +93,7 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 				// External type: fall back to marshal method detection.
 				method := detectMarshalMethod(typ)
 				if method != "" {
-					return buildMarshalFieldInfo(name, "*"+typ.String(), method, true), nil
+					return buildMarshalFieldInfo(name, typ, method, true), nil
 				}
 				return FieldInfo{}, fmt.Errorf("external type *%s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 			}
@@ -181,7 +181,7 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 		if method == "" {
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 		}
-		return buildMarshalFieldInfo(name, typ.String(), method, false), nil
+		return buildMarshalFieldInfo(name, typ, method, false), nil
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
@@ -372,11 +372,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			// External struct — try marshal methods.
 			method := detectMarshalMethod(t)
 			if method != "" {
-				goType := t.String()
-				if isPointer {
-					goType = "*" + goType
-				}
-				return buildMarshalFieldInfo(name, goType, method, isPointer), nil
+				return buildMarshalFieldInfo(name, t, method, isPointer), nil
 			}
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", t)
 
@@ -389,11 +385,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 		default:
 			method := detectMarshalMethod(t)
 			if method != "" {
-				goType := t.String()
-				if isPointer {
-					goType = "*" + goType
-				}
-				return buildMarshalFieldInfo(name, goType, method, isPointer), nil
+				return buildMarshalFieldInfo(name, t, method, isPointer), nil
 			}
 			return FieldInfo{}, fmt.Errorf("unsupported named type %s", t)
 		}
@@ -752,18 +744,50 @@ func buildByteSliceFieldInfo(name string, isPointer bool) FieldInfo {
 	}
 }
 
+// marshalGoTypeInfo extracts the short Go type name and import path from a types.Type.
+// For named types, it produces "pkg.Name" (e.g., "netip.Addr") instead of the full
+// import-path form ("net/netip.Addr") that types.Type.String() produces.
+func marshalGoTypeInfo(typ types.Type) (shortType string, importPath string) {
+	underlying := typ
+	if ptr, ok := underlying.(*types.Pointer); ok {
+		underlying = ptr.Elem()
+	}
+	if named, ok := underlying.(*types.Named); ok && named.Obj().Pkg() != nil {
+		shortType = named.Obj().Pkg().Name() + "." + named.Obj().Name()
+		importPath = named.Obj().Pkg().Path()
+	} else {
+		shortType = underlying.String()
+	}
+	return
+}
+
 // buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.
-func buildMarshalFieldInfo(name string, goType string, method string, isPointer bool) FieldInfo {
+func buildMarshalFieldInfo(name string, typ types.Type, method string, isPointer bool) FieldInfo {
+	shortType, importPath := marshalGoTypeInfo(typ)
+	goType := shortType
+	if isPointer {
+		goType = "*" + shortType
+	}
+	zeroExpr := shortType + "{}"
+	if isPointer {
+		zeroExpr = "nil"
+	}
+	var unmarshalImports []string
+	if importPath != "" && unmarshalForMarshal(method) != "" {
+		unmarshalImports = []string{importPath}
+	}
 	arrowType, arrowBuilder := marshalMethodArrowType(method)
 	return FieldInfo{
-		Name:            name,
-		GoType:          goType,
-		ArrowType:       arrowType,
-		ArrowBuilder:    arrowBuilder,
-		MarshalMethod:   method,
-		IsPointer:       isPointer,
-		ArrowArrayType:  arrowArrayType(arrowBuilder),
-		ValueMethod:     "Value",
-		UnmarshalMethod: unmarshalForMarshal(method),
+		Name:             name,
+		GoType:           goType,
+		ArrowType:        arrowType,
+		ArrowBuilder:     arrowBuilder,
+		MarshalMethod:    method,
+		IsPointer:        isPointer,
+		ArrowArrayType:   arrowArrayType(arrowBuilder),
+		ValueMethod:      "Value",
+		UnmarshalMethod:  unmarshalForMarshal(method),
+		ZeroExpr:         zeroExpr,
+		UnmarshalImports: unmarshalImports,
 	}
 }

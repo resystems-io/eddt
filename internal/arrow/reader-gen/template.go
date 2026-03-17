@@ -39,11 +39,29 @@ import (
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
+{{- if .HasUnmarshalFields}}
+
+// ReadError describes a per-row, per-field unmarshal error encountered during LoadRow.
+type ReadError struct {
+	Row   int
+	Field string
+	Err   error
+}
+
+func (e ReadError) Error() string {
+	return fmt.Sprintf("row %d, field %q: %v", e.Row, e.Field, e.Err)
+}
+
+func (e ReadError) Unwrap() error { return e.Err }
+{{- end}}
 {{range .Structs}}
 // {{.Name}}ArrowReader is a strongly-typed Apache Arrow reader for {{.Name}}.
 type {{.Name}}ArrowReader struct {
 {{- range .Fields}}
 {{- template "colField" .}}
+{{- end}}
+{{- if $.HasUnmarshalFields}}
+	errs []ReadError
 {{- end}}
 }
 
@@ -74,9 +92,17 @@ func new{{.Name}}ArrowReaderFromStruct(col *array.Struct) (*{{.Name}}ArrowReader
 // Fields whose columns were missing from the record are left untouched.
 func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- range .Fields}}
-{{- template "loadField" .}}
+{{- template "loadField" dict "F" . "HasUM" $.HasUnmarshalFields}}
 {{- end}}
 }
+{{- if $.HasUnmarshalFields}}
+
+// Errors returns unmarshal errors accumulated since the last ResetErrors call.
+func (r *{{.Name}}ArrowReader) Errors() []ReadError { return r.errs }
+
+// ResetErrors clears accumulated unmarshal errors.
+func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
+{{- end}}
 {{end}}
 {{- define "colField" -}}
 {{- if .IsStruct}}
@@ -86,7 +112,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "colFieldMap" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
-{{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
+{{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (or (eq .MarshalMethod "") (ne .UnmarshalMethod ""))}}
 	col{{.Name}} {{.ArrowArrayType}}
 {{- end}}
 {{- end}}
@@ -146,7 +172,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "initFieldMap" dict "Name" $f.Name "Info" $f}}
 {{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
-{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "")}}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (or (eq $f.MarshalMethod "") (ne $f.UnmarshalMethod ""))}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
 		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
 		if !ok {
@@ -313,7 +339,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 		r.col{{$f.Name}} = child
 {{- template "initFieldListChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
 	}
-{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "")}}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (or (eq $f.MarshalMethod "") (ne $f.UnmarshalMethod ""))}}
 	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
 		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
 		if !ok {
@@ -325,69 +351,117 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- end}}
 
 {{- define "loadField" -}}
-{{- if and .IsStruct (not .IsPointer)}}
-	if r.col{{.Name}} != nil {
-		if r.col{{.Name}}.IsNull(i) {
-			out.{{.Name}} = {{.StructQualifier}}{{.StructName}}{}
+{{- if and .F.IsStruct (not .F.IsPointer)}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = {{.F.StructQualifier}}{{.F.StructName}}{}
 		} else {
-			r.reader{{.Name}}.LoadRow(i, &out.{{.Name}})
-		}
-	}
-{{- else if and .IsStruct .IsPointer}}
-	if r.col{{.Name}} != nil {
-		if r.col{{.Name}}.IsNull(i) {
-			out.{{.Name}} = nil
-		} else {
-			if out.{{.Name}} == nil {
-				out.{{.Name}} = &{{.StructQualifier}}{{.StructName}}{}
+			r.reader{{.F.Name}}.LoadRow(i, &out.{{.F.Name}})
+{{- if .HasUM}}
+			if len(r.reader{{.F.Name}}.errs) > 0 {
+				for _, e := range r.reader{{.F.Name}}.errs {
+					r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{.F.Name}}." + e.Field, Err: e.Err})
+				}
+				r.reader{{.F.Name}}.errs = r.reader{{.F.Name}}.errs[:0]
 			}
-			r.reader{{.Name}}.LoadRow(i, out.{{.Name}})
-		}
-	}
-{{- else if and .IsMap (not .IsPointer)}}
-{{- template "loadFieldMap" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
-{{- else if and .IsList (not .IsPointer)}}
-{{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
-{{- else if and .IsFixedSizeList (not .IsPointer)}}
-{{- template "loadFieldFixedList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
-{{- else if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
-	if r.col{{.Name}} != nil {
-		if r.col{{.Name}}.IsNull(i) {
-			out.{{.Name}} = {{.ZeroExpr}}
-		} else {
-{{- if .ConvertBackExpr}}
-{{- if .ConvertBackIsPtr}}
-			out.{{.Name}} = *{{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
-{{- else}}
-			out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
-{{- end}}
-{{- else}}
-			out.{{.Name}} = {{.GoType}}(r.col{{.Name}}.Value(i))
 {{- end}}
 		}
 	}
+{{- else if and .F.IsStruct .F.IsPointer}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = nil
+		} else {
+			if out.{{.F.Name}} == nil {
+				out.{{.F.Name}} = &{{.F.StructQualifier}}{{.F.StructName}}{}
+			}
+			r.reader{{.F.Name}}.LoadRow(i, out.{{.F.Name}})
+{{- if .HasUM}}
+			if len(r.reader{{.F.Name}}.errs) > 0 {
+				for _, e := range r.reader{{.F.Name}}.errs {
+					r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{.F.Name}}." + e.Field, Err: e.Err})
+				}
+				r.reader{{.F.Name}}.errs = r.reader{{.F.Name}}.errs[:0]
+			}
 {{- end}}
-{{- if and .ValueMethod .IsPointer (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
-	if r.col{{.Name}} != nil {
-		if r.col{{.Name}}.IsNull(i) {
-			out.{{.Name}} = nil
-{{- if and .ConvertBackExpr .ConvertBackIsPtr}}
-		} else {
-			out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
 		}
-{{- else if .ConvertBackExpr}}
-		} else if out.{{.Name}} == nil {
-			v := {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
-			out.{{.Name}} = &v
+	}
+{{- else if and .F.IsMap (not .F.IsPointer)}}
+{{- template "loadFieldMap" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
+{{- else if and .F.IsList (not .F.IsPointer)}}
+{{- template "loadFieldList" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
+{{- else if and .F.IsFixedSizeList (not .F.IsPointer)}}
+{{- template "loadFieldFixedList" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
+{{- else if and .F.ValueMethod (not .F.IsPointer) (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = {{.F.ZeroExpr}}
+{{- if .F.UnmarshalMethod}}
 		} else {
-			*out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+{{- if eq .F.UnmarshalMethod "UnmarshalText"}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+{{- else}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+{{- end}}
+				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
+				out.{{.F.Name}} = {{.F.ZeroExpr}}
+			}
+{{- else if .F.ConvertBackExpr}}
+		} else {
+{{- if .F.ConvertBackIsPtr}}
+			out.{{.F.Name}} = *{{printf .F.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+{{- else}}
+			out.{{.F.Name}} = {{printf .F.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+{{- end}}
+{{- else}}
+		} else {
+			out.{{.F.Name}} = {{.F.GoType}}(r.col{{.F.Name}}.Value(i))
+{{- end}}
+		}
+	}
+{{- end}}
+{{- if and .F.ValueMethod .F.IsPointer (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = nil
+{{- if .F.UnmarshalMethod}}
+		} else if out.{{.F.Name}} == nil {
+			out.{{.F.Name}} = &{{stripPtr .F.GoType}}{}
+{{- if eq .F.UnmarshalMethod "UnmarshalText"}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+{{- else}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+{{- end}}
+				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
+				out.{{.F.Name}} = nil
+			}
+		} else {
+{{- if eq .F.UnmarshalMethod "UnmarshalText"}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+{{- else}}
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+{{- end}}
+				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
+				out.{{.F.Name}} = nil
+			}
+		}
+{{- else if and .F.ConvertBackExpr .F.ConvertBackIsPtr}}
+		} else {
+			out.{{.F.Name}} = {{printf .F.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+		}
+{{- else if .F.ConvertBackExpr}}
+		} else if out.{{.F.Name}} == nil {
+			v := {{printf .F.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+			out.{{.F.Name}} = &v
+		} else {
+			*out.{{.F.Name}} = {{printf .F.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
 		}
 {{- else}}
-		} else if out.{{.Name}} == nil {
-			v := {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
-			out.{{.Name}} = &v
+		} else if out.{{.F.Name}} == nil {
+			v := {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value(i))
+			out.{{.F.Name}} = &v
 		} else {
-			*out.{{.Name}} = {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
+			*out.{{.F.Name}} = {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value(i))
 		}
 {{- end}}
 	}
@@ -397,12 +471,13 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- define "loadFieldList" -}}
 {{- $name := .Name -}}
 {{- $info := .Info -}}
-{{- $target := .Target}}
+{{- $target := .Target -}}
+{{- $hasUM := .HasUM}}
 	if r.col{{$name}} != nil {
 		if r.col{{$name}}.IsNull(i) {
 			{{$target}} = nil
 		} else {
-{{- template "loadFieldListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i" "HasUM" $hasUM}}
 		}
 	}
 {{- end}}
@@ -413,6 +488,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $target := .Target -}}
 {{- $d := .Depth -}}
 {{- $idx := .IdxExpr -}}
+{{- $hasUM := .HasUM -}}
 {{- $colName := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
 {{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
 {{- $s := printf "s%d" $d -}}
@@ -433,17 +509,41 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
+{{- if $hasUM}}
+					if len(r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs) > 0 {
+						for _, e := range r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs = r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs[:0]
+					}
+{{- end}}
 				}
 {{- else if $info.EltInfo.IsList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = nil
 				} else {
-{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d) "HasUM" $hasUM}}
 				}
 {{- else if $info.EltInfo.IsFixedSizeList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
-{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d) "HasUM" $hasUM}}
+{{- else if $info.EltInfo.UnmarshalMethod}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
+				} else {
+					var uv{{$d}} {{$info.EltInfo.GoType}}
+{{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte({{$childCol}}.Value(idx{{$d}}))); err != nil {
+{{- else}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}({{$childCol}}.Value(idx{{$d}})); err != nil {
+{{- end}}
+						r.errs = append(r.errs, ReadError{Row: i, Field: "{{$name}}", Err: err})
+					} else {
+						{{$target}}[{{$j}}] = uv{{$d}}
+					}
+				}
 {{- else}}
 {{- if $info.EltInfo.ConvertBackExpr}}
 {{- if $info.EltInfo.ConvertBackIsPtr}}
@@ -461,12 +561,13 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- define "loadFieldFixedList" -}}
 {{- $name := .Name -}}
 {{- $info := .Info -}}
-{{- $target := .Target}}
+{{- $target := .Target -}}
+{{- $hasUM := .HasUM}}
 	if r.col{{$name}} != nil {
 		if r.col{{$name}}.IsNull(i) {
 			{{$target}} = {{$info.ZeroExpr}}
 		} else {
-{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i" "HasUM" $hasUM}}
 		}
 	}
 {{- end}}
@@ -477,6 +578,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $target := .Target -}}
 {{- $d := .Depth -}}
 {{- $idx := .IdxExpr -}}
+{{- $hasUM := .HasUM -}}
 {{- $colName := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
 {{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
 {{- $s := printf "s%d" $d -}}
@@ -489,16 +591,40 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
+{{- if $hasUM}}
+					if len(r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs) > 0 {
+						for _, e := range r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs = r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs[:0]
+					}
+{{- end}}
 				}
 {{- else if $info.EltInfo.IsFixedSizeList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
-{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d) "HasUM" $hasUM}}
 {{- else if $info.EltInfo.IsList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = nil
 				} else {
-{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
+{{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d) "HasUM" $hasUM}}
+				}
+{{- else if $info.EltInfo.UnmarshalMethod}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
+				} else {
+					var uv{{$d}} {{$info.EltInfo.GoType}}
+{{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte({{$childCol}}.Value(idx{{$d}}))); err != nil {
+{{- else}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}({{$childCol}}.Value(idx{{$d}})); err != nil {
+{{- end}}
+						r.errs = append(r.errs, ReadError{Row: i, Field: "{{$name}}", Err: err})
+					} else {
+						{{$target}}[{{$j}}] = uv{{$d}}
+					}
 				}
 {{- else}}
 {{- if $info.EltInfo.ConvertBackExpr}}
@@ -517,12 +643,13 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- define "loadFieldMap" -}}
 {{- $name := .Name -}}
 {{- $info := .Info -}}
-{{- $target := .Target}}
+{{- $target := .Target -}}
+{{- $hasUM := .HasUM}}
 	if r.col{{$name}} != nil {
 		if r.col{{$name}}.IsNull(i) {
 			{{$target}} = nil
 		} else {
-{{- template "loadFieldMapInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+{{- template "loadFieldMapInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i" "HasUM" $hasUM}}
 		}
 	}
 {{- end}}
@@ -533,6 +660,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $target := .Target -}}
 {{- $d := .Depth -}}
 {{- $idx := .IdxExpr -}}
+{{- $hasUM := .HasUM -}}
 {{- $prefix := printf "%s%s" $name (repeat "Items" $d) -}}
 {{- $colName := printf "r.col%s" $prefix -}}
 {{- $keysCol := printf "r.col%sKeys" $prefix -}}
@@ -555,6 +683,14 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 				var sv{{$d}} {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}
 				if !r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, &sv{{$d}})
+{{- if $hasUM}}
+					if len(r.reader{{$prefix}}Items.errs) > 0 {
+						for _, e := range r.reader{{$prefix}}Items.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$prefix}}Items.errs = r.reader{{$prefix}}Items.errs[:0]
+					}
+{{- end}}
 				}
 				{{$target}}[{{$k}}] = sv{{$d}}
 {{- else if $info.EltInfo.IsMap}}
@@ -562,14 +698,30 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 				if r.col{{$name}}{{repeat "Items" (add $d 1)}}.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = nil
 				} else {
-{{- template "loadFieldMapInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" (add $d 1) "IdxExpr" (printf "midx%d" $d)}}
+{{- template "loadFieldMapInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" (add $d 1) "IdxExpr" (printf "midx%d" $d) "HasUM" $hasUM}}
 				}
 {{- else if $info.EltInfo.IsList}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
 				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = nil
 				} else {
-{{- template "loadFieldListInner" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" 0 "IdxExpr" (printf "midx%d" $d)}}
+{{- template "loadFieldListInner" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" 0 "IdxExpr" (printf "midx%d" $d) "HasUM" $hasUM}}
+				}
+{{- else if $info.EltInfo.UnmarshalMethod}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
+					{{$target}}[{{$k}}] = {{$info.EltInfo.ZeroExpr}}
+				} else {
+					var uv{{$d}} {{$info.EltInfo.GoType}}
+{{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte(r.col{{$prefix}}Items.Value(midx{{$d}}))); err != nil {
+{{- else}}
+					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}(r.col{{$prefix}}Items.Value(midx{{$d}})); err != nil {
+{{- end}}
+						r.errs = append(r.errs, ReadError{Row: i, Field: "{{$name}}", Err: err})
+					} else {
+						{{$target}}[{{$k}}] = uv{{$d}}
+					}
 				}
 {{- else}}
 {{- if $info.EltInfo.ConvertBackExpr}}
@@ -611,8 +763,9 @@ var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap
 }).Parse(readerTemplateStr))
 
 type templateData struct {
-	PackageName string
-	Version     string
-	Imports     []gencommon.ImportInfo
-	Structs     []gencommon.StructInfo
+	PackageName        string
+	Version            string
+	Imports            []gencommon.ImportInfo
+	Structs            []gencommon.StructInfo
+	HasUnmarshalFields bool
 }

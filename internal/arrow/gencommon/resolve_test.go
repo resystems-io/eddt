@@ -126,7 +126,10 @@ func TestReaderFieldsPopulated(t *testing.T) {
 	tmpDir := t.TempDir()
 	testCode := `package testpkg
 
-import "time"
+import (
+	"time"
+	"net/netip"
+)
 
 type Inner struct {
 	X int32
@@ -156,6 +159,10 @@ type ReaderFieldsStruct struct {
 	// Well-known types (convert types)
 	Elapsed  time.Duration
 	Birthday time.Time
+
+	// Marshal types (TextMarshaler with UnmarshalText inverse)
+	Addr    netip.Addr
+	OptAddr *netip.Addr
 }
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "types.go"), []byte(testCode), 0644); err != nil {
@@ -209,6 +216,8 @@ type ReaderFieldsStruct struct {
 		{"OptInner", "*array.Struct", "", "", "", false, "nil"},
 		{"Elapsed", "*array.Int64", "Value", "", "time.Duration(%s)", false, "0"},
 		{"Birthday", "*array.Timestamp", "Value", "", "time.Unix(0, int64(%s))", false, "time.Time{}"},
+		{"Addr", "*array.String", "Value", "UnmarshalText", "", false, "netip.Addr{}"},
+		{"OptAddr", "*array.String", "Value", "UnmarshalText", "", false, "nil"},
 	}
 
 	for _, tt := range tests {
@@ -248,5 +257,31 @@ type ReaderFieldsStruct struct {
 	}
 	if tagsElt.ValueMethod != "Value" {
 		t.Errorf("Tags.EltInfo.ValueMethod = %q, want %q", tagsElt.ValueMethod, "Value")
+	}
+
+	// Verify marshal-type fields have correct GoType, MarshalMethod, and UnmarshalImports.
+	addr := byName["Addr"]
+	if addr.GoType != "netip.Addr" {
+		t.Errorf("Addr.GoType = %q, want %q", addr.GoType, "netip.Addr")
+	}
+	if addr.MarshalMethod != "MarshalText" {
+		t.Errorf("Addr.MarshalMethod = %q, want %q", addr.MarshalMethod, "MarshalText")
+	}
+	if diff := cmp.Diff([]string{"net/netip"}, addr.UnmarshalImports); diff != "" {
+		t.Errorf("Addr.UnmarshalImports mismatch (-want +got):\n%s", diff)
+	}
+
+	optAddr := byName["OptAddr"]
+	if optAddr.GoType != "*netip.Addr" {
+		t.Errorf("OptAddr.GoType = %q, want %q", optAddr.GoType, "*netip.Addr")
+	}
+	if optAddr.MarshalMethod != "MarshalText" {
+		t.Errorf("OptAddr.MarshalMethod = %q, want %q", optAddr.MarshalMethod, "MarshalText")
+	}
+	if optAddr.IsPointer != true {
+		t.Errorf("OptAddr.IsPointer = %v, want true", optAddr.IsPointer)
+	}
+	if diff := cmp.Diff([]string{"net/netip"}, optAddr.UnmarshalImports); diff != "" {
+		t.Errorf("OptAddr.UnmarshalImports mismatch (-want +got):\n%s", diff)
 	}
 }

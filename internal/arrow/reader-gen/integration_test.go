@@ -2082,6 +2082,298 @@ func TestListOfConvertRoundTrip(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "TestListOfConvertRoundTrip")
 	})
+
+	t.Run("text-marshaler-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+import "net/netip"
+
+type NetRecord struct {
+	Addr    netip.Addr
+	OptAddr *netip.Addr
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"NetRecord"})
+
+		testCode := `package dummy
+
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestTextMarshalerRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewNetRecordArrowWriter(pool)
+	defer writer.Release()
+
+	addr1 := netip.MustParseAddr("192.168.1.1")
+	addr2 := netip.MustParseAddr("10.0.0.1")
+
+	// Row 1: both fields populated
+	r1 := NetRecord{Addr: addr1, OptAddr: &addr2}
+	writer.Append(&r1)
+
+	// Row 2: pointer nil
+	r2 := NetRecord{Addr: addr1, OptAddr: nil}
+	writer.Append(&r2)
+
+	// Row 3: zero-value addr
+	r3 := NetRecord{}
+	writer.Append(&r3)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewNetRecordArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewNetRecordArrowReader: %v", err)
+	}
+
+	// Row 1
+	var got NetRecord
+	reader.LoadRow(0, &got)
+	if got.Addr != addr1 {
+		t.Errorf("row0 Addr: got %v, want %v", got.Addr, addr1)
+	}
+	if got.OptAddr == nil || *got.OptAddr != addr2 {
+		t.Errorf("row0 OptAddr: got %v, want %v", got.OptAddr, &addr2)
+	}
+
+	// Row 1 — reuse into row 2 (test pointer-reuse path)
+	reader.LoadRow(1, &got)
+	if got.Addr != addr1 {
+		t.Errorf("row1 Addr: got %v, want %v", got.Addr, addr1)
+	}
+	if got.OptAddr != nil {
+		t.Errorf("row1 OptAddr: got %v, want nil", got.OptAddr)
+	}
+
+	// Row 3 — zero addr
+	reader.LoadRow(2, &got)
+	zeroAddr := netip.Addr{}
+	if got.Addr != zeroAddr {
+		t.Errorf("row2 Addr: got %v, want zero", got.Addr)
+	}
+
+	// Errors should be empty for valid data
+	if errs := reader.Errors(); len(errs) > 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTextMarshalerRoundTrip")
+	})
+
+	t.Run("unmarshal-error-accumulation", func(t *testing.T) {
+		goCode := `package dummy
+
+import "net/netip"
+
+type AddrHolder struct {
+	Addr netip.Addr
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"AddrHolder"})
+
+		testCode := `package dummy
+
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestUnmarshalErrorAccumulation(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	// Build a record with an invalid IP address string manually.
+	bldr := array.NewRecordBuilder(pool, NewAddrHolderSchema())
+	defer bldr.Release()
+
+	addrCol := bldr.Field(0).(*array.StringBuilder)
+	addrCol.Append("not-a-valid-ip")  // bad row
+	addrCol.Append("192.168.1.1")     // good row
+
+	rec := bldr.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewAddrHolderArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewAddrHolderArrowReader: %v", err)
+	}
+
+	// Load bad row — should accumulate error
+	var got AddrHolder
+	reader.LoadRow(0, &got)
+
+	errs := reader.Errors()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Row != 0 {
+		t.Errorf("error Row: got %d, want 0", errs[0].Row)
+	}
+	if errs[0].Field != "Addr" {
+		t.Errorf("error Field: got %q, want %q", errs[0].Field, "Addr")
+	}
+	// Field should be zeroed on error
+	if got.Addr != (netip.Addr{}) {
+		t.Errorf("Addr should be zero after error, got %v", got.Addr)
+	}
+
+	// Load good row
+	reader.ResetErrors()
+	reader.LoadRow(1, &got)
+	if got.Addr.String() != "192.168.1.1" {
+		t.Errorf("row1 Addr: got %v, want 192.168.1.1", got.Addr)
+	}
+	if len(reader.Errors()) != 0 {
+		t.Errorf("expected 0 errors after good row, got %v", reader.Errors())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestUnmarshalErrorAccumulation")
+	})
+
+	t.Run("list-of-text-marshaler-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+import "net/netip"
+
+type AddrList struct {
+	Addrs []netip.Addr
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"AddrList"})
+
+		testCode := `package dummy
+
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestListOfTextMarshalerRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewAddrListArrowWriter(pool)
+	defer writer.Release()
+
+	addr1 := netip.MustParseAddr("10.0.0.1")
+	addr2 := netip.MustParseAddr("10.0.0.2")
+
+	// Row with values
+	r1 := AddrList{Addrs: []netip.Addr{addr1, addr2}}
+	writer.Append(&r1)
+
+	// Row with nil slice
+	r2 := AddrList{Addrs: nil}
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewAddrListArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewAddrListArrowReader: %v", err)
+	}
+
+	var got AddrList
+	reader.LoadRow(0, &got)
+	if len(got.Addrs) != 2 {
+		t.Fatalf("row0 Addrs len: got %d, want 2", len(got.Addrs))
+	}
+	if got.Addrs[0] != addr1 {
+		t.Errorf("row0 Addrs[0]: got %v, want %v", got.Addrs[0], addr1)
+	}
+	if got.Addrs[1] != addr2 {
+		t.Errorf("row0 Addrs[1]: got %v, want %v", got.Addrs[1], addr2)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.Addrs != nil {
+		t.Errorf("row1 Addrs: got %v, want nil", got.Addrs)
+	}
+
+	if len(reader.Errors()) != 0 {
+		t.Errorf("unexpected errors: %v", reader.Errors())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestListOfTextMarshalerRoundTrip")
+	})
+
+	t.Run("stringer-only-skip", func(t *testing.T) {
+		// url.URL implements String() but not UnmarshalText — field should be
+		// silently skipped in the reader (no column, no error).
+		goCode := `package dummy
+
+import "net/url"
+
+type LinkRecord struct {
+	Name string
+	Link url.URL
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"LinkRecord"})
+
+		testCode := `package dummy
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestStringerOnlySkip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewLinkRecordArrowWriter(pool)
+	defer writer.Release()
+
+	r1 := LinkRecord{
+		Name: "example",
+		Link: url.URL{Scheme: "https", Host: "example.com"},
+	}
+	writer.Append(&r1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewLinkRecordArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewLinkRecordArrowReader: %v", err)
+	}
+
+	var got LinkRecord
+	reader.LoadRow(0, &got)
+
+	// Name should round-trip
+	if got.Name != "example" {
+		t.Errorf("Name: got %q, want %q", got.Name, "example")
+	}
+
+	// Link should be zero — reader skips it (no unmarshal inverse)
+	if got.Link != (url.URL{}) {
+		t.Errorf("Link should be zero (skipped), got %v", got.Link)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestStringerOnlySkip")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,

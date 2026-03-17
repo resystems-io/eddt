@@ -75,11 +75,37 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		}
 	}
 
+	// Compute unmarshal flag and collect unmarshal imports (e.g. "net/netip").
+	hasUnmarshal := gencommon.HasUnmarshalFields(structs)
+	if hasUnmarshal {
+		unmarshalImports := gencommon.CollectUnmarshalImports(structs)
+		existing := map[string]bool{}
+		for _, imp := range imports {
+			existing[imp.Path] = true
+		}
+		for _, imp := range unmarshalImports {
+			if !existing[imp.Path] {
+				imports = append(imports, imp)
+				existing[imp.Path] = true
+			}
+		}
+	}
+
+	// Warn about Stringer-only fields (no unmarshal inverse).
+	for _, si := range structs {
+		for _, f := range si.Fields {
+			if f.MarshalMethod == "String" && f.UnmarshalMethod == "" {
+				fmt.Printf("Warning: field %s.%s uses String() with no unmarshal inverse; skipping in reader\n", si.Name, f.Name)
+			}
+		}
+	}
+
 	data := templateData{
-		PackageName: packageName,
-		Version:     g.Version,
-		Imports:     imports,
-		Structs:     structs,
+		PackageName:        packageName,
+		Version:            g.Version,
+		Imports:            imports,
+		Structs:            structs,
+		HasUnmarshalFields: hasUnmarshal,
 	}
 
 	var buf bytes.Buffer

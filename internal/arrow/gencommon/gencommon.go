@@ -44,12 +44,13 @@ type FieldInfo struct {
 
 	// Reader-specific fields — populated during parsing for use by reader-gen templates.
 
-	ArrowArrayType  string // Concrete Arrow array type for downcast (e.g., "*array.Int32", "*array.List")
-	ValueMethod     string // Extraction method on the array type: "Value" for leaf types, "" for containers
-	UnmarshalMethod string // Reciprocal of MarshalMethod: "UnmarshalText", "UnmarshalBinary", or "" (Stringer has no inverse)
+	ArrowArrayType     string   // Concrete Arrow array type for downcast (e.g., "*array.Int32", "*array.List")
+	ValueMethod        string   // Extraction method on the array type: "Value" for leaf types, "" for containers
+	UnmarshalMethod    string   // Reciprocal of MarshalMethod: "UnmarshalText", "UnmarshalBinary", or "" (Stringer has no inverse)
 	ConvertBackExpr    string   // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.Unix(0, int64(%s))")
 	ConvertBackIsPtr   bool     // True if ConvertBackExpr returns a pointer (e.g. durationpb.New → *durationpb.Duration)
 	ConvertBackImports []string // Import paths needed by ConvertBackExpr (e.g. ["time"])
+	UnmarshalImports   []string // Import paths needed by UnmarshalMethod (e.g., ["net/netip"])
 	ZeroExpr           string   // Zero-value expression for the Go type, used for null handling (e.g., "0", `""`, "false", "nil")
 }
 
@@ -615,6 +616,63 @@ func CollectConvertBackImports(structs []StructInfo) []ImportInfo {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
 	return result
+}
+
+// CollectUnmarshalImports walks all struct fields (recursively through
+// EltInfo/KeyInfo) and returns deduplicated ImportInfo entries required by
+// UnmarshalMethod expressions in the reader-generated code.
+func CollectUnmarshalImports(structs []StructInfo) []ImportInfo {
+	seen := map[string]bool{}
+	var result []ImportInfo
+	var walk func(fi *FieldInfo)
+	walk = func(fi *FieldInfo) {
+		for _, imp := range fi.UnmarshalImports {
+			if !seen[imp] {
+				seen[imp] = true
+				parts := strings.Split(imp, "/")
+				result = append(result, ImportInfo{Path: imp, Name: parts[len(parts)-1]})
+			}
+		}
+		if fi.EltInfo != nil {
+			walk(fi.EltInfo)
+		}
+		if fi.KeyInfo != nil {
+			walk(fi.KeyInfo)
+		}
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			walk(&structs[i].Fields[j])
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	return result
+}
+
+// HasUnmarshalFields reports whether any field across all structs (recursively
+// through EltInfo/KeyInfo) has a non-empty UnmarshalMethod.
+func HasUnmarshalFields(structs []StructInfo) bool {
+	var walk func(fi *FieldInfo) bool
+	walk = func(fi *FieldInfo) bool {
+		if fi.UnmarshalMethod != "" {
+			return true
+		}
+		if fi.EltInfo != nil && walk(fi.EltInfo) {
+			return true
+		}
+		if fi.KeyInfo != nil && walk(fi.KeyInfo) {
+			return true
+		}
+		return false
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			if walk(&structs[i].Fields[j]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // setStructQualifiers recursively sets StructQualifier on struct-typed fields
