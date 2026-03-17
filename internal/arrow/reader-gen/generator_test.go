@@ -548,6 +548,117 @@ type MapStruct struct {
 	}
 }
 
+func TestGenerator_ParseStructFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	testCode := `package testpkg
+
+type Inner struct {
+	Value int32
+	Label string
+}
+
+type Outer struct {
+	ID     int32
+	Child  Inner
+	PChild *Inner
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test_structs.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, "out.go", false, nil)
+
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	// Parse should discover both Outer and Inner (via queue)
+	if len(structs) != 2 {
+		t.Fatalf("Expected 2 structs, got %d", len(structs))
+	}
+
+	// Find Outer struct
+	var outer gencommon.StructInfo
+	var inner gencommon.StructInfo
+	for _, s := range structs {
+		switch s.Name {
+		case "Outer":
+			outer = s
+		case "Inner":
+			inner = s
+		}
+	}
+
+	if outer.Name != "Outer" {
+		t.Fatal("Outer struct not found")
+	}
+	if inner.Name != "Inner" {
+		t.Fatal("Inner struct not found")
+	}
+
+	// Verify Outer fields
+	if len(outer.Fields) != 3 {
+		t.Fatalf("Expected 3 fields in Outer, got %d", len(outer.Fields))
+	}
+
+	// Field: ID int32
+	if outer.Fields[0].Name != "ID" || outer.Fields[0].GoType != "int32" {
+		t.Errorf("Field 0: got %s %s, want ID int32", outer.Fields[0].Name, outer.Fields[0].GoType)
+	}
+
+	// Field: Child Inner (value struct)
+	child := outer.Fields[1]
+	if child.Name != "Child" {
+		t.Errorf("Field 1 Name: got %s, want Child", child.Name)
+	}
+	if !child.IsStruct {
+		t.Error("Field 1: expected IsStruct=true")
+	}
+	if child.IsPointer {
+		t.Error("Field 1: expected IsPointer=false")
+	}
+	if child.StructName != "Inner" {
+		t.Errorf("Field 1 StructName: got %s, want Inner", child.StructName)
+	}
+	if child.ArrowArrayType != "*array.Struct" {
+		t.Errorf("Field 1 ArrowArrayType: got %s, want *array.Struct", child.ArrowArrayType)
+	}
+
+	// Field: PChild *Inner (pointer-to-struct)
+	pchild := outer.Fields[2]
+	if pchild.Name != "PChild" {
+		t.Errorf("Field 2 Name: got %s, want PChild", pchild.Name)
+	}
+	if !pchild.IsStruct {
+		t.Error("Field 2: expected IsStruct=true")
+	}
+	if !pchild.IsPointer {
+		t.Error("Field 2: expected IsPointer=true")
+	}
+	if pchild.StructName != "Inner" {
+		t.Errorf("Field 2 StructName: got %s, want Inner", pchild.StructName)
+	}
+	if pchild.ArrowArrayType != "*array.Struct" {
+		t.Errorf("Field 2 ArrowArrayType: got %s, want *array.Struct", pchild.ArrowArrayType)
+	}
+
+	// Verify Inner has expected fields
+	if len(inner.Fields) != 2 {
+		t.Fatalf("Expected 2 fields in Inner, got %d", len(inner.Fields))
+	}
+	if inner.Fields[0].Name != "Value" || inner.Fields[0].GoType != "int32" {
+		t.Errorf("Inner Field 0: got %s %s, want Value int32", inner.Fields[0].Name, inner.Fields[0].GoType)
+	}
+	if inner.Fields[1].Name != "Label" || inner.Fields[1].GoType != "string" {
+		t.Errorf("Inner Field 1: got %s %s, want Label string", inner.Fields[1].Name, inner.Fields[1].GoType)
+	}
+}
+
 // TestGenerator_RunReservedNames verifies that reader-gen uses "arrow" and "array"
 // (but not "memory") as reserved names, unlike writer-gen which also reserves "memory".
 func TestGenerator_RunReservedNames(t *testing.T) {

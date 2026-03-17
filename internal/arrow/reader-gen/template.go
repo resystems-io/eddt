@@ -59,6 +59,17 @@ func New{{.Name}}ArrowReader(rec arrow.Record) (*{{.Name}}ArrowReader, error) {
 	return r, nil
 }
 
+func new{{.Name}}ArrowReaderFromStruct(col *array.Struct) (*{{.Name}}ArrowReader, error) {
+	r := &{{.Name}}ArrowReader{}
+	dt := col.DataType().(*arrow.StructType)
+	_ = dt
+	_ = col
+{{- range .Fields}}
+{{- template "initStructField" dict "Field" .}}
+{{- end}}
+	return r, nil
+}
+
 // LoadRow loads the i-th row from the Arrow record into the output struct.
 // Fields whose columns were missing from the record are left untouched.
 func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
@@ -68,7 +79,10 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 }
 {{end}}
 {{- define "colField" -}}
-{{- if and .IsMap (not .IsPointer)}}
+{{- if .IsStruct}}
+	col{{.Name}} {{.ArrowArrayType}}
+	reader{{.Name}} *{{.StructName}}ArrowReader
+{{- else if and .IsMap (not .IsPointer)}}
 {{- template "colFieldMap" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
@@ -86,6 +100,9 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 	col{{$prefix}}Keys {{$info.KeyInfo.ArrowArrayType}}
 {{- if $info.EltInfo.IsMap}}
 {{- template "colFieldMap" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+{{- else if $info.EltInfo.IsStruct}}
+	col{{$prefix}}Items {{$info.EltInfo.ArrowArrayType}}
+	reader{{$prefix}}Items *{{$info.EltInfo.StructName}}ArrowReader
 {{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 {{- template "colFieldList" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Depth" 0}}
 {{- else}}
@@ -98,7 +115,10 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $info := .Info -}}
 {{- $d := .Depth}}
 	col{{$name}}{{repeat "Elts" $d}} {{$info.ArrowArrayType}}
-{{- if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
+{{- if $info.EltInfo.IsStruct}}
+	col{{$name}}{{repeat "Elts" (add $d 1)}} {{$info.EltInfo.ArrowArrayType}}
+	reader{{$name}}{{repeat "Elts" (add $d 1)}} *{{$info.EltInfo.StructName}}ArrowReader
+{{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 {{- template "colFieldList" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
 {{- else}}
 	col{{$name}}{{repeat "Elts" (add $d 1)}} {{$info.EltInfo.ArrowArrayType}}
@@ -107,7 +127,22 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 
 {{- define "initField" -}}
 {{- $f := .Field -}}
-{{- if and $f.IsMap (not $f.IsPointer)}}
+{{- if $f.IsStruct}}
+	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
+		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("column %q: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", rec.Column(indices[0]))
+		}
+		r.col{{$f.Name}} = col
+		{
+			var err error
+			r.reader{{$f.Name}}, err = new{{$f.StructName}}ArrowReaderFromStruct(col)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+{{- else if and $f.IsMap (not $f.IsPointer)}}
 {{- template "initFieldMap" dict "Name" $f.Name "Info" $f}}
 {{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
@@ -157,6 +192,19 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 			r.col{{$name}}{{repeat "Items" (add $d 1)}} = items
 		}
 {{- template "initFieldMapChild" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+{{- else if $info.EltInfo.IsStruct}}
+		{
+			items, ok := {{$parentCol}}.Items().({{$info.EltInfo.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q items: expected {{$info.EltInfo.ArrowArrayType}}, got %T", "{{$name}}", {{$parentCol}}.Items())
+			}
+			r.col{{$prefix}}Items = items
+			var err error
+			r.reader{{$prefix}}Items, err = new{{$info.EltInfo.StructName}}ArrowReaderFromStruct(items)
+			if err != nil {
+				return nil, err
+			}
+		}
 {{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 		{
 			items, ok := {{$parentCol}}.Items().({{$info.EltInfo.ArrowArrayType}})
@@ -197,7 +245,20 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $parentCol := printf "r.col%s%s" $name (repeat "Elts" $d) -}}
 {{- $childCol := printf "r.col%s%s" $name (repeat "Elts" (add $d 1)) -}}
 {{- $childType := $info.EltInfo.ArrowArrayType -}}
-{{- if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
+{{- if $info.EltInfo.IsStruct}}
+		{
+			elts, ok := {{$parentCol}}.ListValues().({{$childType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q child: expected {{$childType}}, got %T", "{{$name}}", {{$parentCol}}.ListValues())
+			}
+			{{$childCol}} = elts
+			var err error
+			r.reader{{$name}}{{repeat "Elts" (add $d 1)}}, err = new{{$info.EltInfo.StructName}}ArrowReaderFromStruct(elts)
+			if err != nil {
+				return nil, err
+			}
+		}
+{{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
 		{
 			elts, ok := {{$parentCol}}.ListValues().({{$childType}})
 			if !ok {
@@ -217,8 +278,73 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- end}}
 {{- end}}
 
+{{- define "initStructField" -}}
+{{- $f := .Field -}}
+{{- if $f.IsStruct}}
+	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
+		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("struct field %q: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", col.Field(idx))
+		}
+		r.col{{$f.Name}} = child
+		{
+			var err error
+			r.reader{{$f.Name}}, err = new{{$f.StructName}}ArrowReaderFromStruct(child)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+{{- else if and $f.IsMap (not $f.IsPointer)}}
+	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
+		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("struct field %q: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", col.Field(idx))
+		}
+		r.col{{$f.Name}} = child
+{{- template "initFieldMapChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
+	}
+{{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
+	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
+		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("struct field %q: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", col.Field(idx))
+		}
+		r.col{{$f.Name}} = child
+{{- template "initFieldListChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
+	}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
+	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
+		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("struct field %q: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", col.Field(idx))
+		}
+		r.col{{$f.Name}} = child
+	}
+{{- end}}
+{{- end}}
+
 {{- define "loadField" -}}
-{{- if and .IsMap (not .IsPointer)}}
+{{- if and .IsStruct (not .IsPointer)}}
+	if r.col{{.Name}} != nil {
+		if r.col{{.Name}}.IsNull(i) {
+			out.{{.Name}} = {{.StructQualifier}}{{.StructName}}{}
+		} else {
+			r.reader{{.Name}}.LoadRow(i, &out.{{.Name}})
+		}
+	}
+{{- else if and .IsStruct .IsPointer}}
+	if r.col{{.Name}} != nil {
+		if r.col{{.Name}}.IsNull(i) {
+			out.{{.Name}} = nil
+		} else {
+			if out.{{.Name}} == nil {
+				out.{{.Name}} = &{{.StructQualifier}}{{.StructName}}{}
+			}
+			r.reader{{.Name}}.LoadRow(i, out.{{.Name}})
+		}
+	}
+{{- else if and .IsMap (not .IsPointer)}}
 {{- template "loadFieldMap" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
 {{- else if and .IsList (not .IsPointer)}}
 {{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
@@ -280,7 +406,14 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 				{{$target}} = make({{$info.GoType}}, {{$n}})
 			}
 			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
-{{- if $info.EltInfo.IsList}}
+{{- if $info.EltInfo.IsStruct}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+				} else {
+					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
+				}
+{{- else if $info.EltInfo.IsList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = nil
@@ -321,7 +454,14 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- $j := printf "j%d" $d}}
 			{{$s}}, _ := {{$colName}}.ValueOffsets({{$idx}})
 			for {{$j}} := 0; {{$j}} < {{$info.FixedSizeLen}}; {{$j}}++ {
-{{- if $info.EltInfo.IsFixedSizeList}}
+{{- if $info.EltInfo.IsStruct}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+				} else {
+					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
+				}
+{{- else if $info.EltInfo.IsFixedSizeList}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 {{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
 {{- else if $info.EltInfo.IsList}}
@@ -373,7 +513,14 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 			}
 			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
 				{{$k}} := {{$info.KeyInfo.GoType}}({{$keysCol}}.Value(int({{$s}}) + {{$j}}))
-{{- if $info.EltInfo.IsMap}}
+{{- if $info.EltInfo.IsStruct}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				var sv{{$d}} {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}
+				if !r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
+					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, &sv{{$d}})
+				}
+				{{$target}}[{{$k}}] = sv{{$d}}
+{{- else if $info.EltInfo.IsMap}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
 				if r.col{{$name}}{{repeat "Items" (add $d 1)}}.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = nil
@@ -407,6 +554,12 @@ var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap
 			return s[1:]
 		}
 		return s
+	},
+	"lowerFirst": func(s string) string {
+		if len(s) == 0 {
+			return s
+		}
+		return strings.ToLower(s[:1]) + s[1:]
 	},
 	"add":    func(a, b int) int { return a + b },
 	"repeat": func(s string, n int) string { return strings.Repeat(s, n) },

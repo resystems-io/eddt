@@ -1203,6 +1203,469 @@ func TestPointerPrimitiveRoundTrip(t *testing.T) {
 			tarball(t, "/tmp/arrow-reader-gen-pointer.tar.gz", tmpDir)
 		}
 	})
+
+	t.Run("struct-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Address struct {
+	ZipCode int32
+	City    string
+}
+
+type Profile struct {
+	ID      int32
+	Address Address
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestStructRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: populated struct
+	row0 := Profile{
+		ID: 1,
+		Address: Address{ZipCode: 90210, City: "Beverly Hills"},
+	}
+	writer.Append(&row0)
+
+	// Row 1: zero-value struct
+	row1 := Profile{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+
+	// Row 0: populated
+	var got Profile
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row0) {
+		t.Errorf("row0: got %+v, want %+v", got, row0)
+	}
+
+	// Row 1: zero-value struct fields
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Address != (Address{}) {
+		t.Errorf("row1 Address: got %+v, want zero", got.Address)
+	}
+
+	// Overwrite test: load row 0 then row 1 into same struct
+	reader.LoadRow(0, &got)
+	if got.Address.City != "Beverly Hills" {
+		t.Fatal("expected populated Address after loading row 0")
+	}
+	reader.LoadRow(1, &got)
+	if got.Address != (Address{}) {
+		t.Errorf("dirty read: Address should be zero after loading row 1, got %+v", got.Address)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
+
+	t.Run("pointer-to-struct-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Address struct {
+	ZipCode int32
+	City    string
+}
+
+type Profile struct {
+	ID    int32
+	PAddr *Address
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+	"unsafe"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestPointerToStructRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-nil pointer
+	row0 := Profile{
+		ID:    1,
+		PAddr: &Address{ZipCode: 90210, City: "Beverly Hills"},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil pointer
+	row1 := Profile{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+
+	// Row 0: non-nil
+	var got Profile
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if got.PAddr == nil {
+		t.Fatal("row0 PAddr should not be nil")
+	}
+	if !reflect.DeepEqual(*got.PAddr, *row0.PAddr) {
+		t.Errorf("row0 PAddr: got %+v, want %+v", *got.PAddr, *row0.PAddr)
+	}
+
+	// Row 1: nil
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.PAddr != nil {
+		t.Errorf("row1 PAddr: got %+v, want nil", got.PAddr)
+	}
+
+	// R6 reuse: load non-nil row, save pointer address, reload, verify same address
+	reader.LoadRow(0, &got)
+	if got.PAddr == nil {
+		t.Fatal("expected non-nil PAddr after reload row 0")
+	}
+	addr1 := uintptr(unsafe.Pointer(got.PAddr))
+	reader.LoadRow(0, &got)
+	addr2 := uintptr(unsafe.Pointer(got.PAddr))
+	if addr1 != addr2 {
+		t.Errorf("R6 reuse: PAddr pointer changed (%x -> %x)", addr1, addr2)
+	}
+
+	// Null clearing: load non-nil then nil
+	reader.LoadRow(0, &got)
+	if got.PAddr == nil {
+		t.Fatal("expected non-nil PAddr")
+	}
+	reader.LoadRow(1, &got)
+	if got.PAddr != nil {
+		t.Errorf("null clearing: PAddr should be nil, got %+v", got.PAddr)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
+
+	t.Run("nested-struct-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Inner struct {
+	Value int32
+}
+
+type Middle struct {
+	Child Inner
+}
+
+type Outer struct {
+	ID int32
+	M  Middle
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Outer"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNestedStructRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewOuterArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: populated through 3 levels
+	row0 := Outer{
+		ID: 1,
+		M:  Middle{Child: Inner{Value: 42}},
+	}
+	writer.Append(&row0)
+
+	// Row 1: zero values
+	row1 := Outer{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewOuterArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewOuterArrowReader: %v", err)
+	}
+
+	// Row 0
+	var got Outer
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row0) {
+		t.Errorf("row0: got %+v, want %+v", got, row0)
+	}
+
+	// Row 1
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.M != (Middle{}) {
+		t.Errorf("row1 M: got %+v, want zero", got.M)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
+
+	t.Run("list-of-structs-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Address struct {
+	ZipCode int32
+	City    string
+}
+
+type Profile struct {
+	ID    int32
+	Addrs []Address
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestListOfStructsRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-empty list of structs
+	row0 := Profile{
+		ID: 1,
+		Addrs: []Address{
+			{ZipCode: 90210, City: "Beverly Hills"},
+			{ZipCode: 10001, City: "New York"},
+		},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil list
+	row1 := Profile{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: empty non-nil list
+	row2 := Profile{
+		ID:    3,
+		Addrs: []Address{},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+
+	// Row 0
+	var got Profile
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row0) {
+		t.Errorf("row0: got %+v, want %+v", got, row0)
+	}
+
+	// Row 1: nil list
+	reader.LoadRow(1, &got)
+	if got.Addrs != nil {
+		t.Errorf("row1 Addrs: got %v, want nil", got.Addrs)
+	}
+
+	// Row 2: empty non-nil list
+	reader.LoadRow(2, &got)
+	if got.Addrs == nil || len(got.Addrs) != 0 {
+		t.Errorf("row2 Addrs: got %v, want non-nil empty", got.Addrs)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
+
+	t.Run("map-struct-values-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Contact struct {
+	Email string
+}
+
+type Profile struct {
+	ID       int32
+	Contacts map[string]Contact
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMapStructValuesRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: populated map with struct values
+	row0 := Profile{
+		ID: 1,
+		Contacts: map[string]Contact{
+			"work": {Email: "work@example.com"},
+			"home": {Email: "home@example.com"},
+		},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil map
+	row1 := Profile{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+
+	// Row 0
+	var got Profile
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row0) {
+		t.Errorf("row0: got %+v, want %+v", got, row0)
+	}
+
+	// Row 1: nil map
+	reader.LoadRow(1, &got)
+	if got.Contacts != nil {
+		t.Errorf("row1 Contacts: got %v, want nil", got.Contacts)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
+
+	t.Run("struct-with-containers-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Address struct {
+	ZipCode int32
+	Tags    []string
+}
+
+type Profile struct {
+	ID   int32
+	Addr Address
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestStructWithContainersRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: struct child with list field
+	row0 := Profile{
+		ID: 1,
+		Addr: Address{
+			ZipCode: 90210,
+			Tags:    []string{"primary", "billing"},
+		},
+	}
+	writer.Append(&row0)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+
+	var got Profile
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row0) {
+		t.Errorf("row0: got %+v, want %+v", got, row0)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,
