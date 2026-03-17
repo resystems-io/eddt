@@ -10,6 +10,15 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// pkgPathOf returns the import path of the package that defines obj, or ""
+// if obj has no associated package (e.g. universe-scope builtins).
+func pkgPathOf(obj types.Object) string {
+	if obj.Pkg() != nil {
+		return obj.Pkg().Path()
+	}
+	return ""
+}
+
 // arrowArrayType derives the concrete Arrow array type from the builder type
 // by stripping the "Builder" suffix. E.g. "*array.Int32Builder" → "*array.Int32".
 func arrowArrayType(builder string) string {
@@ -223,6 +232,7 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 					ArrowArrayType: arrowArrayType(arrowBuilder),
 					ValueMethod:    "Value",
 					ZeroExpr:       zeroExprForCast(castType),
+					TypePkgPath:    pkgPathOf(obj),
 				}, nil
 			}
 		}
@@ -240,6 +250,7 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 			if isPointer {
 				fi.GoType = "*" + fi.GoType
 			}
+			fi.TypePkgPath = pkgPathOf(obj)
 			return fi, nil
 		}
 	}

@@ -461,7 +461,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 {{- else}}
 		} else {
-			out.{{.F.Name}} = {{.F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
+			out.{{.F.Name}} = {{.F.QualifiedGoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 {{- end}}
 		}
 	}
@@ -479,7 +479,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			out.{{.F.Name}} = nil
 {{- if .F.UnmarshalMethod}}
 		} else if out.{{.F.Name}} == nil {
-			out.{{.F.Name}} = &{{stripPtr .F.GoType}}{}
+			out.{{.F.Name}} = &{{stripPtr .F.QualifiedGoType}}{}
 {{- if eq .F.UnmarshalMethod "UnmarshalText"}}
 			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value({{$vi}}))); err != nil {
 {{- else}}
@@ -511,10 +511,10 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		}
 {{- else}}
 		} else if out.{{.F.Name}} == nil {
-			v := {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
+			v := {{stripPtr .F.QualifiedGoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 			out.{{.F.Name}} = &v
 		} else {
-			*out.{{.F.Name}} = {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
+			*out.{{.F.Name}} = {{stripPtr .F.QualifiedGoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 		}
 {{- end}}
 	}
@@ -565,10 +565,28 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			if {{$n}} > 0 && cap({{$target}}) >= {{$n}} {
 				{{$target}} = {{$target}}[:{{$n}}]
 			} else {
-				{{$target}} = make({{$info.GoType}}, {{$n}})
+				{{$target}} = make({{$info.QualifiedGoType}}, {{$n}})
 			}
 			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
-{{- if $info.EltInfo.IsStruct}}
+{{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = nil
+				} else {
+					if {{$target}}[{{$j}}] == nil {
+						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					}
+					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
+{{- if $hasUM}}
+					if len(r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs) > 0 {
+						for _, e := range r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs = r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs[:0]
+					}
+{{- end}}
+				}
+{{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
@@ -598,7 +616,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
 				} else {
-					var uv{{$d}} {{$info.EltInfo.GoType}}
+					var uv{{$d}} {{$info.EltInfo.QualifiedGoType}}
 {{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
 					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte({{$childCol}}.Value(idx{{$d}}))); err != nil {
 {{- else}}
@@ -625,7 +643,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 {{- else}}
 				} else {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(idx{{$d}}))
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}({{$childCol}}.Value(idx{{$d}}))
 				}
 {{- end}}
 {{- end}}
@@ -659,7 +677,25 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- $j := printf "j%d" $d}}
 			{{$s}}, _ := {{$colName}}.ValueOffsets({{$idx}})
 			for {{$j}} := 0; {{$j}} < {{$info.FixedSizeLen}}; {{$j}}++ {
-{{- if $info.EltInfo.IsStruct}}
+{{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
+				idx{{$d}} := int({{$s}}) + {{$j}}
+				if {{$childCol}}.IsNull(idx{{$d}}) {
+					{{$target}}[{{$j}}] = nil
+				} else {
+					if {{$target}}[{{$j}}] == nil {
+						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					}
+					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
+{{- if $hasUM}}
+					if len(r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs) > 0 {
+						for _, e := range r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs = r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.errs[:0]
+					}
+{{- end}}
+				}
+{{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
@@ -689,7 +725,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				if {{$childCol}}.IsNull(idx{{$d}}) {
 					{{$target}}[{{$j}}] = {{$info.EltInfo.ZeroExpr}}
 				} else {
-					var uv{{$d}} {{$info.EltInfo.GoType}}
+					var uv{{$d}} {{$info.EltInfo.QualifiedGoType}}
 {{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
 					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte({{$childCol}}.Value(idx{{$d}}))); err != nil {
 {{- else}}
@@ -716,7 +752,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 {{- else}}
 				} else {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(idx{{$d}}))
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}({{$childCol}}.Value(idx{{$d}}))
 				}
 {{- end}}
 {{- end}}
@@ -755,13 +791,30 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			{{$s}}, {{$e}} := {{$colName}}.ValueOffsets({{$idx}})
 			{{$n}} := int({{$e}} - {{$s}})
 			if {{$target}} == nil {
-				{{$target}} = make({{$info.GoType}}, {{$n}})
+				{{$target}} = make({{$info.QualifiedGoType}}, {{$n}})
 			} else {
 				clear({{$target}})
 			}
 			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
-				{{$k}} := {{$info.KeyInfo.GoType}}({{$keysCol}}.Value(int({{$s}}) + {{$j}}))
-{{- if $info.EltInfo.IsStruct}}
+				{{$k}} := {{$info.KeyInfo.QualifiedGoType}}({{$keysCol}}.Value(int({{$s}}) + {{$j}}))
+{{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
+					{{$target}}[{{$k}}] = nil
+				} else {
+					sv{{$d}} := &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, sv{{$d}})
+{{- if $hasUM}}
+					if len(r.reader{{$prefix}}Items.errs) > 0 {
+						for _, e := range r.reader{{$prefix}}Items.errs {
+							r.errs = append(r.errs, ReadError{Row: e.Row, Field: "{{$name}}." + e.Field, Err: e.Err})
+						}
+						r.reader{{$prefix}}Items.errs = r.reader{{$prefix}}Items.errs[:0]
+					}
+{{- end}}
+					{{$target}}[{{$k}}] = sv{{$d}}
+				}
+{{- else if $info.EltInfo.IsStruct}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
 				var sv{{$d}} {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}
 				if !r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
@@ -795,7 +848,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = {{$info.EltInfo.ZeroExpr}}
 				} else {
-					var uv{{$d}} {{$info.EltInfo.GoType}}
+					var uv{{$d}} {{$info.EltInfo.QualifiedGoType}}
 {{- if eq $info.EltInfo.UnmarshalMethod "UnmarshalText"}}
 					if err := uv{{$d}}.{{$info.EltInfo.UnmarshalMethod}}([]byte(r.col{{$prefix}}Items.Value(midx{{$d}}))); err != nil {
 {{- else}}
@@ -822,7 +875,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 {{- else}}
 				} else {
-					{{$target}}[{{$k}}] = {{$info.EltInfo.GoType}}(r.col{{$prefix}}Items.Value(midx{{$d}}))
+					{{$target}}[{{$k}}] = {{$info.EltInfo.QualifiedGoType}}(r.col{{$prefix}}Items.Value(midx{{$d}}))
 				}
 {{- end}}
 {{- end}}

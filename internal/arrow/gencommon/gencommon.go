@@ -52,6 +52,11 @@ type FieldInfo struct {
 	ConvertBackImports []string // Import paths needed by ConvertBackExpr (e.g. ["time"])
 	UnmarshalImports   []string // Import paths needed by UnmarshalMethod (e.g., ["net/netip"])
 	ZeroExpr           string   // Zero-value expression for the Go type, used for null handling (e.g., "0", `""`, "false", "nil")
+
+	// Cross-package qualification fields — populated by ResolveOutputContext.
+
+	TypePkgPath     string // Import path of the package defining this named type (non-struct); empty for bare primitives and well-known types
+	QualifiedGoType string // Fully-qualified GoType for reader templates; equals GoType when no qualification is needed
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -580,6 +585,13 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 		}
 	}
 
+	// Compute QualifiedGoType on all fields (recursively).
+	for i := range structs {
+		for j := range structs[i].Fields {
+			setQualifiedGoTypes(&structs[i].Fields[j], importMap)
+		}
+	}
+
 	// Filter unexported fields from cross-package structs.
 	FilterUnexportedFields(structs, packageName)
 
@@ -687,4 +699,81 @@ func setStructQualifiers(fi *FieldInfo, qualifiers map[string]string) {
 	if fi.KeyInfo != nil {
 		setStructQualifiers(fi.KeyInfo, qualifiers)
 	}
+}
+
+// setQualifiedGoTypes recursively computes QualifiedGoType for a FieldInfo
+// and all its children (EltInfo, KeyInfo). It uses the importMap to qualify
+// named non-struct types, and StructQualifier for struct types.
+func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo) {
+	// Recurse children first so their QualifiedGoType is available for composition.
+	if fi.EltInfo != nil {
+		setQualifiedGoTypes(fi.EltInfo, importMap)
+	}
+	if fi.KeyInfo != nil {
+		setQualifiedGoTypes(fi.KeyInfo, importMap)
+	}
+
+	// Named non-struct type with a known package — qualify via importMap.
+	if fi.TypePkgPath != "" {
+		if imp, ok := importMap[fi.TypePkgPath]; ok {
+			qualifier := imp.Name
+			if imp.Alias != "" {
+				qualifier = imp.Alias
+			}
+			// Strip any leading "*" from GoType, qualify, then re-add.
+			base := fi.GoType
+			prefix := ""
+			if len(base) > 0 && base[0] == '*' {
+				prefix = "*"
+				base = base[1:]
+			}
+			fi.QualifiedGoType = prefix + qualifier + "." + base
+			return
+		}
+	}
+
+	// Struct types — use StructQualifier + StructName.
+	if fi.IsStruct {
+		q := fi.StructQualifier + fi.StructName
+		if fi.IsPointer {
+			q = "*" + q
+		}
+		fi.QualifiedGoType = q
+		return
+	}
+
+	// Anonymous list — compose from child.
+	if fi.IsList && fi.EltInfo != nil {
+		inner := "[]" + fi.EltInfo.QualifiedGoType
+		if fi.IsPointer {
+			inner = "*" + inner
+		}
+		fi.QualifiedGoType = inner
+		return
+	}
+
+	// Anonymous fixed-size list — compose from child.
+	if fi.IsFixedSizeList && fi.EltInfo != nil {
+		inner := "[" + fi.FixedSizeLen + "]" + fi.EltInfo.QualifiedGoType
+		if fi.IsPointer {
+			inner = "*" + inner
+		}
+		fi.QualifiedGoType = inner
+		// Also fix ZeroExpr for fixed-size lists (it uses the element GoType).
+		fi.ZeroExpr = "[" + fi.FixedSizeLen + "]" + fi.EltInfo.QualifiedGoType + "{}"
+		return
+	}
+
+	// Anonymous map — compose from key and value children.
+	if fi.IsMap && fi.KeyInfo != nil && fi.EltInfo != nil {
+		inner := "map[" + fi.KeyInfo.QualifiedGoType + "]" + fi.EltInfo.QualifiedGoType
+		if fi.IsPointer {
+			inner = "*" + inner
+		}
+		fi.QualifiedGoType = inner
+		return
+	}
+
+	// Default: bare primitive, well-known type, or same-package named type.
+	fi.QualifiedGoType = fi.GoType
 }

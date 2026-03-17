@@ -3123,6 +3123,183 @@ func TestMissingColumns(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "TestMissingColumns")
 	})
+
+	// ---- Cross-package qualification bugs ----
+	//
+	// These tests reproduce compilation failures in generated reader code when
+	// structs are defined in one package but the reader is generated into a
+	// different output package (e.g. -n outpkg). Three bugs are exercised:
+	//
+	//   Bug 1: GoType for named primitives (enums) and container GoType strings
+	//          are never qualified (e.g. Status instead of pkga.Status, make([]Inner)
+	//          instead of make([]pkgb.Inner)).
+	//   Bug 2: Null guard for pointer-to-struct slice elements emits a value
+	//          literal (Inner{}) instead of a pointer literal (&Inner{}).
+	//   Bug 3: LoadRow for pointer-to-struct slice elements takes the address of
+	//          an already-pointer element (&out.Items[j] → **Inner).
+
+	t.Run("cross-package-named-types-and-ptr-slices", func(t *testing.T) {
+		// Single module with three sub-packages:
+		//   pkga/ — Status enum + Outer struct
+		//   pkgb/ — Inner struct
+		//   outpkg/ — generated writer+reader + test harness
+		//
+		// The reader is generated with outPkgNameOverride="outpkg", which differs
+		// from both pkga and pkgb, forcing package qualifiers on all type references.
+
+		tmpDir := t.TempDir()
+
+		pkgADir := filepath.Join(tmpDir, "pkga")
+		pkgBDir := filepath.Join(tmpDir, "pkgb")
+		outDir := filepath.Join(tmpDir, "outpkg")
+
+		if err := os.MkdirAll(pkgADir, 0755); err != nil {
+			t.Fatalf("mkdir pkga: %v", err)
+		}
+		if err := os.MkdirAll(pkgBDir, 0755); err != nil {
+			t.Fatalf("mkdir pkgb: %v", err)
+		}
+		if err := os.MkdirAll(outDir, 0755); err != nil {
+			t.Fatalf("mkdir outpkg: %v", err)
+		}
+
+		// Root go.mod — single module containing all three packages.
+		modContent := "module testmod\n\ngo 1.25.0\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		// pkgb: Inner struct (referenced cross-package from pkga).
+		pkgBCode := `package pkgb
+
+type Inner struct {
+	X int32
+	Y string
+}
+`
+		if err := os.WriteFile(filepath.Join(pkgBDir, "types.go"), []byte(pkgBCode), 0644); err != nil {
+			t.Fatalf("write pkgb: %v", err)
+		}
+
+		// pkga: Status enum (named primitive) and Outer struct.
+		// Outer has:
+		//   - Status  Status          → named primitive from same pkg (GoType qualification bug)
+		//   - Loc     pkgb.Inner      → struct from other pkg (value; make GoType bug)
+		//   - Items   []pkgb.Inner    → slice of value-structs (make GoType bug)
+		//   - History []*pkgb.Inner   → slice of pointer-structs (make GoType + null guard + LoadRow bugs)
+		pkgACode := `package pkga
+
+import "testmod/pkgb"
+
+type Status int32
+
+type Outer struct {
+	ID      int32
+	Status  Status
+	Loc     pkgb.Inner
+	Items   []pkgb.Inner
+	History []*pkgb.Inner
+}
+`
+		if err := os.WriteFile(filepath.Join(pkgADir, "types.go"), []byte(pkgACode), 0644); err != nil {
+			t.Fatalf("write pkga: %v", err)
+		}
+
+		// Get arrow dependency.
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+
+		// Generate writer into outpkg.
+		writerOut := filepath.Join(outDir, "outer_arrow_writer.go")
+		wg := writergen.NewGenerator([]string{pkgADir, pkgBDir}, []string{"Outer"}, writerOut, false, nil)
+		if err := wg.Run("outpkg"); err != nil {
+			t.Fatalf("writer-gen failed: %v", err)
+		}
+
+		// Generate reader into outpkg.
+		readerOut := filepath.Join(outDir, "outer_arrow_reader.go")
+		rg := NewGenerator([]string{pkgADir, pkgBDir}, []string{"Outer"}, readerOut, false, nil)
+		if err := rg.Run("outpkg"); err != nil {
+			t.Fatalf("reader-gen failed: %v", err)
+		}
+
+		// Dump generated reader for debugging on failure.
+		if content, err := os.ReadFile(readerOut); err == nil {
+			t.Logf("Generated reader:\n%s", content)
+		}
+
+		testCode := `package outpkg
+
+import (
+	"testing"
+
+	"testmod/pkga"
+	"testmod/pkgb"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestCrossPackageRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewOuterArrowWriter(pool)
+	defer writer.Release()
+
+	writer.Append(&pkga.Outer{
+		ID:      1,
+		Status:  pkga.Status(42),
+		Loc:     pkgb.Inner{X: 10, Y: "hello"},
+		Items:   []pkgb.Inner{{X: 20, Y: "a"}, {X: 30, Y: "b"}},
+		History: []*pkgb.Inner{{X: 1, Y: "x"}, {X: 2, Y: "y"}},
+	})
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewOuterArrowReader(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got pkga.Outer
+	got.Items = make([]pkgb.Inner, 0, 4)
+	got.History = make([]*pkgb.Inner, 0, 4)
+	reader.LoadRow(0, &got)
+
+	if got.Status != pkga.Status(42) {
+		t.Errorf("Status: got %d, want 42", got.Status)
+	}
+	if got.Loc.X != 10 || got.Loc.Y != "hello" {
+		t.Errorf("Loc: got %+v", got.Loc)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("Items: got %d elements, want 2", len(got.Items))
+	}
+	if got.Items[0].X != 20 || got.Items[1].X != 30 {
+		t.Errorf("Items: got %+v", got.Items)
+	}
+	if len(got.History) != 2 {
+		t.Fatalf("History: got %d elements, want 2", len(got.History))
+	}
+	if got.History[0] == nil || got.History[0].X != 1 || got.History[0].Y != "x" {
+		t.Errorf("History[0]: got %+v", got.History[0])
+	}
+	if got.History[1] == nil || got.History[1].X != 2 || got.History[1].Y != "y" {
+		t.Errorf("History[1]: got %+v", got.History[1])
+	}
+}
+`
+		if err := os.WriteFile(filepath.Join(outDir, "outer_test.go"), []byte(testCode), 0644); err != nil {
+			t.Fatalf("write test: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+		runCmd(t, tmpDir, "go", "test", "-v", "-run", "TestCrossPackageRoundTrip", "./outpkg/")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-cross-pkg.tar.gz", tmpDir)
+		}
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,
