@@ -646,6 +646,444 @@ func TestMixedListFixedRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("map-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type MapStruct struct {
+	ID     int32
+	Scores map[string]float64
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"MapStruct"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMapRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMapStructArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-empty map
+	row0 := MapStruct{
+		ID:     1,
+		Scores: map[string]float64{"math": 95.5, "science": 88.0},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil map (null)
+	row1 := MapStruct{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: empty non-nil map
+	row2 := MapStruct{
+		ID:     3,
+		Scores: map[string]float64{},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 3 {
+		t.Fatalf("expected 3 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewMapStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMapStructArrowReader: %v", err)
+	}
+
+	// --- Row 0: non-empty map ---
+	var got MapStruct
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Scores, map[string]float64{"math": 95.5, "science": 88.0}) {
+		t.Errorf("row0 Scores: got %v, want map[math:95.5 science:88]", got.Scores)
+	}
+
+	// --- R6 reuse: reload same row, verify map is reused (not nil between loads) ---
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got.Scores, map[string]float64{"math": 95.5, "science": 88.0}) {
+		t.Errorf("R6 reuse Scores: got %v", got.Scores)
+	}
+
+	// --- Row 1: nil map ---
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Scores != nil {
+		t.Errorf("row1 Scores: got %v, want nil", got.Scores)
+	}
+
+	// --- Null clearing: load row 0 then row 1 ---
+	reader.LoadRow(0, &got)
+	if got.Scores == nil {
+		t.Fatal("expected non-nil Scores after loading row 0")
+	}
+	reader.LoadRow(1, &got)
+	if got.Scores != nil {
+		t.Errorf("null clearing: Scores should be nil after loading null row, got %v", got.Scores)
+	}
+
+	// --- Row 2: empty non-nil map ---
+	reader.LoadRow(2, &got)
+	if got.ID != 3 {
+		t.Errorf("row2 ID: got %d, want 3", got.ID)
+	}
+	if got.Scores == nil || len(got.Scores) != 0 {
+		t.Errorf("row2 Scores: got %v, want non-nil empty map", got.Scores)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-map.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("map-int-keys-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type IntKeyMap struct {
+	ID   int32
+	Data map[int32]string
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"IntKeyMap"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestIntKeyMapRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewIntKeyMapArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-empty map with int keys
+	row0 := IntKeyMap{
+		ID:   1,
+		Data: map[int32]string{1: "one", 2: "two", 3: "three"},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil map
+	row1 := IntKeyMap{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewIntKeyMapArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewIntKeyMapArrowReader: %v", err)
+	}
+
+	var got IntKeyMap
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Data, map[int32]string{1: "one", 2: "two", 3: "three"}) {
+		t.Errorf("row0 Data: got %v", got.Data)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.Data != nil {
+		t.Errorf("row1 Data: got %v, want nil", got.Data)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-map-int-keys.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("nested-map-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type NestedMap struct {
+	ID       int32
+	Settings map[string]map[string]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"NestedMap"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNestedMapRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewNestedMapArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: nested map with values
+	row0 := NestedMap{
+		ID: 1,
+		Settings: map[string]map[string]int32{
+			"audio":   {"volume": 80, "bass": 50},
+			"display": {"brightness": 100},
+		},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil outer map
+	row1 := NestedMap{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: nil inner map value
+	row2 := NestedMap{
+		ID: 3,
+		Settings: map[string]map[string]int32{
+			"audio": nil,
+			"video": {"fps": 60},
+		},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewNestedMapArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewNestedMapArrowReader: %v", err)
+	}
+
+	// --- Row 0: nested map ---
+	var got NestedMap
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Settings, map[string]map[string]int32{
+		"audio":   {"volume": 80, "bass": 50},
+		"display": {"brightness": 100},
+	}) {
+		t.Errorf("row0 Settings: got %v", got.Settings)
+	}
+
+	// --- Row 1: nil outer map ---
+	reader.LoadRow(1, &got)
+	if got.Settings != nil {
+		t.Errorf("row1 Settings: got %v, want nil", got.Settings)
+	}
+
+	// --- Row 2: nil inner map value ---
+	reader.LoadRow(2, &got)
+	if got.Settings == nil {
+		t.Fatal("row2 Settings should not be nil")
+	}
+	if got.Settings["audio"] != nil {
+		t.Errorf("row2 Settings[audio]: got %v, want nil", got.Settings["audio"])
+	}
+	if !reflect.DeepEqual(got.Settings["video"], map[string]int32{"fps": 60}) {
+		t.Errorf("row2 Settings[video]: got %v", got.Settings["video"])
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-nested-map.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("map-list-values-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type MapListVal struct {
+	ID   int32
+	Data map[string][]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"MapListVal"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMapListValRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewMapListValArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: map with list values
+	row0 := MapListVal{
+		ID: 1,
+		Data: map[string][]int32{
+			"primes": {2, 3, 5, 7},
+			"evens":  {2, 4, 6},
+		},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil map
+	row1 := MapListVal{ID: 2}
+	writer.Append(&row1)
+
+	// Row 2: map with nil slice value
+	row2 := MapListVal{
+		ID: 3,
+		Data: map[string][]int32{
+			"empty": nil,
+			"one":   {1},
+		},
+	}
+	writer.Append(&row2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewMapListValArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMapListValArrowReader: %v", err)
+	}
+
+	// --- Row 0: map with list values ---
+	var got MapListVal
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Data, map[string][]int32{
+		"primes": {2, 3, 5, 7},
+		"evens":  {2, 4, 6},
+	}) {
+		t.Errorf("row0 Data: got %v", got.Data)
+	}
+
+	// --- Row 1: nil map ---
+	reader.LoadRow(1, &got)
+	if got.Data != nil {
+		t.Errorf("row1 Data: got %v, want nil", got.Data)
+	}
+
+	// --- Row 2: map with nil slice value ---
+	reader.LoadRow(2, &got)
+	if got.Data == nil {
+		t.Fatal("row2 Data should not be nil")
+	}
+	if got.Data["empty"] != nil {
+		t.Errorf("row2 Data[empty]: got %v, want nil", got.Data["empty"])
+	}
+	if !reflect.DeepEqual(got.Data["one"], []int32{1}) {
+		t.Errorf("row2 Data[one]: got %v", got.Data["one"])
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-map-list-values.tar.gz", tmpDir)
+		}
+	})
+
+	t.Run("named-map-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Settings map[string]int32
+
+type NamedMapStruct struct {
+	ID     int32
+	Config Settings
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"NamedMapStruct"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestNamedMapRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewNamedMapStructArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: non-empty named map
+	row0 := NamedMapStruct{
+		ID:     1,
+		Config: Settings{"volume": 80, "brightness": 100},
+	}
+	writer.Append(&row0)
+
+	// Row 1: nil named map
+	row1 := NamedMapStruct{ID: 2}
+	writer.Append(&row1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewNamedMapStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewNamedMapStructArrowReader: %v", err)
+	}
+
+	var got NamedMapStruct
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if !reflect.DeepEqual(got.Config, Settings{"volume": 80, "brightness": 100}) {
+		t.Errorf("row0 Config: got %v", got.Config)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.Config != nil {
+		t.Errorf("row1 Config: got %v, want nil", got.Config)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "")
+
+		if false {
+			tarball(t, "/tmp/arrow-reader-gen-named-map.tar.gz", tmpDir)
+		}
+	})
+
 	t.Run("pointer-to-primitive-round-trip", func(t *testing.T) {
 		goCode := `package dummy
 

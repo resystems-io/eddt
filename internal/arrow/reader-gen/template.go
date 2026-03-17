@@ -68,10 +68,28 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 }
 {{end}}
 {{- define "colField" -}}
-{{- if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
+{{- if and .IsMap (not .IsPointer)}}
+{{- template "colFieldMap" dict "Name" .Name "Info" . "Depth" 0}}
+{{- else if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
 	col{{.Name}} {{.ArrowArrayType}}
+{{- end}}
+{{- end}}
+
+{{- define "colFieldMap" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $d := .Depth -}}
+{{- $prefix := printf "%s%s" $name (repeat "Items" $d)}}
+	col{{$prefix}} {{$info.ArrowArrayType}}
+	col{{$prefix}}Keys {{$info.KeyInfo.ArrowArrayType}}
+{{- if $info.EltInfo.IsMap}}
+{{- template "colFieldMap" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+{{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
+{{- template "colFieldList" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Depth" 0}}
+{{- else}}
+	col{{$prefix}}Items {{$info.EltInfo.ArrowArrayType}}
 {{- end}}
 {{- end}}
 
@@ -89,7 +107,9 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 
 {{- define "initField" -}}
 {{- $f := .Field -}}
-{{- if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
+{{- if and $f.IsMap (not $f.IsPointer)}}
+{{- template "initFieldMap" dict "Name" $f.Name "Info" $f}}
+{{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
 {{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
@@ -99,6 +119,61 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 		}
 		r.col{{$f.Name}} = col
 	}
+{{- end}}
+{{- end}}
+
+{{- define "initFieldMap" -}}
+{{- $name := .Name -}}
+{{- $info := .Info}}
+	if indices := schema.FieldIndices("{{$name}}"); len(indices) > 0 {
+		col, ok := rec.Column(indices[0]).({{$info.ArrowArrayType}})
+		if !ok {
+			return nil, fmt.Errorf("column %q: expected {{$info.ArrowArrayType}}, got %T", "{{$name}}", rec.Column(indices[0]))
+		}
+		r.col{{$name}} = col
+{{- template "initFieldMapChild" dict "Name" $name "Info" $info "Depth" 0}}
+	}
+{{- end}}
+
+{{- define "initFieldMapChild" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $d := .Depth -}}
+{{- $prefix := printf "%s%s" $name (repeat "Items" $d) -}}
+{{- $parentCol := printf "r.col%s" $prefix}}
+		{
+			keys, ok := {{$parentCol}}.Keys().({{$info.KeyInfo.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q keys: expected {{$info.KeyInfo.ArrowArrayType}}, got %T", "{{$name}}", {{$parentCol}}.Keys())
+			}
+			r.col{{$prefix}}Keys = keys
+		}
+{{- if $info.EltInfo.IsMap}}
+		{
+			items, ok := {{$parentCol}}.Items().({{$info.EltInfo.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q items: expected {{$info.EltInfo.ArrowArrayType}}, got %T", "{{$name}}", {{$parentCol}}.Items())
+			}
+			r.col{{$name}}{{repeat "Items" (add $d 1)}} = items
+		}
+{{- template "initFieldMapChild" dict "Name" $name "Info" $info.EltInfo "Depth" (add $d 1)}}
+{{- else if or $info.EltInfo.IsList $info.EltInfo.IsFixedSizeList}}
+		{
+			items, ok := {{$parentCol}}.Items().({{$info.EltInfo.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q items: expected {{$info.EltInfo.ArrowArrayType}}, got %T", "{{$name}}", {{$parentCol}}.Items())
+			}
+			r.col{{$prefix}}Items = items
+{{- template "initFieldListChild" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Depth" 0}}
+		}
+{{- else}}
+		{
+			items, ok := {{$parentCol}}.Items().({{$info.EltInfo.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q items: expected {{$info.EltInfo.ArrowArrayType}}, got %T", "{{$name}}", {{$parentCol}}.Items())
+			}
+			r.col{{$prefix}}Items = items
+		}
 {{- end}}
 {{- end}}
 
@@ -143,7 +218,9 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- end}}
 
 {{- define "loadField" -}}
-{{- if and .IsList (not .IsPointer)}}
+{{- if and .IsMap (not .IsPointer)}}
+{{- template "loadFieldMap" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
+{{- else if and .IsList (not .IsPointer)}}
 {{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
 {{- else if and .IsFixedSizeList (not .IsPointer)}}
 {{- template "loadFieldFixedList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
@@ -256,6 +333,62 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 				}
 {{- else}}
 				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+{{- end}}
+			}
+{{- end}}
+
+{{- define "loadFieldMap" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target}}
+	if r.col{{$name}} != nil {
+		if r.col{{$name}}.IsNull(i) {
+			{{$target}} = nil
+		} else {
+{{- template "loadFieldMapInner" dict "Name" $name "Info" $info "Target" $target "Depth" 0 "IdxExpr" "i"}}
+		}
+	}
+{{- end}}
+
+{{- define "loadFieldMapInner" -}}
+{{- $name := .Name -}}
+{{- $info := .Info -}}
+{{- $target := .Target -}}
+{{- $d := .Depth -}}
+{{- $idx := .IdxExpr -}}
+{{- $prefix := printf "%s%s" $name (repeat "Items" $d) -}}
+{{- $colName := printf "r.col%s" $prefix -}}
+{{- $keysCol := printf "r.col%sKeys" $prefix -}}
+{{- $s := printf "s%d" $d -}}
+{{- $e := printf "e%d" $d -}}
+{{- $n := printf "n%d" $d -}}
+{{- $j := printf "j%d" $d -}}
+{{- $k := printf "k%d" $d}}
+			{{$s}}, {{$e}} := {{$colName}}.ValueOffsets({{$idx}})
+			{{$n}} := int({{$e}} - {{$s}})
+			if {{$target}} == nil {
+				{{$target}} = make({{$info.GoType}}, {{$n}})
+			} else {
+				clear({{$target}})
+			}
+			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
+				{{$k}} := {{$info.KeyInfo.GoType}}({{$keysCol}}.Value(int({{$s}}) + {{$j}}))
+{{- if $info.EltInfo.IsMap}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				if r.col{{$name}}{{repeat "Items" (add $d 1)}}.IsNull(midx{{$d}}) {
+					{{$target}}[{{$k}}] = nil
+				} else {
+{{- template "loadFieldMapInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" (add $d 1) "IdxExpr" (printf "midx%d" $d)}}
+				}
+{{- else if $info.EltInfo.IsList}}
+				midx{{$d}} := int({{$s}}) + {{$j}}
+				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
+					{{$target}}[{{$k}}] = nil
+				} else {
+{{- template "loadFieldListInner" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" 0 "IdxExpr" (printf "midx%d" $d)}}
+				}
+{{- else}}
+				{{$target}}[{{$k}}] = {{$info.EltInfo.GoType}}(r.col{{$prefix}}Items.Value(int({{$s}}) + {{$j}}))
 {{- end}}
 			}
 {{- end}}

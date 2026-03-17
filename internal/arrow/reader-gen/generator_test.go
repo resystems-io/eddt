@@ -373,6 +373,181 @@ type FixedStruct struct {
 	}
 }
 
+func TestGenerator_ParseMapFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	testCode := `package testpkg
+
+type MapStruct struct {
+	Scores map[string]float64
+	IntMap  map[int32]string
+	Nested  map[string]map[string]int32
+	ListVal map[string][]int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test_structs.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"MapStruct"}, "out.go", false, nil)
+
+	_, _, structs, err := g.Parse()
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	if len(structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(structs))
+	}
+
+	expected := gencommon.StructInfo{
+		Name:    "MapStruct",
+		PkgPath: "testpkg",
+		PkgName: "testpkg",
+		Fields: []gencommon.FieldInfo{
+			{
+				Name:           "Scores",
+				GoType:         "map[string]float64",
+				ArrowType:      "arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Float64)",
+				ArrowBuilder:   "*array.MapBuilder",
+				IsMap:          true,
+				ArrowArrayType: "*array.Map",
+				ZeroExpr:       "nil",
+				KeyInfo: &gencommon.FieldInfo{
+					GoType:         "string",
+					ArrowType:      "arrow.BinaryTypes.String",
+					ArrowBuilder:   "*array.StringBuilder",
+					CastType:       "string",
+					ArrowArrayType: "*array.String",
+					ValueMethod:    "Value",
+					ZeroExpr:       `""`,
+				},
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "float64",
+					ArrowType:      "arrow.PrimitiveTypes.Float64",
+					ArrowBuilder:   "*array.Float64Builder",
+					CastType:       "float64",
+					ArrowArrayType: "*array.Float64",
+					ValueMethod:    "Value",
+					ZeroExpr:       "0",
+				},
+			},
+			{
+				Name:           "IntMap",
+				GoType:         "map[int32]string",
+				ArrowType:      "arrow.MapOf(arrow.PrimitiveTypes.Int32, arrow.BinaryTypes.String)",
+				ArrowBuilder:   "*array.MapBuilder",
+				IsMap:          true,
+				ArrowArrayType: "*array.Map",
+				ZeroExpr:       "nil",
+				KeyInfo: &gencommon.FieldInfo{
+					GoType:         "int32",
+					ArrowType:      "arrow.PrimitiveTypes.Int32",
+					ArrowBuilder:   "*array.Int32Builder",
+					CastType:       "int32",
+					ArrowArrayType: "*array.Int32",
+					ValueMethod:    "Value",
+					ZeroExpr:       "0",
+				},
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "string",
+					ArrowType:      "arrow.BinaryTypes.String",
+					ArrowBuilder:   "*array.StringBuilder",
+					CastType:       "string",
+					ArrowArrayType: "*array.String",
+					ValueMethod:    "Value",
+					ZeroExpr:       `""`,
+				},
+			},
+			{
+				Name:           "Nested",
+				GoType:         "map[string]map[string]int32",
+				ArrowType:      "arrow.MapOf(arrow.BinaryTypes.String, arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int32))",
+				ArrowBuilder:   "*array.MapBuilder",
+				IsMap:          true,
+				ArrowArrayType: "*array.Map",
+				ZeroExpr:       "nil",
+				KeyInfo: &gencommon.FieldInfo{
+					GoType:         "string",
+					ArrowType:      "arrow.BinaryTypes.String",
+					ArrowBuilder:   "*array.StringBuilder",
+					CastType:       "string",
+					ArrowArrayType: "*array.String",
+					ValueMethod:    "Value",
+					ZeroExpr:       `""`,
+				},
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "map[string]int32",
+					ArrowType:      "arrow.MapOf(arrow.BinaryTypes.String, arrow.PrimitiveTypes.Int32)",
+					ArrowBuilder:   "*array.MapBuilder",
+					IsMap:          true,
+					ArrowArrayType: "*array.Map",
+					ZeroExpr:       "nil",
+					KeyInfo: &gencommon.FieldInfo{
+						GoType:         "string",
+						ArrowType:      "arrow.BinaryTypes.String",
+						ArrowBuilder:   "*array.StringBuilder",
+						CastType:       "string",
+						ArrowArrayType: "*array.String",
+						ValueMethod:    "Value",
+						ZeroExpr:       `""`,
+					},
+					EltInfo: &gencommon.FieldInfo{
+						GoType:         "int32",
+						ArrowType:      "arrow.PrimitiveTypes.Int32",
+						ArrowBuilder:   "*array.Int32Builder",
+						CastType:       "int32",
+						ArrowArrayType: "*array.Int32",
+						ValueMethod:    "Value",
+						ZeroExpr:       "0",
+					},
+				},
+			},
+			{
+				Name:           "ListVal",
+				GoType:         "map[string][]int32",
+				ArrowType:      "arrow.MapOf(arrow.BinaryTypes.String, arrow.ListOf(arrow.PrimitiveTypes.Int32))",
+				ArrowBuilder:   "*array.MapBuilder",
+				IsMap:          true,
+				ArrowArrayType: "*array.Map",
+				ZeroExpr:       "nil",
+				KeyInfo: &gencommon.FieldInfo{
+					GoType:         "string",
+					ArrowType:      "arrow.BinaryTypes.String",
+					ArrowBuilder:   "*array.StringBuilder",
+					CastType:       "string",
+					ArrowArrayType: "*array.String",
+					ValueMethod:    "Value",
+					ZeroExpr:       `""`,
+				},
+				EltInfo: &gencommon.FieldInfo{
+					GoType:         "[]int32",
+					ArrowType:      "arrow.ListOf(arrow.PrimitiveTypes.Int32)",
+					ArrowBuilder:   "*array.ListBuilder",
+					IsList:         true,
+					ArrowArrayType: "*array.List",
+					ZeroExpr:       "nil",
+					EltInfo: &gencommon.FieldInfo{
+						GoType:         "int32",
+						ArrowType:      "arrow.PrimitiveTypes.Int32",
+						ArrowBuilder:   "*array.Int32Builder",
+						CastType:       "int32",
+						ArrowArrayType: "*array.Int32",
+						ValueMethod:    "Value",
+						ZeroExpr:       "0",
+					},
+				},
+			},
+		},
+	}
+
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestGenerator_RunReservedNames verifies that reader-gen uses "arrow" and "array"
 // (but not "memory") as reserved names, unlike writer-gen which also reserves "memory".
 func TestGenerator_RunReservedNames(t *testing.T) {
