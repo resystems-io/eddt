@@ -2654,6 +2654,475 @@ func TestDictEncodedBinaryRoundTrip(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "TestDictEncodedBinaryRoundTrip")
 	})
+
+	t.Run("binary-unmarshal-round-trip", func(t *testing.T) {
+		// BinVal must live in a separate package so the parser treats it as an
+		// external type and falls through to marshal method detection (local
+		// struct types take the nested-struct path instead).
+		tmpDir := t.TempDir()
+
+		binPkgDir := filepath.Join(tmpDir, "binpkg")
+		if err := os.MkdirAll(binPkgDir, 0755); err != nil {
+			t.Fatalf("mkdir binpkg: %v", err)
+		}
+
+		binValCode := `package binpkg
+
+import "fmt"
+
+// BinVal implements only encoding.BinaryMarshaler/BinaryUnmarshaler (not TextMarshaler).
+type BinVal struct {
+	Data [4]byte
+}
+
+func (b BinVal) MarshalBinary() ([]byte, error) {
+	return b.Data[:], nil
+}
+
+func (b *BinVal) UnmarshalBinary(data []byte) error {
+	if len(data) != 4 {
+		return fmt.Errorf("BinVal: expected 4 bytes, got %d", len(data))
+	}
+	copy(b.Data[:], data)
+	return nil
+}
+`
+		if err := os.WriteFile(filepath.Join(binPkgDir, "binval.go"), []byte(binValCode), 0644); err != nil {
+			t.Fatalf("write binval.go: %v", err)
+		}
+
+		goCode := `package dummy
+
+import "dummy/binpkg"
+
+type BinRecord struct {
+	Val    binpkg.BinVal
+	OptVal *binpkg.BinVal
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+			t.Fatalf("write dummy.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+
+		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		wg := writergen.NewGenerator([]string{tmpDir}, []string{"BinRecord"}, writerOut, false, nil)
+		if err := wg.Run(""); err != nil {
+			t.Fatalf("writer-gen Run() failed: %v", err)
+		}
+
+		readerOut := filepath.Join(tmpDir, "dummy_arrow_reader.go")
+		rg := NewGenerator([]string{tmpDir}, []string{"BinRecord"}, readerOut, false, nil)
+		if err := rg.Run(""); err != nil {
+			t.Fatalf("reader-gen Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"dummy/binpkg"
+
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestBinaryUnmarshalRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewBinRecordArrowWriter(pool)
+	defer writer.Release()
+
+	v1 := binpkg.BinVal{Data: [4]byte{0xDE, 0xAD, 0xBE, 0xEF}}
+	v2 := binpkg.BinVal{Data: [4]byte{0xCA, 0xFE, 0xBA, 0xBE}}
+
+	// Row 0: both populated
+	r0 := BinRecord{Val: v1, OptVal: &v2}
+	writer.Append(&r0)
+
+	// Row 1: nil pointer
+	r1 := BinRecord{Val: v2, OptVal: nil}
+	writer.Append(&r1)
+
+	// Row 2: zero value (writer writes MarshalBinary of zero → 4 zero bytes)
+	r2 := BinRecord{}
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewBinRecordArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewBinRecordArrowReader: %v", err)
+	}
+
+	// Row 0: both populated
+	var got BinRecord
+	reader.LoadRow(0, &got)
+	if got.Val != v1 {
+		t.Errorf("row0 Val: got %v, want %v", got.Val, v1)
+	}
+	if got.OptVal == nil || *got.OptVal != v2 {
+		t.Errorf("row0 OptVal: got %v, want %v", got.OptVal, &v2)
+	}
+
+	// Row 1: nil pointer
+	reader.LoadRow(1, &got)
+	if got.Val != v2 {
+		t.Errorf("row1 Val: got %v, want %v", got.Val, v2)
+	}
+	if got.OptVal != nil {
+		t.Errorf("row1 OptVal: got %v, want nil", got.OptVal)
+	}
+
+	// Row 2: zero value
+	reader.LoadRow(2, &got)
+	if got.Val != (binpkg.BinVal{}) {
+		t.Errorf("row2 Val: got %v, want zero", got.Val)
+	}
+
+	if errs := reader.Errors(); len(errs) != 0 {
+		t.Errorf("unexpected errors: %v", errs)
+	}
+
+	// --- Error accumulation: inject invalid binary payload ---
+	bldr := array.NewRecordBuilder(pool, NewBinRecordSchema())
+	defer bldr.Release()
+
+	valCol := bldr.Field(0).(*array.BinaryBuilder)
+	optValCol := bldr.Field(1).(*array.BinaryBuilder)
+
+	// Row with invalid data (2 bytes instead of 4)
+	valCol.Append([]byte{0x01, 0x02})
+	optValCol.AppendNull()
+
+	// Row with valid data
+	valCol.Append([]byte{0xDE, 0xAD, 0xBE, 0xEF})
+	optValCol.AppendNull()
+
+	badRec := bldr.NewRecord()
+	defer badRec.Release()
+
+	reader2, err := NewBinRecordArrowReader(badRec)
+	if err != nil {
+		t.Fatalf("NewBinRecordArrowReader (bad): %v", err)
+	}
+
+	var got2 BinRecord
+	reader2.LoadRow(0, &got2)
+
+	errs := reader2.Errors()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Row != 0 {
+		t.Errorf("error Row: got %d, want 0", errs[0].Row)
+	}
+	if errs[0].Field != "Val" {
+		t.Errorf("error Field: got %q, want %q", errs[0].Field, "Val")
+	}
+	// Field should be zeroed on error
+	if got2.Val != (binpkg.BinVal{}) {
+		t.Errorf("Val should be zero after error, got %v", got2.Val)
+	}
+
+	// Good row after reset
+	reader2.ResetErrors()
+	reader2.LoadRow(1, &got2)
+	if got2.Val != v1 {
+		t.Errorf("row1 Val: got %v, want %v", got2.Val, v1)
+	}
+	if len(reader2.Errors()) != 0 {
+		t.Errorf("expected 0 errors after good row, got %v", reader2.Errors())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestBinaryUnmarshalRoundTrip")
+	})
+
+	t.Run("init-error-paths", func(t *testing.T) {
+		goCode := `package dummy
+
+type ErrorPathStruct struct {
+	ID   int32
+	Name string
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"ErrorPathStruct"})
+
+		testCode := `package dummy
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestInitErrorPaths(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	t.Run("wrong-type-non-dict-column", func(t *testing.T) {
+		// ID expects *array.Int32, give it *array.String
+		schema := arrow.NewSchema([]arrow.Field{
+			{Name: "ID", Type: arrow.BinaryTypes.String, Nullable: true},
+		}, nil)
+		bldr := array.NewRecordBuilder(pool, schema)
+		bldr.Field(0).(*array.StringBuilder).Append("oops")
+		rec := bldr.NewRecord()
+		defer rec.Release()
+		defer bldr.Release()
+
+		_, err := NewErrorPathStructArrowReader(rec)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), ` + "`" + `column "ID": expected *array.Int32` + "`" + `) {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("wrong-type-dict-candidate-column", func(t *testing.T) {
+		// Name expects *array.String or *array.Dictionary, give it *array.Int32
+		schema := arrow.NewSchema([]arrow.Field{
+			{Name: "Name", Type: arrow.PrimitiveTypes.Int32, Nullable: true},
+		}, nil)
+		bldr := array.NewRecordBuilder(pool, schema)
+		bldr.Field(0).(*array.Int32Builder).Append(42)
+		rec := bldr.NewRecord()
+		defer rec.Release()
+		defer bldr.Release()
+
+		_, err := NewErrorPathStructArrowReader(rec)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), ` + "`" + `column "Name": expected *array.String or *array.Dictionary` + "`" + `) {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("dict-values-type-mismatch", func(t *testing.T) {
+		// Name expects dict values to be *array.String, give it dict of *array.Binary
+		dictType := &arrow.DictionaryType{
+			IndexType: arrow.PrimitiveTypes.Int32,
+			ValueType: arrow.BinaryTypes.Binary,
+		}
+		schema := arrow.NewSchema([]arrow.Field{
+			{Name: "Name", Type: dictType, Nullable: true},
+		}, nil)
+		bldr := array.NewRecordBuilder(pool, schema)
+		bldr.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte{0x01})
+		rec := bldr.NewRecord()
+		defer rec.Release()
+		defer bldr.Release()
+
+		_, err := NewErrorPathStructArrowReader(rec)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), ` + "`" + `dictionary values: expected *array.String` + "`" + `) {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("correct-types-succeed", func(t *testing.T) {
+		schema := arrow.NewSchema([]arrow.Field{
+			{Name: "ID", Type: arrow.PrimitiveTypes.Int32, Nullable: true},
+			{Name: "Name", Type: arrow.BinaryTypes.String, Nullable: true},
+		}, nil)
+		bldr := array.NewRecordBuilder(pool, schema)
+		bldr.Field(0).(*array.Int32Builder).Append(1)
+		bldr.Field(1).(*array.StringBuilder).Append("ok")
+		rec := bldr.NewRecord()
+		defer rec.Release()
+		defer bldr.Release()
+
+		_, err := NewErrorPathStructArrowReader(rec)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+	})
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestInitErrorPaths")
+	})
+
+	t.Run("embedded-struct-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type Base struct {
+	ID        int32
+	CreatedAt string
+}
+
+type Device struct {
+	Base
+	Name string
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Device"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestEmbeddedStructRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDeviceArrowWriter(pool)
+	defer writer.Release()
+
+	// Row 0: all populated
+	r0 := Device{
+		Base: Base{ID: 1, CreatedAt: "2026-01-01"},
+		Name: "sensor-a",
+	}
+	writer.Append(&r0)
+
+	// Row 1: zero-value embedded fields
+	r1 := Device{
+		Base: Base{ID: 2},
+		Name: "",
+	}
+	writer.Append(&r1)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	// Verify flat schema (3 columns, not a nested struct)
+	if rec.Schema().NumFields() != 3 {
+		t.Fatalf("expected 3 flat columns, got %d", rec.Schema().NumFields())
+	}
+
+	reader, err := NewDeviceArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewDeviceArrowReader: %v", err)
+	}
+
+	// Row 0: all populated
+	var got Device
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID (promoted): got %d, want 1", got.ID)
+	}
+	if got.Base.ID != 1 {
+		t.Errorf("row0 Base.ID (explicit): got %d, want 1", got.Base.ID)
+	}
+	if got.CreatedAt != "2026-01-01" {
+		t.Errorf("row0 CreatedAt: got %q, want %q", got.CreatedAt, "2026-01-01")
+	}
+	if got.Base.CreatedAt != "2026-01-01" {
+		t.Errorf("row0 Base.CreatedAt: got %q, want %q", got.Base.CreatedAt, "2026-01-01")
+	}
+	if got.Name != "sensor-a" {
+		t.Errorf("row0 Name: got %q, want %q", got.Name, "sensor-a")
+	}
+
+	// Row 1: zero-value embedded fields
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.CreatedAt != "" {
+		t.Errorf("row1 CreatedAt: got %q, want empty", got.CreatedAt)
+	}
+	if got.Name != "" {
+		t.Errorf("row1 Name: got %q, want empty", got.Name)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestEmbeddedStructRoundTrip")
+	})
+
+	t.Run("missing-columns", func(t *testing.T) {
+		goCode := `package dummy
+
+type FullStruct struct {
+	ID    int32
+	Name  string
+	Score float64
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"FullStruct"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestMissingColumns(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	// Build a record missing the "Score" column.
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "ID", Type: arrow.PrimitiveTypes.Int32, Nullable: true},
+		{Name: "Name", Type: arrow.BinaryTypes.String, Nullable: true},
+	}, nil)
+
+	bldr := array.NewRecordBuilder(pool, schema)
+	defer bldr.Release()
+
+	bldr.Field(0).(*array.Int32Builder).Append(42)
+	bldr.Field(1).(*array.StringBuilder).Append("hello")
+
+	rec := bldr.NewRecord()
+	defer rec.Release()
+
+	// Init must succeed despite missing column.
+	reader, err := NewFullStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewFullStructArrowReader: %v", err)
+	}
+
+	// Load into zero-initialized struct: present fields populated, missing field stays zero.
+	var got FullStruct
+	reader.LoadRow(0, &got)
+	if got.ID != 42 {
+		t.Errorf("ID: got %d, want 42", got.ID)
+	}
+	if got.Name != "hello" {
+		t.Errorf("Name: got %q, want %q", got.Name, "hello")
+	}
+	if got.Score != 0.0 {
+		t.Errorf("Score: got %f, want 0 (zero-init)", got.Score)
+	}
+
+	// Key assertion: "untouched" semantics.
+	// Pre-populate Score with a sentinel value. LoadRow must NOT overwrite it
+	// because the column is missing (skip), unlike a null column (which writes zero).
+	got.Score = 99.9
+	reader.LoadRow(0, &got)
+	if got.ID != 42 {
+		t.Errorf("ID after reload: got %d, want 42", got.ID)
+	}
+	if got.Score != 99.9 {
+		t.Errorf("Score should be untouched (99.9), got %f — missing column must skip, not zero", got.Score)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestMissingColumns")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,
