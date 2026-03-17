@@ -2463,6 +2463,197 @@ func TestNullElementsInConvertList(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "TestNullElementsInConvertList")
 	})
+
+	t.Run("dict-encoded-string-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type DictStringStruct struct {
+	Name    string
+	OptName *string
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"DictStringStruct"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestDictEncodedStringRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	// Build a dictionary-encoded Arrow record manually.
+	dictType := &arrow.DictionaryType{
+		IndexType: arrow.PrimitiveTypes.Int32,
+		ValueType: arrow.BinaryTypes.String,
+	}
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "Name", Type: dictType, Nullable: true},
+		{Name: "OptName", Type: dictType, Nullable: true},
+	}, nil)
+
+	bldr := array.NewRecordBuilder(pool, schema)
+	defer bldr.Release()
+
+	nameBldr := bldr.Field(0).(*array.BinaryDictionaryBuilder)
+	optNameBldr := bldr.Field(1).(*array.BinaryDictionaryBuilder)
+
+	// Row 0: both populated
+	nameBldr.AppendString("hello")
+	optNameBldr.AppendString("world")
+
+	// Row 1: null pointer, non-null value
+	nameBldr.AppendString("foo")
+	optNameBldr.AppendNull()
+
+	// Row 2: repeated dict entries (tests dictionary index reuse)
+	nameBldr.AppendString("hello")
+	optNameBldr.AppendString("world")
+
+	// Row 3: null value type (should produce zero value)
+	nameBldr.AppendNull()
+	optNameBldr.AppendNull()
+
+	rec := bldr.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 4 {
+		t.Fatalf("expected 4 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewDictStringStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewDictStringStructArrowReader: %v", err)
+	}
+
+	var got DictStringStruct
+
+	// Row 0: both populated
+	reader.LoadRow(0, &got)
+	if got.Name != "hello" {
+		t.Errorf("row0 Name: got %q, want %q", got.Name, "hello")
+	}
+	if got.OptName == nil || *got.OptName != "world" {
+		t.Errorf("row0 OptName: got %v, want \"world\"", got.OptName)
+	}
+
+	// Row 1: value present, pointer null
+	reader.LoadRow(1, &got)
+	if got.Name != "foo" {
+		t.Errorf("row1 Name: got %q, want %q", got.Name, "foo")
+	}
+	if got.OptName != nil {
+		t.Errorf("row1 OptName: got %v, want nil", got.OptName)
+	}
+
+	// Row 2: repeated dict entries resolve correctly
+	reader.LoadRow(2, &got)
+	if got.Name != "hello" {
+		t.Errorf("row2 Name: got %q, want %q", got.Name, "hello")
+	}
+	if got.OptName == nil || *got.OptName != "world" {
+		t.Errorf("row2 OptName: got %v, want \"world\"", got.OptName)
+	}
+
+	// Row 3: null → zero for value type, nil for pointer
+	reader.LoadRow(3, &got)
+	if got.Name != "" {
+		t.Errorf("row3 Name: got %q, want empty", got.Name)
+	}
+	if got.OptName != nil {
+		t.Errorf("row3 OptName: got %v, want nil", got.OptName)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestDictEncodedStringRoundTrip")
+	})
+
+	t.Run("dict-encoded-binary-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type DictBinaryStruct struct {
+	Data []byte
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"DictBinaryStruct"})
+
+		testCode := `package dummy
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/apache/arrow/go/v18/arrow"
+	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestDictEncodedBinaryRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	dictType := &arrow.DictionaryType{
+		IndexType: arrow.PrimitiveTypes.Int32,
+		ValueType: arrow.BinaryTypes.Binary,
+	}
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "Data", Type: dictType, Nullable: true},
+	}, nil)
+
+	bldr := array.NewRecordBuilder(pool, schema)
+	defer bldr.Release()
+
+	dataBldr := bldr.Field(0).(*array.BinaryDictionaryBuilder)
+	dataBldr.Append([]byte{0xDE, 0xAD})
+	dataBldr.Append([]byte{0xBE, 0xEF})
+	dataBldr.Append([]byte{0xDE, 0xAD}) // repeated dict entry
+	dataBldr.AppendNull()
+
+	rec := bldr.NewRecord()
+	defer rec.Release()
+
+	if rec.NumRows() != 4 {
+		t.Fatalf("expected 4 rows, got %d", rec.NumRows())
+	}
+
+	reader, err := NewDictBinaryStructArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewDictBinaryStructArrowReader: %v", err)
+	}
+
+	var got DictBinaryStruct
+
+	reader.LoadRow(0, &got)
+	if !bytes.Equal(got.Data, []byte{0xDE, 0xAD}) {
+		t.Errorf("row0 Data: got %x, want DEAD", got.Data)
+	}
+
+	reader.LoadRow(1, &got)
+	if !bytes.Equal(got.Data, []byte{0xBE, 0xEF}) {
+		t.Errorf("row1 Data: got %x, want BEEF", got.Data)
+	}
+
+	// Repeated dict entry
+	reader.LoadRow(2, &got)
+	if !bytes.Equal(got.Data, []byte{0xDE, 0xAD}) {
+		t.Errorf("row2 Data: got %x, want DEAD", got.Data)
+	}
+
+	// Null → zero value
+	reader.LoadRow(3, &got)
+	if len(got.Data) != 0 {
+		t.Errorf("row3 Data: got %x, want empty", got.Data)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestDictEncodedBinaryRoundTrip")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,

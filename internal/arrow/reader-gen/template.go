@@ -114,6 +114,9 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (or (eq .MarshalMethod "") (ne .UnmarshalMethod ""))}}
 	col{{.Name}} {{.ArrowArrayType}}
+{{- if isDictCandidate .ArrowArrayType}}
+	dict{{.Name}} *array.Dictionary
+{{- end}}
 {{- end}}
 {{- end}}
 
@@ -173,6 +176,23 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
 {{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (or (eq $f.MarshalMethod "") (ne $f.UnmarshalMethod ""))}}
+{{- if isDictCandidate $f.ArrowArrayType}}
+	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
+		switch c := rec.Column(indices[0]).(type) {
+		case {{$f.ArrowArrayType}}:
+			r.col{{$f.Name}} = c
+		case *array.Dictionary:
+			r.dict{{$f.Name}} = c
+			vals, ok := c.Dictionary().({{$f.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("column %q: dictionary values: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", c.Dictionary())
+			}
+			r.col{{$f.Name}} = vals
+		default:
+			return nil, fmt.Errorf("column %q: expected {{$f.ArrowArrayType}} or *array.Dictionary, got %T", "{{$f.Name}}", rec.Column(indices[0]))
+		}
+	}
+{{- else}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
 		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
 		if !ok {
@@ -180,6 +200,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		}
 		r.col{{$f.Name}} = col
 	}
+{{- end}}
 {{- end}}
 {{- end}}
 
@@ -340,6 +361,23 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- template "initFieldListChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
 	}
 {{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (or (eq $f.MarshalMethod "") (ne $f.UnmarshalMethod ""))}}
+{{- if isDictCandidate $f.ArrowArrayType}}
+	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
+		switch c := col.Field(idx).(type) {
+		case {{$f.ArrowArrayType}}:
+			r.col{{$f.Name}} = c
+		case *array.Dictionary:
+			r.dict{{$f.Name}} = c
+			vals, ok := c.Dictionary().({{$f.ArrowArrayType}})
+			if !ok {
+				return nil, fmt.Errorf("struct field %q: dictionary values: expected {{$f.ArrowArrayType}}, got %T", "{{$f.Name}}", c.Dictionary())
+			}
+			r.col{{$f.Name}} = vals
+		default:
+			return nil, fmt.Errorf("struct field %q: expected {{$f.ArrowArrayType}} or *array.Dictionary, got %T", "{{$f.Name}}", col.Field(idx))
+		}
+	}
+{{- else}}
 	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
 		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
 		if !ok {
@@ -347,6 +385,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		}
 		r.col{{$f.Name}} = child
 	}
+{{- end}}
 {{- end}}
 {{- end}}
 
@@ -393,15 +432,22 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if and .F.IsFixedSizeList (not .F.IsPointer)}}
 {{- template "loadFieldFixedList" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
 {{- else if and .F.ValueMethod (not .F.IsPointer) (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
+{{- $vi := "i" -}}
+{{- if isDictCandidate .F.ArrowArrayType}}{{$vi = "vi"}}{{end}}
 	if r.col{{.F.Name}} != nil {
+{{- if isDictCandidate .F.ArrowArrayType}}
+{{template "dictResolve" dict "Col" (printf "col%s" .F.Name) "Dict" (printf "dict%s" .F.Name) "Idx" "i"}}
+		if isNull {
+{{- else}}
 		if r.col{{.F.Name}}.IsNull(i) {
+{{- end}}
 			out.{{.F.Name}} = {{.F.ZeroExpr}}
 {{- if .F.UnmarshalMethod}}
 		} else {
 {{- if eq .F.UnmarshalMethod "UnmarshalText"}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value({{$vi}}))); err != nil {
 {{- else}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value({{$vi}})); err != nil {
 {{- end}}
 				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
 				out.{{.F.Name}} = {{.F.ZeroExpr}}
@@ -415,31 +461,38 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 {{- else}}
 		} else {
-			out.{{.F.Name}} = {{.F.GoType}}(r.col{{.F.Name}}.Value(i))
+			out.{{.F.Name}} = {{.F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 {{- end}}
 		}
 	}
 {{- end}}
 {{- if and .F.ValueMethod .F.IsPointer (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
+{{- $vi := "i" -}}
+{{- if isDictCandidate .F.ArrowArrayType}}{{$vi = "vi"}}{{end}}
 	if r.col{{.F.Name}} != nil {
+{{- if isDictCandidate .F.ArrowArrayType}}
+{{template "dictResolve" dict "Col" (printf "col%s" .F.Name) "Dict" (printf "dict%s" .F.Name) "Idx" "i"}}
+		if isNull {
+{{- else}}
 		if r.col{{.F.Name}}.IsNull(i) {
+{{- end}}
 			out.{{.F.Name}} = nil
 {{- if .F.UnmarshalMethod}}
 		} else if out.{{.F.Name}} == nil {
 			out.{{.F.Name}} = &{{stripPtr .F.GoType}}{}
 {{- if eq .F.UnmarshalMethod "UnmarshalText"}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value({{$vi}}))); err != nil {
 {{- else}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value({{$vi}})); err != nil {
 {{- end}}
 				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
 				out.{{.F.Name}} = nil
 			}
 		} else {
 {{- if eq .F.UnmarshalMethod "UnmarshalText"}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value({{$vi}}))); err != nil {
 {{- else}}
-			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+			if err := out.{{.F.Name}}.{{.F.UnmarshalMethod}}(r.col{{.F.Name}}.Value({{$vi}})); err != nil {
 {{- end}}
 				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
 				out.{{.F.Name}} = nil
@@ -458,14 +511,26 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		}
 {{- else}}
 		} else if out.{{.F.Name}} == nil {
-			v := {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value(i))
+			v := {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 			out.{{.F.Name}} = &v
 		} else {
-			*out.{{.F.Name}} = {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value(i))
+			*out.{{.F.Name}} = {{stripPtr .F.GoType}}(r.col{{.F.Name}}.Value({{$vi}}))
 		}
 {{- end}}
 	}
 {{- end}}
+{{- end}}
+
+{{- define "dictResolve" -}}
+		isNull, vi := false, {{.Idx}}
+		if r.{{.Dict}} != nil {
+			isNull = r.{{.Dict}}.IsNull({{.Idx}})
+			if !isNull {
+				vi = r.{{.Dict}}.GetValueIndex({{.Idx}})
+			}
+		} else {
+			isNull = r.{{.Col}}.IsNull({{.Idx}})
+		}
 {{- end}}
 
 {{- define "loadFieldList" -}}
@@ -784,6 +849,9 @@ var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap
 			return s
 		}
 		return strings.ToLower(s[:1]) + s[1:]
+	},
+	"isDictCandidate": func(arrowArrayType string) bool {
+		return arrowArrayType == "*array.String" || arrowArrayType == "*array.Binary"
 	},
 	"add":    func(a, b int) int { return a + b },
 	"repeat": func(s string, n int) string { return strings.Repeat(s, n) },
