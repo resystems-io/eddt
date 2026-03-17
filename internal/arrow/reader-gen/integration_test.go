@@ -1666,6 +1666,422 @@ func TestStructWithContainersRoundTrip(t *testing.T) {
 `
 		runInnerTest(t, tmpDir, testCode, "")
 	})
+
+	t.Run("time-duration-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+import "time"
+
+type Timing struct {
+	Elapsed  time.Duration
+	OptDelay *time.Duration
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Timing"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestTimeDurationRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewTimingArrowWriter(pool)
+	defer writer.Release()
+
+	dur := 5 * time.Second
+	r1 := Timing{Elapsed: 2 * time.Hour, OptDelay: &dur}
+	r2 := Timing{Elapsed: 0, OptDelay: nil}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewTimingArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewTimingArrowReader: %v", err)
+	}
+
+	var got Timing
+	reader.LoadRow(0, &got)
+	if got.Elapsed != r1.Elapsed {
+		t.Errorf("row0 Elapsed: got %v, want %v", got.Elapsed, r1.Elapsed)
+	}
+	if got.OptDelay == nil || *got.OptDelay != *r1.OptDelay {
+		t.Errorf("row0 OptDelay: got %v, want %v", got.OptDelay, r1.OptDelay)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.Elapsed != 0 {
+		t.Errorf("row1 Elapsed: got %v, want 0", got.Elapsed)
+	}
+	if got.OptDelay != nil {
+		t.Errorf("row1 OptDelay: got %v, want nil", got.OptDelay)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTimeDurationRoundTrip")
+	})
+
+	t.Run("time-time-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+import "time"
+
+type Event struct {
+	When    time.Time
+	OptWhen *time.Time
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Event"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestTimeTimeRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewEventArrowWriter(pool)
+	defer writer.Release()
+
+	t1 := time.Date(2025, 3, 15, 12, 0, 0, 0, time.UTC)
+	r1 := Event{When: t1, OptWhen: &t1}
+	r2 := Event{When: time.Time{}, OptWhen: nil}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewEventArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewEventArrowReader: %v", err)
+	}
+
+	var got Event
+	reader.LoadRow(0, &got)
+	if !got.When.Equal(r1.When) {
+		t.Errorf("row0 When: got %v, want %v", got.When, r1.When)
+	}
+	if got.OptWhen == nil || !got.OptWhen.Equal(*r1.OptWhen) {
+		t.Errorf("row0 OptWhen: got %v, want %v", got.OptWhen, r1.OptWhen)
+	}
+
+	reader.LoadRow(1, &got)
+	if !got.When.Equal(time.Unix(0, 0).UTC()) {
+		// time.Time{}.UnixNano() is a large negative number; writer stores UnixNano,
+		// reader reconstructs via time.Unix(0, nano). Zero time round-trips to epoch.
+		// The writer converts time.Time{} → UnixNano → arrow.Timestamp. The reader
+		// converts back via time.Unix(0, int64(v)). So the zero value round-trips to
+		// what time.Unix(0, time.Time{}.UnixNano()) produces.
+		expected := time.Unix(0, time.Time{}.UnixNano())
+		if !got.When.Equal(expected) {
+			t.Errorf("row1 When: got %v, want %v", got.When, expected)
+		}
+	}
+	if got.OptWhen != nil {
+		t.Errorf("row1 OptWhen: got %v, want nil", got.OptWhen)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestTimeTimeRoundTrip")
+	})
+
+	t.Run("protobuf-duration-round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		goCode := `package dummy
+
+import "google.golang.org/protobuf/types/known/durationpb"
+
+type PBDurEvent struct {
+	ID       int32
+	Duration *durationpb.Duration
+	Timeout  durationpb.Duration
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+			t.Fatalf("write dummy.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/durationpb")
+
+		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		wg := writergen.NewGenerator([]string{tmpDir}, []string{"PBDurEvent"}, writerOut, false, nil)
+		if err := wg.Run(""); err != nil {
+			t.Fatalf("writer-gen Run() failed: %v", err)
+		}
+
+		readerOut := filepath.Join(tmpDir, "dummy_arrow_reader.go")
+		rg := NewGenerator([]string{tmpDir}, []string{"PBDurEvent"}, readerOut, false, nil)
+		if err := rg.Run(""); err != nil {
+			t.Fatalf("reader-gen Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/durationpb"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestProtobufDurationRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPBDurEventArrowWriter(pool)
+	defer writer.Release()
+
+	dur2h := durationpb.New(2 * time.Hour)
+	r1 := PBDurEvent{
+		ID:       1,
+		Duration: dur2h,
+		Timeout:  *durationpb.New(500 * time.Millisecond),
+	}
+	r2 := PBDurEvent{
+		ID:       2,
+		Duration: nil,
+		Timeout:  *durationpb.New(150 * time.Millisecond),
+	}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewPBDurEventArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewPBDurEventArrowReader: %v", err)
+	}
+
+	var got PBDurEvent
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if got.Duration == nil || got.Duration.AsDuration() != 2*time.Hour {
+		t.Errorf("row0 Duration: got %v, want 2h", got.Duration)
+	}
+	if got.Timeout.AsDuration() != 500*time.Millisecond {
+		t.Errorf("row0 Timeout: got %v, want 500ms", got.Timeout.AsDuration())
+	}
+
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.Duration != nil {
+		t.Errorf("row1 Duration: got %v, want nil", got.Duration)
+	}
+	if got.Timeout.AsDuration() != 150*time.Millisecond {
+		t.Errorf("row1 Timeout: got %v, want 150ms", got.Timeout.AsDuration())
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestProtobufDurationRoundTrip")
+	})
+
+	t.Run("protobuf-timestamp-round-trip", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		goCode := `package dummy
+
+import "google.golang.org/protobuf/types/known/timestamppb"
+
+type PBTsRecord struct {
+	ID        int32
+	CreatedAt *timestamppb.Timestamp
+	UpdatedAt timestamppb.Timestamp
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
+			t.Fatalf("write dummy.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module dummy\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+
+		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/timestamppb")
+
+		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		wg := writergen.NewGenerator([]string{tmpDir}, []string{"PBTsRecord"}, writerOut, false, nil)
+		if err := wg.Run(""); err != nil {
+			t.Fatalf("writer-gen Run() failed: %v", err)
+		}
+
+		readerOut := filepath.Join(tmpDir, "dummy_arrow_reader.go")
+		rg := NewGenerator([]string{tmpDir}, []string{"PBTsRecord"}, readerOut, false, nil)
+		if err := rg.Run(""); err != nil {
+			t.Fatalf("reader-gen Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestProtobufTimestampRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewPBTsRecordArrowWriter(pool)
+	defer writer.Release()
+
+	t1 := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	t2 := time.Date(2025, 6, 15, 8, 30, 0, 0, time.UTC)
+
+	created := timestamppb.New(t1)
+	r1 := PBTsRecord{
+		ID:        1,
+		CreatedAt: created,
+		UpdatedAt: *timestamppb.New(t2),
+	}
+	r2 := PBTsRecord{
+		ID:        2,
+		CreatedAt: nil,
+		UpdatedAt: *timestamppb.New(t1),
+	}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewPBTsRecordArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewPBTsRecordArrowReader: %v", err)
+	}
+
+	var got PBTsRecord
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: got %d, want 1", got.ID)
+	}
+	if got.CreatedAt == nil || !got.CreatedAt.AsTime().Equal(t1) {
+		t.Errorf("row0 CreatedAt: got %v, want %v", got.CreatedAt, t1)
+	}
+	if !got.UpdatedAt.AsTime().Equal(t2) {
+		t.Errorf("row0 UpdatedAt: got %v, want %v", got.UpdatedAt.AsTime(), t2)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: got %d, want 2", got.ID)
+	}
+	if got.CreatedAt != nil {
+		t.Errorf("row1 CreatedAt: got %v, want nil", got.CreatedAt)
+	}
+	if !got.UpdatedAt.AsTime().Equal(t1) {
+		t.Errorf("row1 UpdatedAt: got %v, want %v", got.UpdatedAt.AsTime(), t1)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestProtobufTimestampRoundTrip")
+	})
+
+	t.Run("list-of-convert-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+import "time"
+
+type Schedule struct {
+	Durations []time.Duration
+	Times     []time.Time
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Schedule"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+	"time"
+
+	"github.com/apache/arrow/go/v18/arrow/memory"
+)
+
+func TestListOfConvertRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewScheduleArrowWriter(pool)
+	defer writer.Release()
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	r1 := Schedule{
+		Durations: []time.Duration{time.Hour, 2 * time.Minute},
+		Times:     []time.Time{t1, t2},
+	}
+	r2 := Schedule{
+		Durations: nil,
+		Times:     nil,
+	}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewScheduleArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewScheduleArrowReader: %v", err)
+	}
+
+	var got Schedule
+	reader.LoadRow(0, &got)
+	if len(got.Durations) != 2 || got.Durations[0] != time.Hour || got.Durations[1] != 2*time.Minute {
+		t.Errorf("row0 Durations: got %v, want [1h 2m0s]", got.Durations)
+	}
+	if len(got.Times) != 2 || !got.Times[0].Equal(t1) || !got.Times[1].Equal(t2) {
+		t.Errorf("row0 Times: got %v, want [%v %v]", got.Times, t1, t2)
+	}
+
+	reader.LoadRow(1, &got)
+	if got.Durations != nil {
+		t.Errorf("row1 Durations: got %v, want nil", got.Durations)
+	}
+	if got.Times != nil {
+		t.Errorf("row1 Times: got %v, want nil", got.Times)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestListOfConvertRoundTrip")
+	})
 }
 
 // setupIntegrationTest creates a temp directory, writes the struct definition,

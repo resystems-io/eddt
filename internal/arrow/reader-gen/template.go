@@ -86,7 +86,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "colFieldMap" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
-{{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
 	col{{.Name}} {{.ArrowArrayType}}
 {{- end}}
 {{- end}}
@@ -146,7 +146,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "initFieldMap" dict "Name" $f.Name "Info" $f}}
 {{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
-{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "")}}
 	if indices := schema.FieldIndices("{{$f.Name}}"); len(indices) > 0 {
 		col, ok := rec.Column(indices[0]).({{$f.ArrowArrayType}})
 		if !ok {
@@ -313,7 +313,7 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 		r.col{{$f.Name}} = child
 {{- template "initFieldListChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
 	}
-{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "") (eq $f.ConvertMethod "")}}
+{{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (eq $f.MarshalMethod "")}}
 	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
 		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
 		if !ok {
@@ -350,25 +350,46 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "loadFieldList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
 {{- else if and .IsFixedSizeList (not .IsPointer)}}
 {{- template "loadFieldFixedList" dict "Name" .Name "Info" . "Target" (printf "out.%s" .Name)}}
-{{- else if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- else if and .ValueMethod (not .IsPointer) (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
 	if r.col{{.Name}} != nil {
 		if r.col{{.Name}}.IsNull(i) {
 			out.{{.Name}} = {{.ZeroExpr}}
 		} else {
+{{- if .ConvertBackExpr}}
+{{- if .ConvertBackIsPtr}}
+			out.{{.Name}} = *{{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+{{- else}}
+			out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+{{- end}}
+{{- else}}
 			out.{{.Name}} = {{.GoType}}(r.col{{.Name}}.Value(i))
+{{- end}}
 		}
 	}
 {{- end}}
-{{- if and .ValueMethod .IsPointer (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "") (eq .ConvertMethod "")}}
+{{- if and .ValueMethod .IsPointer (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (eq .MarshalMethod "")}}
 	if r.col{{.Name}} != nil {
 		if r.col{{.Name}}.IsNull(i) {
 			out.{{.Name}} = nil
+{{- if and .ConvertBackExpr .ConvertBackIsPtr}}
+		} else {
+			out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+		}
+{{- else if .ConvertBackExpr}}
+		} else if out.{{.Name}} == nil {
+			v := {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+			out.{{.Name}} = &v
+		} else {
+			*out.{{.Name}} = {{printf .ConvertBackExpr (printf "r.col%s.Value(i)" .Name)}}
+		}
+{{- else}}
 		} else if out.{{.Name}} == nil {
 			v := {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
 			out.{{.Name}} = &v
 		} else {
 			*out.{{.Name}} = {{stripPtr .GoType}}(r.col{{.Name}}.Value(i))
 		}
+{{- end}}
 	}
 {{- end}}
 {{- end}}
@@ -424,7 +445,15 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 				idx{{$d}} := int({{$s}}) + {{$j}}
 {{- template "loadFieldFixedListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
 {{- else}}
+{{- if $info.EltInfo.ConvertBackExpr}}
+{{- if $info.EltInfo.ConvertBackIsPtr}}
+				{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+{{- else}}
+				{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+{{- end}}
+{{- else}}
 				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+{{- end}}
 {{- end}}
 			}
 {{- end}}
@@ -472,7 +501,15 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "loadFieldListInner" dict "Name" $name "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $j) "Depth" (add $d 1) "IdxExpr" (printf "idx%d" $d)}}
 				}
 {{- else}}
+{{- if $info.EltInfo.ConvertBackExpr}}
+{{- if $info.EltInfo.ConvertBackIsPtr}}
+				{{$target}}[{{$j}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+{{- else}}
+				{{$target}}[{{$j}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "%s.Value(int(%s) + %s)" $childCol $s $j)}}
+{{- end}}
+{{- else}}
 				{{$target}}[{{$j}}] = {{$info.EltInfo.GoType}}({{$childCol}}.Value(int({{$s}}) + {{$j}}))
+{{- end}}
 {{- end}}
 			}
 {{- end}}
@@ -535,7 +572,15 @@ func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
 {{- template "loadFieldListInner" dict "Name" (printf "%sItems" $prefix) "Info" $info.EltInfo "Target" (printf "%s[%s]" $target $k) "Depth" 0 "IdxExpr" (printf "midx%d" $d)}}
 				}
 {{- else}}
+{{- if $info.EltInfo.ConvertBackExpr}}
+{{- if $info.EltInfo.ConvertBackIsPtr}}
+				{{$target}}[{{$k}}] = *{{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(int(%s) + %s)" $prefix $s $j)}}
+{{- else}}
+				{{$target}}[{{$k}}] = {{printf $info.EltInfo.ConvertBackExpr (printf "r.col%sItems.Value(int(%s) + %s)" $prefix $s $j)}}
+{{- end}}
+{{- else}}
 				{{$target}}[{{$k}}] = {{$info.EltInfo.GoType}}(r.col{{$prefix}}Items.Value(int({{$s}}) + {{$j}}))
+{{- end}}
 {{- end}}
 			}
 {{- end}}

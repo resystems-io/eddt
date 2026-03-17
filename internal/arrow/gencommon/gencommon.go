@@ -47,8 +47,10 @@ type FieldInfo struct {
 	ArrowArrayType  string // Concrete Arrow array type for downcast (e.g., "*array.Int32", "*array.List")
 	ValueMethod     string // Extraction method on the array type: "Value" for leaf types, "" for containers
 	UnmarshalMethod string // Reciprocal of MarshalMethod: "UnmarshalText", "UnmarshalBinary", or "" (Stringer has no inverse)
-	ConvertBackExpr string // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.Unix(0, int64(%s))")
-	ZeroExpr        string // Zero-value expression for the Go type, used for null handling (e.g., "0", `""`, "false", "nil")
+	ConvertBackExpr    string   // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.Unix(0, int64(%s))")
+	ConvertBackIsPtr   bool     // True if ConvertBackExpr returns a pointer (e.g. durationpb.New → *durationpb.Duration)
+	ConvertBackImports []string // Import paths needed by ConvertBackExpr (e.g. ["time"])
+	ZeroExpr           string   // Zero-value expression for the Go type, used for null handling (e.g., "0", `""`, "false", "nil")
 }
 
 // StructInfo contains information about a parsed Go struct.
@@ -581,6 +583,38 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 	FilterUnexportedFields(structs, packageName)
 
 	return packageName, imports, nil
+}
+
+// CollectConvertBackImports walks all struct fields (recursively through
+// EltInfo/KeyInfo) and returns deduplicated ImportInfo entries required by
+// ConvertBackExpr expressions in the reader-generated code.
+func CollectConvertBackImports(structs []StructInfo) []ImportInfo {
+	seen := map[string]bool{}
+	var result []ImportInfo
+	var walk func(fi *FieldInfo)
+	walk = func(fi *FieldInfo) {
+		for _, imp := range fi.ConvertBackImports {
+			if !seen[imp] {
+				seen[imp] = true
+				// Derive base package name from the import path.
+				parts := strings.Split(imp, "/")
+				result = append(result, ImportInfo{Path: imp, Name: parts[len(parts)-1]})
+			}
+		}
+		if fi.EltInfo != nil {
+			walk(fi.EltInfo)
+		}
+		if fi.KeyInfo != nil {
+			walk(fi.KeyInfo)
+		}
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			walk(&structs[i].Fields[j])
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	return result
 }
 
 // setStructQualifiers recursively sets StructQualifier on struct-typed fields

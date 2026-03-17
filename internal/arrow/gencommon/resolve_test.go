@@ -126,6 +126,8 @@ func TestReaderFieldsPopulated(t *testing.T) {
 	tmpDir := t.TempDir()
 	testCode := `package testpkg
 
+import "time"
+
 type Inner struct {
 	X int32
 }
@@ -150,6 +152,10 @@ type ReaderFieldsStruct struct {
 
 	// Pointer to struct
 	OptInner *Inner
+
+	// Well-known types (convert types)
+	Elapsed  time.Duration
+	Birthday time.Time
 }
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "types.go"), []byte(testCode), 0644); err != nil {
@@ -183,23 +189,26 @@ type ReaderFieldsStruct struct {
 	}
 
 	tests := []struct {
-		field           string
-		arrowArrayType  string
-		valueMethod     string
-		unmarshalMethod string
-		convertBackExpr string
-		zeroExpr        string
+		field            string
+		arrowArrayType   string
+		valueMethod      string
+		unmarshalMethod  string
+		convertBackExpr  string
+		convertBackIsPtr bool
+		zeroExpr         string
 	}{
-		{"ID", "*array.Int32", "Value", "", "", "0"},
-		{"Name", "*array.String", "Value", "", "", `""`},
-		{"Valid", "*array.Boolean", "Value", "", "", "false"},
-		{"OptID", "*array.Int32", "Value", "", "", "0"},
-		{"Tags", "*array.List", "", "", "", "nil"},
-		{"Scores", "*array.Map", "", "", "", "nil"},
-		{"Matrix", "*array.FixedSizeList", "", "", "", "[3]int32{}"},
-		{"Data", "*array.Binary", "Value", "", "", "nil"},
-		{"Inner", "*array.Struct", "", "", "", "Inner{}"},
-		{"OptInner", "*array.Struct", "", "", "", "nil"},
+		{"ID", "*array.Int32", "Value", "", "", false, "0"},
+		{"Name", "*array.String", "Value", "", "", false, `""`},
+		{"Valid", "*array.Boolean", "Value", "", "", false, "false"},
+		{"OptID", "*array.Int32", "Value", "", "", false, "0"},
+		{"Tags", "*array.List", "", "", "", false, "nil"},
+		{"Scores", "*array.Map", "", "", "", false, "nil"},
+		{"Matrix", "*array.FixedSizeList", "", "", "", false, "[3]int32{}"},
+		{"Data", "*array.Binary", "Value", "", "", false, "nil"},
+		{"Inner", "*array.Struct", "", "", "", false, "Inner{}"},
+		{"OptInner", "*array.Struct", "", "", "", false, "nil"},
+		{"Elapsed", "*array.Int64", "Value", "", "time.Duration(%s)", false, "0"},
+		{"Birthday", "*array.Timestamp", "Value", "", "time.Unix(0, int64(%s))", false, "time.Time{}"},
 	}
 
 	for _, tt := range tests {
@@ -219,6 +228,9 @@ type ReaderFieldsStruct struct {
 			}
 			if diff := cmp.Diff(tt.convertBackExpr, fi.ConvertBackExpr); diff != "" {
 				t.Errorf("ConvertBackExpr mismatch (-want +got):\n%s", diff)
+			}
+			if fi.ConvertBackIsPtr != tt.convertBackIsPtr {
+				t.Errorf("ConvertBackIsPtr: got %v, want %v", fi.ConvertBackIsPtr, tt.convertBackIsPtr)
 			}
 			if diff := cmp.Diff(tt.zeroExpr, fi.ZeroExpr); diff != "" {
 				t.Errorf("ZeroExpr mismatch (-want +got):\n%s", diff)

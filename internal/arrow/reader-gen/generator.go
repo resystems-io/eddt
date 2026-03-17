@@ -60,6 +60,21 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
+	// Collect extra imports needed by ConvertBackExpr (e.g. "time", protobuf packages).
+	extraImports := gencommon.CollectConvertBackImports(structs)
+	if len(extraImports) > 0 {
+		existing := map[string]bool{}
+		for _, imp := range imports {
+			existing[imp.Path] = true
+		}
+		for _, imp := range extraImports {
+			if !existing[imp.Path] {
+				imports = append(imports, imp)
+				existing[imp.Path] = true
+			}
+		}
+	}
+
 	data := templateData{
 		PackageName: packageName,
 		Version:     g.Version,

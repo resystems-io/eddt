@@ -507,16 +507,17 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*time.Duration"
 		}
 		return FieldInfo{
-			Name:            name,
-			GoType:          goType,
-			ArrowType:       "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder:    "*array.Int64Builder",
-			CastType:        "int64",
-			IsPointer:       isPointer,
-			ArrowArrayType:  "*array.Int64",
-			ValueMethod:     "Value",
-			ConvertBackExpr: "time.Duration(%s)",
-			ZeroExpr:        "0",
+			Name:               name,
+			GoType:             goType,
+			ArrowType:          "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:       "*array.Int64Builder",
+			CastType:           "int64",
+			IsPointer:          isPointer,
+			ArrowArrayType:     "*array.Int64",
+			ValueMethod:        "Value",
+			ConvertBackExpr:    "time.Duration(%s)",
+			ConvertBackImports: []string{"time"},
+			ZeroExpr:           "0",
 		}, true
 	}
 
@@ -526,17 +527,18 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			goType = "*time.Time"
 		}
 		return FieldInfo{
-			Name:            name,
-			GoType:          goType,
-			ArrowType:       "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:    "*array.TimestampBuilder",
-			CastType:        "arrow.Timestamp",
-			ConvertMethod:   "UnixNano",
-			IsPointer:       isPointer,
-			ArrowArrayType:  "*array.Timestamp",
-			ValueMethod:     "Value",
-			ConvertBackExpr: "time.Unix(0, int64(%s))",
-			ZeroExpr:        "time.Time{}",
+			Name:               name,
+			GoType:             goType,
+			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:       "*array.TimestampBuilder",
+			CastType:           "arrow.Timestamp",
+			ConvertMethod:      "UnixNano",
+			IsPointer:          isPointer,
+			ArrowArrayType:     "*array.Timestamp",
+			ValueMethod:        "Value",
+			ConvertBackExpr:    "time.Unix(0, int64(%s))",
+			ConvertBackImports: []string{"time"},
+			ZeroExpr:           "time.Time{}",
 		}, true
 	}
 
@@ -545,18 +547,24 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 		if isPointer {
 			goType = "*durationpb.Duration"
 		}
+		zeroExpr := "durationpb.Duration{}"
+		if isPointer {
+			zeroExpr = "nil"
+		}
 		return FieldInfo{
-			Name:            name,
-			GoType:          goType,
-			ArrowType:       "arrow.PrimitiveTypes.Int64",
-			ArrowBuilder:    "*array.Int64Builder",
-			CastType:        "int64",
-			ConvertMethod:   "AsDuration",
-			IsPointer:       isPointer,
-			ArrowArrayType:  "*array.Int64",
-			ValueMethod:     "Value",
-			ConvertBackExpr: "durationpb.New(time.Duration(%s))",
-			ZeroExpr:        "nil",
+			Name:               name,
+			GoType:             goType,
+			ArrowType:          "arrow.PrimitiveTypes.Int64",
+			ArrowBuilder:       "*array.Int64Builder",
+			CastType:           "int64",
+			ConvertMethod:      "AsDuration",
+			IsPointer:          isPointer,
+			ArrowArrayType:     "*array.Int64",
+			ValueMethod:        "Value",
+			ConvertBackExpr:    "durationpb.New(time.Duration(%s))",
+			ConvertBackIsPtr:   true,
+			ConvertBackImports: []string{"time", "google.golang.org/protobuf/types/known/durationpb"},
+			ZeroExpr:           zeroExpr,
 		}, true
 	}
 
@@ -565,18 +573,24 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 		if isPointer {
 			goType = "*timestamppb.Timestamp"
 		}
+		zeroExpr := "timestamppb.Timestamp{}"
+		if isPointer {
+			zeroExpr = "nil"
+		}
 		return FieldInfo{
-			Name:            name,
-			GoType:          goType,
-			ArrowType:       "arrow.FixedWidthTypes.Timestamp_ns",
-			ArrowBuilder:    "*array.TimestampBuilder",
-			CastType:        "arrow.Timestamp",
-			ConvertMethod:   "AsTime().UnixNano",
-			IsPointer:       isPointer,
-			ArrowArrayType:  "*array.Timestamp",
-			ValueMethod:     "Value",
-			ConvertBackExpr: "timestamppb.New(time.Unix(0, int64(%s)))",
-			ZeroExpr:        "nil",
+			Name:               name,
+			GoType:             goType,
+			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowBuilder:       "*array.TimestampBuilder",
+			CastType:           "arrow.Timestamp",
+			ConvertMethod:      "AsTime().UnixNano",
+			IsPointer:          isPointer,
+			ArrowArrayType:     "*array.Timestamp",
+			ValueMethod:        "Value",
+			ConvertBackExpr:    "timestamppb.New(time.Unix(0, int64(%s)))",
+			ConvertBackIsPtr:   true,
+			ConvertBackImports: []string{"time", "google.golang.org/protobuf/types/known/timestamppb"},
+			ZeroExpr:           zeroExpr,
 		}, true
 	}
 
