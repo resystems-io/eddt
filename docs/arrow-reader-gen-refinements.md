@@ -95,8 +95,8 @@ Based on the `system-refinement` process, this work is divided into incremental 
   - [x] **V4d: Missing Columns (R11/E5):** Add an integration test that builds an Arrow record missing one or more columns present in the Go struct. Verify `NewXxxArrowReader` succeeds and `LoadRow` leaves the corresponding Go fields untouched (at their zero or previous value).
 
 ### Phase 6: Documentation
-- [ ] **D1: Update README/Docs:** Update `docs/arrow-reader-gen.md` detailing the generated API, usage examples, and supported types.
-- [ ] **D2: Refinements Checklist:** Mark this document's changelog and task items as complete.
+- [x] **D1: Update README/Docs:** Update `docs/arrow-reader-gen.md` detailing the generated API, usage examples, and supported types.
+- [x] **D2: Refinements Checklist:** Mark this document's changelog and task items as complete.
 
 ---
 
@@ -129,3 +129,5 @@ Record completed items here with the date (check git blame for the git commit).
 | 2026-03-17 | V4c  | Embedded struct flattening round-trip. `Device` embeds `Base` (ID, CreatedAt); writer flattens to 3 top-level columns; reader maps them back via promoted field access. Verifies both `out.ID` (promoted) and `out.Base.ID` (explicit) produce the same value. |
 | 2026-03-17 | V4d  | Missing columns test. Builds a partial Arrow record missing the `Score` column. Verifies init succeeds, present fields populate correctly, and missing field is left **untouched** (pre-set `99.9` survives `LoadRow`) — distinguishing R11 skip from R10 null→zero. |
 | 2026-03-17 | V3   | Integration benchmarks for `LoadRow` in `reader-gen/integration_benchmark_test.go`. Two sub-benchmarks: `SimpleStruct` (primitives, 1000 rows) and `ComplexStruct` (nested struct + slice + map, 100 rows). Uses outer/inner subprocess technique mirroring writer-gen. Pre-allocates output struct to exercise R6 zero-allocation reuse path. |
+| 2026-03-18 | D1   | Created `docs/arrow-reader-gen.md` documenting the generated API, `NewXxxArrowReader` constructor, `LoadRow`, error accumulation, supported types, and usage examples. |
+| 2026-03-18 | D2   | All checklist items in this document marked complete. |
