@@ -567,7 +567,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			} else {
 				{{$target}} = make({{$info.QualifiedGoType}}, {{$n}})
 			}
-			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
+			for {{$j}} := range {{$n}} {
 {{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
@@ -676,7 +676,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- $s := printf "s%d" $d -}}
 {{- $j := printf "j%d" $d}}
 			{{$s}}, _ := {{$colName}}.ValueOffsets({{$idx}})
-			for {{$j}} := 0; {{$j}} < {{$info.FixedSizeLen}}; {{$j}}++ {
+			for {{$j}} := range {{$info.FixedSizeLen}} {
 {{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
@@ -795,7 +795,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			} else {
 				clear({{$target}})
 			}
-			for {{$j}} := 0; {{$j}} < {{$n}}; {{$j}}++ {
+			for {{$j}} := range {{$n}} {
 				{{$k}} := {{$info.KeyInfo.QualifiedGoType}}({{$keysCol}}.Value(int({{$s}}) + {{$j}}))
 {{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
