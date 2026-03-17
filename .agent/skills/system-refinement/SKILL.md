@@ -4,6 +4,8 @@ description: Structured process for planning, implementing, verifying and
   documenting refinements to existing Go subsystems. Covers code review,
   design planning, incremental implementation, test verification, and
   documentation updates.
+disable-model-invocation: false
+user-invocable: false
 triggers:
   - "refine"
   - "implement refinement"
