@@ -2914,6 +2914,37 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	runInnerTest(t, tmpDir, testCode, "")
 }
 
+// TestGenericClearableField is the acceptance criterion for arrow-writer-gen
+// handling of generic-instantiation field types (e.g. FieldDelta[int32]).
+//
+// The test is skipped until gencommon adds *ast.IndexExpr support. Once the
+// fix lands, remove the t.Skip and confirm the generated writer compiles.
+func TestGenericClearableField(t *testing.T) {
+	t.Skip("pending: gencommon does not yet handle *ast.IndexExpr (generic instantiations) — see delta-gen-refinements E-11")
+
+	const goCode = `package dummy
+
+type FieldDeltaOp int8
+
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+type Inner struct {
+	Z string
+}
+
+type Snapshot struct {
+	Seq       int64
+	Scalar    FieldDelta[int32]
+	PtrStruct FieldDelta[*Inner]
+}
+`
+	tmpDir, _ := setupIntegrationTest(t, goCode, []string{"Snapshot"}, "")
+	runCmd(t, tmpDir, "go", "build", ".")
+}
+
 // setupIntegrationTest creates a temp directory, writes the Go struct source and
 // go.mod, runs the generator, and verifies the output file exists. It returns
 // the temp directory and generated output path. For multi-package layouts use
