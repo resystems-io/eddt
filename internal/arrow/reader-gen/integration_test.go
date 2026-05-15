@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.resystems.io/eddt/internal/arrow/arrowtest"
 	writergen "go.resystems.io/eddt/internal/arrow/writer-gen"
 )
 
@@ -46,7 +47,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestPrimitiveRoundTrip(t *testing.T) {
@@ -166,7 +167,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestListRoundTrip(t *testing.T) {
@@ -287,7 +288,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNestedListRoundTrip(t *testing.T) {
@@ -388,7 +389,7 @@ type Packet struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestFixedSizeRoundTrip(t *testing.T) {
@@ -484,7 +485,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNestedFixedSizeRoundTrip(t *testing.T) {
@@ -570,7 +571,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMixedListFixedRoundTrip(t *testing.T) {
@@ -662,7 +663,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMapRoundTrip(t *testing.T) {
@@ -770,7 +771,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestIntKeyMapRoundTrip(t *testing.T) {
@@ -837,7 +838,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNestedMapRoundTrip(t *testing.T) {
@@ -934,7 +935,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMapListValRoundTrip(t *testing.T) {
@@ -1033,7 +1034,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNamedMapRoundTrip(t *testing.T) {
@@ -1105,7 +1106,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestPointerPrimitiveRoundTrip(t *testing.T) {
@@ -1225,7 +1226,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestStructRoundTrip(t *testing.T) {
@@ -1306,7 +1307,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestPointerToStructRoundTrip(t *testing.T) {
@@ -1407,7 +1408,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNestedStructRoundTrip(t *testing.T) {
@@ -1477,7 +1478,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestListOfStructsRoundTrip(t *testing.T) {
@@ -1559,7 +1560,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMapStructValuesRoundTrip(t *testing.T) {
@@ -1629,7 +1630,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestStructWithContainersRoundTrip(t *testing.T) {
@@ -1685,7 +1686,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestTimeDurationRoundTrip(t *testing.T) {
@@ -1749,7 +1750,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestTimeTimeRoundTrip(t *testing.T) {
@@ -1823,8 +1824,8 @@ type PBDurEvent struct {
 			t.Fatalf("write go.mod: %v", err)
 		}
 
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/durationpb")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
+		runCmd(t, tmpDir, "go", "get", arrowtest.ProtobufDep)
 
 		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		wg := writergen.NewGenerator([]string{tmpDir}, []string{"PBDurEvent"}, writerOut, false, nil)
@@ -1846,7 +1847,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestProtobufDurationRoundTrip(t *testing.T) {
@@ -1926,8 +1927,8 @@ type PBTsRecord struct {
 			t.Fatalf("write go.mod: %v", err)
 		}
 
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/timestamppb")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
+		runCmd(t, tmpDir, "go", "get", arrowtest.ProtobufDep)
 
 		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		wg := writergen.NewGenerator([]string{tmpDir}, []string{"PBTsRecord"}, writerOut, false, nil)
@@ -1949,7 +1950,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestProtobufTimestampRoundTrip(t *testing.T) {
@@ -2030,7 +2031,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestListOfConvertRoundTrip(t *testing.T) {
@@ -2101,7 +2102,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestTextMarshalerRoundTrip(t *testing.T) {
@@ -2186,8 +2187,8 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestUnmarshalErrorAccumulation(t *testing.T) {
@@ -2260,7 +2261,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestListOfTextMarshalerRoundTrip(t *testing.T) {
@@ -2334,7 +2335,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestStringerOnlySkip(t *testing.T) {
@@ -2395,9 +2396,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNullElementsInConvertList(t *testing.T) {
@@ -2479,9 +2480,9 @@ type DictStringStruct struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestDictEncodedStringRoundTrip(t *testing.T) {
@@ -2589,9 +2590,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestDictEncodedBinaryRoundTrip(t *testing.T) {
@@ -2707,7 +2708,7 @@ type BinRecord struct {
 			t.Fatalf("write go.mod: %v", err)
 		}
 
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 
 		writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		wg := writergen.NewGenerator([]string{tmpDir}, []string{"BinRecord"}, writerOut, false, nil)
@@ -2728,8 +2729,8 @@ import (
 
 	"dummy/binpkg"
 
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestBinaryUnmarshalRoundTrip(t *testing.T) {
@@ -2862,9 +2863,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestInitErrorPaths(t *testing.T) {
@@ -2977,7 +2978,7 @@ type Device struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestEmbeddedStructRoundTrip(t *testing.T) {
@@ -3065,9 +3066,9 @@ type FullStruct struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMissingColumns(t *testing.T) {
@@ -3206,7 +3207,7 @@ type Outer struct {
 		}
 
 		// Get arrow dependency.
-		runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 
 		// Generate writer into outpkg.
 		writerOut := filepath.Join(outDir, "outer_arrow_writer.go")
@@ -3235,7 +3236,7 @@ import (
 	"testmod/pkga"
 	"testmod/pkgb"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestCrossPackageRoundTrip(t *testing.T) {
@@ -3350,7 +3351,7 @@ func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string) s
 
 	// Fetch arrow dependency before generation so that packages.Load can
 	// resolve imports in both generated files.
-	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 
 	// Generate writer
 	writerOut := filepath.Join(tmpDir, "dummy_arrow_writer.go")
@@ -3379,7 +3380,7 @@ func runInnerTest(t *testing.T, tmpDir, testCode, testRunFilter string) {
 		t.Fatalf("Failed to write dummy_test.go: %v", err)
 	}
 
-	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 	runCmd(t, tmpDir, "go", "mod", "tidy")
 
 	args := []string{"test", "-v"}

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.resystems.io/eddt/internal/arrow/arrowtest"
 )
 
 // runBenchmarkCmd runs a go test benchmark and maps the results to the outer benchmark.
@@ -116,7 +118,7 @@ func BenchmarkArrowWriters(b *testing.B) {
 		}
 
 		// Initialize modules
-		cmd := exec.Command("go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		cmd := exec.Command("go", "get", arrowtest.ArrowDep)
 		cmd.Dir = tmpDir
 		if err := cmd.Run(); err != nil {
 			b.Fatalf("go get arrow failed: %v", err)
@@ -145,7 +147,7 @@ type Simple struct {
 
 import (
 	"testing"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func BenchmarkArrowAppendSimpleStruct(b *testing.B) {
@@ -191,7 +193,7 @@ type Complex struct {
 
 import (
 	"testing"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func BenchmarkArrowAppendComplexStruct(b *testing.B) {

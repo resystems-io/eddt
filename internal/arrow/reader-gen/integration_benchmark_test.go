@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.resystems.io/eddt/internal/arrow/arrowtest"
 	writergen "go.resystems.io/eddt/internal/arrow/writer-gen"
 )
 
@@ -85,7 +86,7 @@ func BenchmarkArrowReaders(b *testing.B) {
 		}
 
 		// Fetch arrow dependency before generation so packages.Load resolves imports.
-		cmd := exec.Command("go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		cmd := exec.Command("go", "get", arrowtest.ArrowDep)
 		cmd.Dir = tmpDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			b.Fatalf("go get arrow failed: %v\n%s", err, out)
@@ -132,7 +133,7 @@ type Simple struct {
 
 import (
 	"testing"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func BenchmarkArrowLoadRowSimpleStruct(b *testing.B) {
@@ -189,7 +190,7 @@ type Complex struct {
 
 import (
 	"testing"
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func BenchmarkArrowLoadRowComplexStruct(b *testing.B) {

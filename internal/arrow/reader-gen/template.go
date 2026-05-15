@@ -33,8 +33,8 @@ package {{.PackageName}}
 import (
 	"fmt"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 {{- range .Imports}}
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}

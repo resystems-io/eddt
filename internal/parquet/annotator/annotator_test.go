@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/parquet/schema"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 )
 
 func TestAnnotator_Annotate(t *testing.T) {

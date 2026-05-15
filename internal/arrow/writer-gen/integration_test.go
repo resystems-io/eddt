@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.resystems.io/eddt/internal/arrow/arrowtest"
 )
 
 func TestEndToEndIntegration(t *testing.T) {
@@ -41,9 +43,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -162,9 +164,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/duckdb/duckdb-go/v2"
 )
 
@@ -331,9 +333,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/duckdb/duckdb-go/v2"
 )
 
@@ -573,9 +575,9 @@ import (
 	"testing"
 	"encoding/json"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -721,9 +723,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -846,9 +848,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -993,9 +995,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -1166,9 +1168,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -1279,9 +1281,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -1470,7 +1472,7 @@ type Cube struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestTripleNestedSlices(t *testing.T) {
@@ -1531,7 +1533,7 @@ type Grouped struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestMapWithSliceValue(t *testing.T) {
@@ -1588,7 +1590,7 @@ type Config struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestNestedMaps(t *testing.T) {
@@ -1654,9 +1656,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -1769,9 +1771,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -1890,9 +1892,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -2020,7 +2022,7 @@ type Event struct {
 		}
 
 		// Fetch protobuf so packages.Load can resolve imports.
-		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/durationpb")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ProtobufDep)
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		g := NewGenerator([]string{tmpDir}, []string{"Event"}, outPath, false, nil)
@@ -2040,9 +2042,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -2167,7 +2169,7 @@ type Record struct {
 		}
 
 		// Fetch protobuf so packages.Load can resolve imports.
-		runCmd(t, tmpDir, "go", "get", "google.golang.org/protobuf/types/known/timestamppb")
+		runCmd(t, tmpDir, "go", "get", arrowtest.ProtobufDep)
 
 		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
 		g := NewGenerator([]string{tmpDir}, []string{"Record"}, outPath, false, nil)
@@ -2187,9 +2189,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -2378,9 +2380,9 @@ import (
 
 	"pkg2"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	_ "github.com/duckdb/duckdb-go/v2"
 )
 
@@ -2482,8 +2484,8 @@ func TestMultiPackageArrowWriter(t *testing.T) {
 			t.Fatalf("write test: %v", err)
 		}
 
-		runCmd(t, pkg1Dir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-		runCmd(t, pkg1Dir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+		runCmd(t, pkg1Dir, "go", "get", arrowtest.ArrowDep)
+		runCmd(t, pkg1Dir, "go", "get", arrowtest.DuckDBDep)
 		runCmd(t, pkg1Dir, "go", "mod", "tidy")
 
 		runCmd(t, pkg1Dir, "go", "test", "-v", "-run", "TestMultiPackageArrowWriter")
@@ -2559,7 +2561,7 @@ import (
 
 	"srcpkg"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestCrossPackageUnexportedFields(t *testing.T) {
@@ -2604,7 +2606,7 @@ func TestCrossPackageUnexportedFields(t *testing.T) {
 			t.Fatalf("write test: %v", err)
 		}
 
-		runCmd(t, outDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, outDir, "go", "get", arrowtest.ArrowDep)
 		runCmd(t, outDir, "go", "mod", "tidy")
 
 		runCmd(t, outDir, "go", "test", "-v", "-run", "TestCrossPackageUnexportedFields")
@@ -2675,7 +2677,7 @@ type Device struct {
 import (
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 func TestImportPathDevice(t *testing.T) {
@@ -2703,7 +2705,7 @@ func TestImportPathDevice(t *testing.T) {
 			t.Fatalf("write test: %v", err)
 		}
 
-		runCmd(t, modelDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, modelDir, "go", "get", arrowtest.ArrowDep)
 		runCmd(t, modelDir, "go", "mod", "tidy")
 		runCmd(t, modelDir, "go", "test", "-v", "-run", "TestImportPathDevice")
 	})
@@ -2782,7 +2784,7 @@ type Outer struct {
 			t.Fatalf("write go.mod: %v", err)
 		}
 
-		runCmd(t, outDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+		runCmd(t, outDir, "go", "get", arrowtest.ArrowDep)
 		runCmd(t, outDir, "go", "mod", "tidy")
 		runCmd(t, outDir, "go", "build", ".")
 	})
@@ -2816,9 +2818,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/duckdb/duckdb-go/v2"
 )
 
@@ -2941,7 +2943,7 @@ type Snapshot struct {
 }
 `
 	tmpDir, _ := setupIntegrationTest(t, goCode, []string{"Snapshot"}, "")
-	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 	runCmd(t, tmpDir, "go", "mod", "tidy")
 	runCmd(t, tmpDir, "go", "build", ".")
 }
@@ -2986,8 +2988,8 @@ func runInnerTest(t *testing.T, tmpDir, testCode, testRunFilter string) {
 		t.Fatalf("Failed to write dummy_test.go: %v", err)
 	}
 
-	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
-	runCmd(t, tmpDir, "go", "get", "github.com/duckdb/duckdb-go/v2@v2.5.5")
+	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
+	runCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
 	runCmd(t, tmpDir, "go", "mod", "tidy")
 
 	args := []string{"test", "-v"}
