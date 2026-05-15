@@ -1,0 +1,865 @@
+# delta-gen — Refinement Plan
+
+This document captures the requirements and implementation plan for
+building `delta-gen`, the EDDT Snapshot→Delta code generator,
+together with the minimal `runtime` package its emitted code depends
+on. It mirrors the structure of
+[`arrow-reader-gen-refinements.md`](arrow-reader-gen-refinements.md)
+and follows the `system-refinement` skill's per-item discipline: each
+checklist item is one analyse–plan–implement–verify–document–commit
+cycle.
+
+---
+
+## 1. Context Analysis Summary
+
+### 1.1 Existing Generator Infrastructure
+
+The repository already ships two Arrow-related code generators that
+establish the patterns delta-gen will mirror.
+
+| Asset                                          | Status  | Reuse strategy                                                                                                                                                        |
+|:-----------------------------------------------|:--------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `internal/arrow/gencommon`                     | shipped | `StructInfo` / `FieldInfo` / `packages.Load` patterns — mirror, do not directly depend (delta-gen needs different field metadata: tag vocabulary, clearable / nested) |
+| `cmd/arrow-writer-gen`, `cmd/arrow-reader-gen` | shipped | Cobra CLI scaffold and `loadPackages` plumbing — copy structure                                                                                                       |
+| `internal/arrow/writer-gen`                    | shipped | Two-file `generator.go` + `template.go` split — adopt                                                                                                                 |
+| `internal/arrow/reader-gen`                    | shipped | Validate-at-init pattern (R-05 / R-06 of the reader refinement) parallels delta-gen's tag-validation-at-init                                                          |
+| `docs/arrow-reader-gen-refinements.md`         | shipped | Document structure pattern — adopt with the additional **Errata** section                                                                                             |
+
+### 1.2 Specs Governing This Work — Source-of-Truth Hierarchy
+
+| Document                                              | Status for this work                                                                      | How it is used                                                                                                                           |
+|:------------------------------------------------------|:------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
+| `eddt-delta-gen-spec.md` (architecture project)       | **Normative** — primary contract                                                          | Every requirement traces here; conformance = matching this spec                                                                          |
+| `eddt-chain-lifecycle-spec.md` (architecture project) | **Normative** for runtime types and contract functions; **informative** for the generator | Used to interpret the runtime contract surface (delta-gen-spec §6)                                                                       |
+| `analyses/analysis-eddt-delta-investigation.md`       | **Informative** — design rationale and history                                            | Consulted only when both specs are silent on a point that materially affects implementation. Such consultations trigger an Errata entry. |
+
+The specs are **read-only** for this session. Any errors,
+ambiguities, or gaps surfaced during planning or implementation are
+captured in Section 4 (Errata) with a working assumption. A separate
+later effort folds them back into the spec.
+
+### 1.3 Components to Build
+
+| Component            | Location                  | Purpose                                                                                |
+|:---------------------|:--------------------------|:---------------------------------------------------------------------------------------|
+| `runtime/` package   | `runtime/` at module root | Minimum runtime contract surface that delta-gen-emitted code calls into                |
+| `cmd/delta-gen/`     | `cmd/delta-gen/main.go`   | Cobra CLI scaffold matching the existing arrow-writer-gen / arrow-reader-gen CLI shape |
+| `internal/deltagen/` | `internal/deltagen/`      | Generator implementation: parser, tag handler, template, helper-function emission      |
+| `docs/delta-gen.md`  | `docs/delta-gen.md`       | User-facing documentation of the generated API, tag vocabulary, usage examples         |
+| `Makefile` target    | top-level `Makefile`      | `build/delta-gen` target alongside existing generators                                 |
+
+### 1.4 Out of Scope
+
+These are specified in `eddt-chain-lifecycle-spec.md` but are **not**
+called by delta-gen-emitted code and are therefore not part of this
+work. They are flagged here so future contributors do not assume
+they are delivered.
+
+- **Constructor primitives** (chain-lifecycle §5: `NewBirthSnapshot`,
+  `NewCadenceSnapshot`, `NewTerminatorSnapshot`).
+- **Consumer state machine** (chain-lifecycle §8: frontier, taint
+  set, late-arrival policies, anchor recovery).
+- **Snapshot cadence policy**, **chain ownership**, **producer
+  rotation** (chain-lifecycle §9 – §10).
+- **Subject-namespace transport encoding** (separate spec).
+- **Per-entity catalogue policy values** (cadence intervals, reset
+  triggers, late-arrival thresholds).
+
+### 1.5 Runtime Surface delta-gen Depends On
+
+Delta-gen-emitted code calls the runtime in exactly three places.
+
+| Call site                          | Invocation in emitted code                     |
+|:-----------------------------------|:-----------------------------------------------|
+| `Apply` body — chain envelope      | `runtime.HeaderAfterApply(s.Header, d.Header)` |
+| `Diff` body — chain envelope       | `runtime.HeaderForDiff(a.Header, b.Header)`    |
+| `Apply` body — per clearable field | `runtime.ApplyFieldDelta(s.X, d.X)`            |
+
+This gives the runtime its minimum surface.
+
+| Kind      | Symbols                                                                                         |
+|:----------|:------------------------------------------------------------------------------------------------|
+| Types     | `Header`, `Provenance`, `SequenceRange`, `FieldDelta[T]`, `FieldDeltaOp`, `EntityID`            |
+| Constants | `OpIgnore`, `OpAssert`, `OpRetract`                                                             |
+| Functions | `HeaderAfterApply`, `HeaderForDiff`, `ApplyFieldDelta`                                          |
+| Helpers   | `EntityID.IsZero()` plus deterministic-hash primitives consumed by emitted `EntityID()` methods |
+
+### 1.6 Architectural Decisions Adopted
+
+Two architectural decisions are adopted up-front and threaded through
+the requirements and the plan. Both are captured as Errata against
+the spec (Section 4, `E-10`).
+
+#### 1.6.1 Entity is factored out of Header; Header carries an EntityID
+
+The spec as written places `Entity Key` inside `Header`, where the
+type `Key` is "per-entity defined" but never given a concrete Go
+declaration. This couples Header to a domain-typed field and forces
+either generics, interfaces, or `any` into the envelope — all of
+which complicate the Arrow round-trip story.
+
+This work adopts an alternative shape (captured in **Errata `E-10`**).
+
+- `Header` becomes purely mechanical chain metadata (no Entity field).
+- The Snapshot author defines a per-entity **key struct** and embeds
+  it in the Snapshot. The embedding is marked with
+  `eddt:"entity.key"`.
+- `Header` carries a uniform-typed **`EntityID`** — a content-hash
+  of the key struct's value, of type `[32]byte`.
+- delta-gen emits an `EntityID()` method on the key struct that
+  computes the content-hash deterministically.
+- All Entity-equality checks (within-chain sanity check, cross-chain
+  reset continuity check) reduce to uniform `==` on `[32]byte`
+  values.
+
+Defaults locked in for this work.
+
+| Decision                          | Default                                                                                                                                                                            |
+|:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `EntityID` width                  | `[32]byte` (256-bit), permitting a uniform byte array                                                                                                                              |
+| Hash function                     | Blake2b-256 (`golang.org/x/crypto/blake2b`) — fast, deterministic, language-portable                                                                                               |
+| Canonical key serialisation       | Fields in source order; big-endian for numerics; deterministic UTF-8 for strings; pointer dereferenced with explicit nil / non-nil marker byte; slices and maps disallowed in keys |
+| Tag name                          | `eddt:"entity.key"` (parallel to existing `delta.*` namespace)                                                                                                                     |
+| Tag scope                         | At most one `entity.key` per Snapshot; rejected if multiple; field type must be a struct whose fields are all comparable                                                           |
+| Zero-`EntityID` handling          | `HeaderAfterApply` and `HeaderForDiff` reject a Header whose `EntityID.IsZero()` is true                                                                                           |
+| Hash function versioning          | Fixed forever; documented as part of the runtime contract                                                                                                                          |
+| `EntityID()` emission target file | Same `*_delta.go` file as the Delta type (single output file per Snapshot)                                                                                                         |
+
+#### 1.6.2 Tri-state clearable is a phased extension
+
+The `eddt:"delta.clearable"` tag is an **opt-in** feature for the
+Snapshot author. It introduces meaningfully more complexity than the
+other tags in three subsystems at once:
+
+- **Runtime** — the spec mandates `FieldDelta[T]` (a generic struct)
+  as the Delta-side carrier, plus the `FieldDeltaOp` constants
+  (`OpIgnore` / `OpAssert` / `OpRetract`) and the `ApplyFieldDelta[T]`
+  helper that performs the tri-state merge.
+- **Tag handling** — the parser must recognise `delta.clearable`,
+  reject incompatible combinations (`clearable + nested`,
+  `clearable + omit`), and validate per-tag field-shape constraints
+  (slice / map are rejected; `clearable` requires scalar, pointer, or
+  struct value).
+- **Code emission** — the emitted Delta field is shaped as
+  `X FieldDelta[T]` (not `SetX *T`); the emitted `Apply` body calls
+  `runtime.ApplyFieldDelta`; the emitted `Diff` body produces the
+  tri-state `FieldDelta[T]` per the table in delta-gen §5.4.
+
+In addition, `FieldDelta[T]` is the **only** generic in the system
+(with Entity factored out per §1.6.1, `Header`, `EntityID`,
+`Provenance`, and the runtime contract functions are all
+non-generic). The Arrow-writer and Arrow-reader generators must
+therefore be able to handle generic struct instantiations as field
+types **only when clearable is in use**. This verification step is
+captured as `PR-01` / `PR-02` (now part of the clearable phase, not
+the baseline); if the existing arrow generators do not currently
+handle generic instantiations, extending them is a prerequisite to
+producing Arrow-compatible Deltas that carry clearable fields.
+
+For these reasons the implementation is **phased**:
+
+- **Phases 1 – 7 (baseline)** deliver a conforming generator for
+  Snapshots that do *not* use `delta.clearable`. The runtime omits
+  `FieldDelta[T]`, `FieldDeltaOp`, and `ApplyFieldDelta`; the tag
+  parser handles four of the five `delta.*` tags; the emitter
+  handles every field shape except the clearable cases of §5.1.
+- **Phase 7 (clearable extension)** layers the tri-state feature in
+  as its own set of system refinements: the arrow-gen prerequisite
+  checks, the runtime additions, the tag-handling additions, the
+  emission additions, the clearable-specific conformance tests, and
+  a documentation extension. Each Phase-8 item *extends* its
+  baseline counterpart without rewriting it, mirroring the existing
+  subsystem-refinement discipline.
+
+A Snapshot author who never tags any field `delta.clearable` is
+fully served by the baseline. Adding clearable usage to a Snapshot
+becomes valid only after Phase 7 has landed.
+
+### 1.7 Errata Discipline
+
+Each gap, error, or ambiguity discovered while interpreting the
+specs is recorded as a numbered `E-NN` entry in Section 4. Each
+entry carries:
+
+- **Spec location** — which document, which section.
+- **Nature** — error / ambiguity / gap / choice point.
+- **Source** — own analysis, sister-spec cross-reference, analysis
+  document, or external observation.
+- **Working assumption** — the choice taken during implementation.
+- **Proposed amendment** — the wording the spec should eventually
+  carry to lift the resolution.
+
+Reaching into the analysis document
+(`analyses/analysis-eddt-delta-investigation.md`) is itself a signal
+that the spec is silent on a point that ought to be specified;
+consulting it triggers an Errata entry attributing the working
+assumption to the analysis.
+
+---
+
+## 2. Requirements
+
+Requirements use flat numbering `R-NN` (two-digit, zero-padded,
+hyphen-separated) across the entire document. They are grouped below
+by subsystem. Each row cites the spec section it traces to.
+
+Per §1.6.2, the requirements split across two phases of work. The
+following requirements are delivered only when **Phase 7 — Tri-State
+Clearable Extension** is undertaken, and are *not* part of the
+baseline (Phases 1 – 7):
+
+- **R-03** (`FieldDelta[T]` + `FieldDeltaOp` constants)
+- **R-07** (`ApplyFieldDelta[T]` function)
+- The `delta.clearable` portion of **R-15** (tag parsing),
+  **R-16** (tag combination validation), and **R-17** (per-tag
+  field-shape validation).
+- The clearable contributions to **R-19** (Delta type emission),
+  **R-20** (Apply emission), and **R-21** (Diff emission), as
+  enumerated in delta-gen §5.1 rows tagged `clearable` and the
+  tri-state Diff table of §5.4.
+
+All other requirements are delivered by the baseline. The
+implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
+`CL-01` … `CL-09`) that satisfy these deferred requirements.
+
+### 2.1 Runtime Package
+
+| ID   | Requirement                                | Spec reference                                    | Description                                                                                                                                               |
+|:-----|:-------------------------------------------|:--------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| R-01 | `Header` type                              | chain-lifecycle §3.1; delta-gen §6.1; Errata E-10 | Chain envelope — no Entity field. Carries `EntityID`, `ChainID`, anchor-only fields, `Sequence`, `EffectiveAt`, `PublishedAt`, `Provenance`.              |
+| R-02 | `Provenance` and `SequenceRange` types     | chain-lifecycle §3.2; delta-gen §6.2              | Lineage record; append-only across Apply.                                                                                                                 |
+| R-03 | `FieldDelta[T]` + `FieldDeltaOp` constants | chain-lifecycle §3.3; delta-gen §6.3              | Tri-state ASSERT / RETRACT / IGNORE carrier.                                                                                                              |
+| R-04 | `EntityID` type                            | Errata E-10                                       | Fixed-width content-hash carrier; uniform across entity types. `[32]byte`; `IsZero()` helper.                                                             |
+| R-05 | `HeaderAfterApply` function                | chain-lifecycle §6.1; delta-gen §6.4              | Validates ChainID / EntityID (incl. zero-rejection) / Sequence / EffectiveAt / Closed; emits result Header per spec.                                      |
+| R-06 | `HeaderForDiff` function                   | chain-lifecycle §6.2; delta-gen §6.5              | Validates ChainID / EntityID / Sequence / EffectiveAt; emits Delta Header per spec (Provenance = nil per E-04).                                           |
+| R-07 | `ApplyFieldDelta[T]` function              | chain-lifecycle §6.3; delta-gen §6.6              | Pure tri-state merge.                                                                                                                                     |
+| R-08 | Deterministic-hash helpers                 | Errata E-10                                       | Reusable canonical-serialisation primitives (numeric writers, string writer, nil marker, finalise-to-`EntityID`). Driven by emitted `EntityID()` methods. |
+
+### 2.2 Generator: CLI and Input Loading
+
+| ID   | Requirement       | Spec reference                           | Description                                                                               |
+|:-----|:------------------|:-----------------------------------------|:------------------------------------------------------------------------------------------|
+| R-09 | CLI flags         | precedent: arrow-writer-gen / reader-gen | `--pkg`, `--struct`, `--out`, `--pkg-alias` flags. Same semantics as existing generators. |
+| R-10 | Package loading   | delta-gen §3.5                           | Use `golang.org/x/tools/go/packages` with `NeedTypes | NeedTypesInfo | NeedDeps`.         |
+| R-11 | Path/import input | precedent: arrow-writer-gen S5           | Accept Go import paths in addition to filesystem paths.                                   |
+
+### 2.3 Generator: Snapshot Parsing
+
+| ID   | Requirement                        | Spec reference | Description                                                                                          |
+|:-----|:-----------------------------------|:---------------|:-----------------------------------------------------------------------------------------------------|
+| R-12 | Header field recognition           | delta-gen §3.1 | Recognise the embedded `runtime.Header` field by *type*, not by name.                                |
+| R-13 | Payload field shape classification | delta-gen §3.2 | Recognise scalar, pointer, struct value, slice; reject function / channel / interface fields.        |
+| R-14 | Key field recognition              | Errata E-10    | Recognise the field carrying tag `eddt:"entity.key"`; reject if absent, multiple, or non-comparable. |
+
+### 2.4 Generator: Tag Handling
+
+| ID   | Requirement                    | Spec reference              | Description                                                                                         |
+|:-----|:-------------------------------|:----------------------------|:----------------------------------------------------------------------------------------------------|
+| R-15 | `eddt:` tag parsing            | delta-gen §3.3; Errata E-07 | Parse all five tag values plus comma-separated options. Preserve unknown options.                   |
+| R-16 | Tag combination validation     | delta-gen §3.3              | Reject simultaneous `clearable + nested`, `clearable + omit`, `nested + omit`.                      |
+| R-17 | Per-tag field-shape validation | delta-gen §3.3.1 – §3.3.4   | `clearable` rejects slice / map; `nested` requires non-pointer struct without embedded Header; etc. |
+| R-18 | `entity.key` tag handling      | Errata E-10                 | Validate single occurrence; validate that the key type contains only comparable fields.             |
+
+### 2.5 Generator: Code Emission
+
+| ID   | Requirement                  | Spec reference                    | Description                                                                                             |
+|:-----|:-----------------------------|:----------------------------------|:--------------------------------------------------------------------------------------------------------|
+| R-19 | Delta type emission          | delta-gen §4.1; §3.4              | Emit `TDelta` struct embedding `runtime.Header`; payload fields shaped per §5.1.                        |
+| R-20 | `Apply` method emission      | delta-gen §7.1; §5.1              | Pure function; calls `HeaderAfterApply` once; applies per-field rules.                                  |
+| R-21 | `Diff` method emission       | delta-gen §7.2; §5.1; Errata E-05 | Pure function; calls `HeaderForDiff` once; computes per-field diff contributions. Method form.          |
+| R-22 | `Coalesce` method emission   | delta-gen §7.3                    | Literal fold of `Apply` over the delta slice.                                                           |
+| R-23 | Nested type recursion        | delta-gen §4.3; §9.2              | Emit companion `<T>Delta` + `Apply` + `Diff` for `delta.nested` fields. No `Coalesce` for nested types. |
+| R-24 | `EntityID()` method emission | Errata E-10                       | Emit deterministic content-hash method on the key struct using runtime hash helpers.                    |
+| R-25 | Deterministic output         | delta-gen §10.1                   | Identical input produces byte-equal output (modulo line-ending normalisation).                          |
+
+### 2.6 Generator: Helper Functions
+
+| ID   | Requirement                 | Spec reference              | Description                                                                               |
+|:-----|:----------------------------|:----------------------------|:------------------------------------------------------------------------------------------|
+| R-26 | Set-diff for slice fields   | delta-gen §5.3; Errata E-03 | `AddedX` / `RemovedX` emission; set-minus semantics with survivor order preserved.        |
+| R-27 | Structural equality helpers | delta-gen §5.2; Errata E-02 | Generate equality for struct value fields; nil-equivalence + value-equality for pointers. |
+
+### 2.7 Conformance Tests
+
+| ID   | Requirement                | Spec reference              | Description                                                                 |
+|:-----|:---------------------------|:----------------------------|:----------------------------------------------------------------------------|
+| R-28 | Round-trip property        | delta-gen §8.1; Errata E-06 | `Apply(a, Diff(a, b))` payload-equals `b` across representative Snapshots.  |
+| R-29 | Identity-diff property     | delta-gen §8.2; Errata E-06 | `Apply(a, Diff(a, a))` payload-equals `a`.                                  |
+| R-30 | Coalesce-as-fold property  | delta-gen §8.3              | `Coalesce(s, [d_1..d_n])` is structurally a fold of `Apply` over the slice. |
+| R-31 | Per-field emission tests   | delta-gen §10.2             | One test per field shape in §5.1.                                           |
+| R-32 | Tag validation error tests | delta-gen §10.2             | Invalid tag combinations produce generation-time errors.                    |
+
+---
+
+## 3. Implementation Plan
+
+The plan is divided into **seven baseline phases (1 – 7)** plus a
+separate **clearable extension phase (8)** per §1.6.2. Each item
+carries `Files:` and `Tests:` annotations describing the files it
+touches and the test expectations it must satisfy. Each item is one
+`system-refinement` skill cycle (plan → implement → verify →
+document → commit) and produces exactly one commit (signed and
+signed-off per repo policy).
+
+The baseline delivers a conforming generator for Snapshots that do
+not use `delta.clearable`. Phase 7 extends each subsystem
+(runtime, tag handling, code emission, conformance tests,
+documentation) to support tri-state clearable fields, starting with
+the arrow-writer / reader-gen generic-instantiation prerequisite
+checks.
+
+### Phase 1 — Runtime Package
+
+- [ ] **RT-01: Create `runtime/` package; declare envelope types.**
+  `Header`, `Provenance`, `SequenceRange`, and `EntityID` (=
+  `[32]byte`). `FieldDelta[T]` / `FieldDeltaOp` / the three `Op*`
+  constants are deferred to Phase 7 (CL-01).
+  - Files: `runtime/types.go`.
+  - Tests: `runtime/types_test.go` — zero values, `IsZero`
+    helper, struct-equality.
+
+- [ ] **RT-02: Implement deterministic-hash helpers.**
+  Canonical-serialisation primitives (numeric writers, string
+  writer, nil marker, finalise-to-`EntityID`). Built on
+  `golang.org/x/crypto/blake2b`.
+  - Files: `runtime/hash.go`.
+  - Tests: `runtime/hash_test.go` — determinism across runs;
+    known-vector tests against a frozen corpus.
+
+- [ ] **RT-03: Implement `HeaderAfterApply`.** Validates ChainID,
+  EntityID (incl. zero-rejection), Sequence monotonicity,
+  EffectiveAt non-decrease, Closed != nil rejection. Returns
+  result Header per spec.
+  - Files: `runtime/header.go`.
+  - Tests: `runtime/header_test.go` — happy path; each
+    validation failure mode.
+
+- [ ] **RT-04: Implement `HeaderForDiff`.** Validates ChainID,
+  EntityID, Sequence ordering, EffectiveAt ordering. Returns
+  Delta Header per spec (Provenance = nil per E-04).
+  - Files: `runtime/header.go`.
+  - Tests: `runtime/header_test.go` — happy path; each
+    validation failure mode.
+
+- [ ] **RT-05: Add `build/delta-gen` Makefile target.** Mirrors the
+  existing `build/arrow-writer-gen` target. Placeholder
+  `cmd/delta-gen` is acceptable at this point.
+  - Files: `Makefile`.
+  - Tests: `make build/delta-gen` builds successfully.
+
+### Phase 2 — Generator Scaffold and Snapshot Parsing
+
+- [ ] **G-01: Scaffold `cmd/delta-gen/main.go` and
+  `internal/deltagen/`.** Cobra CLI skeleton; `--pkg`,
+  `--struct`, `--out`, `--pkg-alias` flags; filesystem-or-import
+  path input acceptance.
+  - Files: `cmd/delta-gen/main.go`,
+    `cmd/delta-gen/main_test.go`,
+    `internal/deltagen/generator.go`.
+  - Tests: `cmd/delta-gen/main_test.go` — flag parsing, help
+    text.
+
+- [ ] **G-02: Package loader.** Adapt the writer-gen `loadPackages`
+  pattern; pass `NeedTypes | NeedTypesInfo | NeedDeps`.
+  - Files: `internal/deltagen/load.go`.
+  - Tests: `internal/deltagen/load_test.go` — load a package
+    fixture; resolve a typed Snapshot reference.
+
+- [ ] **G-03: Snapshot type parser.** Find the embedded
+  `runtime.Header` field by type; enumerate payload fields;
+  classify shapes (scalar, pointer, struct, slice). Reject
+  unsupported shapes (function, channel, interface, slice / map
+  outside spec-permitted positions).
+  - Files: `internal/deltagen/parse.go`.
+  - Tests: `internal/deltagen/parse_test.go` — fixture Snapshots
+    covering every shape in §3.2.
+
+- [ ] **G-04: Key field parser.** Locate the `eddt:"entity.key"`
+  tagged field; validate its type is a struct of comparable
+  fields; reject if absent or multiple.
+  - Files: `internal/deltagen/parse.go`,
+    `internal/deltagen/parse_test.go`.
+  - Tests: fixtures — single-key Snapshot (OK); no-key Snapshot
+    (error); multi-key Snapshot (error); non-comparable-key
+    Snapshot (error).
+
+### Phase 3 — Tag Handling and Validation
+
+- [ ] **T-01: `eddt:` tag parser.** Parse four of the five tag
+  values (`nested`, `omit`, `retired`, `commutative`) and
+  comma-separated options. Preserve unknown options without acting
+  on them (Errata E-07). The fifth tag value, `clearable`, is added
+  in Phase 7 (CL-03).
+  - Files: `internal/deltagen/tag.go`.
+  - Tests: `internal/deltagen/tag_test.go` — every baseline tag, with
+    and without options.
+
+- [ ] **T-02: Tag combination validation.** Reject simultaneous
+  `nested + omit`. Apply per-tag field-shape validation
+  (delta-gen §3.3.2 – §3.3.4 for `nested`, `omit`, `retired`).
+  Clearable-related combination rules (`clearable + nested`,
+  `clearable + omit`) and field-shape rules (§3.3.1) are added in
+  Phase 7 (CL-04).
+  - Files: `internal/deltagen/tag.go`,
+    `internal/deltagen/parse.go`.
+  - Tests: `internal/deltagen/tag_test.go` — each invalid baseline
+    combination produces a generation-time error.
+
+- [ ] **T-03: `entity.key` recognition wired into parser.**
+  Cross-link Phase 2 / G-04 with the tag parser so all tags flow
+  through the same code path.
+  - Files: `internal/deltagen/tag.go`,
+    `internal/deltagen/parse.go`.
+  - Tests: `internal/deltagen/parse_test.go` — combined
+    `entity.key` + `delta.*` (baseline tags) fixtures.
+
+### Phase 4 — Code Emission: Top-Level Types and Methods
+
+- [ ] **EM-01: Delta type emission.** `text/template` skeleton; emit
+  `TDelta` struct embedding `runtime.Header`; emit per-field
+  Delta-side declarations for the non-clearable rows of §5.1
+  (scalar, pointer, struct-value, slice, omit, retired, nested,
+  embedded Header). The clearable row is added in Phase 7 (CL-05).
+  - Files: `internal/deltagen/template.go`,
+    `internal/deltagen/generator.go`.
+  - Tests: `internal/deltagen/template_test.go` — assert emitted
+    struct shape for each baseline field-shape × tag combination.
+
+- [ ] **EM-02: `Apply` method emission.** Emit `Apply` body:
+  `HeaderAfterApply` call + per-field Apply contributions for the
+  non-clearable rows of §5.1. The clearable contribution
+  (`runtime.ApplyFieldDelta`) is added in Phase 7 (CL-06).
+  - Files: `internal/deltagen/template.go`,
+    `internal/deltagen/generator.go`.
+  - Tests: `internal/deltagen/template_test.go` — emit and
+    compile-check a fixture Snapshot covering every baseline Apply
+    rule.
+
+- [ ] **EM-03: `Diff` method emission.** Emit `Diff` body:
+  `HeaderForDiff` call + per-field Diff contributions for the
+  non-clearable rows of §5.1. Method form per Errata E-05. The
+  tri-state Diff contribution for clearable fields (§5.4) is added
+  in Phase 7 (CL-07).
+  - Files: `internal/deltagen/template.go`.
+  - Tests: same baseline template-test fixture + compile-check.
+
+- [ ] **EM-04: `Coalesce` method emission.** Emit `Coalesce` as a
+  literal `for` loop fold over the delta slice.
+  - Files: `internal/deltagen/template.go`.
+  - Tests: `template_test.go` — assert structural fold shape.
+
+- [ ] **EM-05: `EntityID()` method emission.** Emit a deterministic
+  content-hash method on the key struct, driving the runtime
+  hash helpers (RT-02). Per Errata E-10.
+  - Files: `internal/deltagen/template.go`,
+    `internal/deltagen/key.go`.
+  - Tests: `template_test.go` + integration test — assert the
+    emitted method compiles, is deterministic across runs, and
+    produces distinct EntityIDs for distinct keys.
+
+### Phase 5 — Nested Type Recursion
+
+- [ ] **N-01: Companion `<T>Delta` type emission for
+  `delta.nested`.** Recursive parse + emit; generate companion
+  Delta type and `Apply` / `Diff` (no `Coalesce`) per delta-gen
+  §4.3.
+  - Files: `internal/deltagen/parse.go`,
+    `internal/deltagen/template.go`,
+    `internal/deltagen/template_test.go`.
+  - Tests: fixture Snapshot with nested struct field; assert
+    companion type emitted; assert recursive Apply / Diff shape.
+
+- [ ] **N-02: Cycle and depth handling.** Reject cyclic struct
+  definitions at generation time (delta-gen §3.3.2); support
+  arbitrary non-cyclic depth.
+  - Files: `internal/deltagen/parse.go`,
+    `internal/deltagen/parse_test.go`.
+  - Tests: cyclic fixture → generation-time error;
+    deeply-nested fixture → success.
+
+### Phase 6 — Conformance Tests
+
+- [ ] **C-01: Test corpus Snapshot types.** Define a small set of
+  representative Snapshot fixtures under
+  `internal/deltagen/testdata/` covering every baseline field shape
+  and tag combination plus nested types and an `entity.key`. The
+  clearable corpus is added in Phase 7 (CL-08).
+  - Files: `internal/deltagen/testdata/*`.
+  - Tests: fixtures load without errors; generated output
+    compiles in an isolated module.
+
+- [ ] **C-02: Round-trip property test.** `quick.Check`-style:
+  `Apply(a, Diff(a, b)) ≡ b` on payload (Errata E-06).
+  - Files: `internal/deltagen/conformance_test.go`.
+  - Tests: property test passes across 1000+ random Snapshot
+    pairs.
+
+- [ ] **C-03: Identity-diff property test.**
+  `Apply(a, Diff(a, a)) ≡ a` on payload.
+  - Files: `internal/deltagen/conformance_test.go`.
+  - Tests: property test passes.
+
+- [ ] **C-04: Coalesce-as-fold property test.** Assert `Coalesce(s,
+  [d_1..d_n])` equals iterated `Apply`.
+  - Files: `internal/deltagen/conformance_test.go`.
+  - Tests: property test passes.
+
+- [ ] **C-05: Per-field emission and tag-validation integration
+  tests.** Combine emission assertions from EM-01..EM-05 with
+  tag-validation error assertions from T-02 / T-03 into a
+  conformance grouping. Generator output compiles in an isolated
+  module (subprocess `go build`, mirroring the
+  arrow-reader-gen integration pattern). This is delta-gen-internal
+  integration — it does not yet bring the arrow generators into the
+  loop (see C-06 for that).
+  - Files: `internal/deltagen/integration_test.go`.
+  - Tests: all subtests pass.
+
+- [ ] **C-06: Cross-generator integration round-trip — delta-gen ×
+  arrow-writer-gen × arrow-reader-gen.** Take a baseline Snapshot fixture; run
+  delta-gen to produce its `*_delta.go` (Snapshot + Delta types + `Apply` /
+  `Diff` / `Coalesce` / `EntityID`); run arrow-writer-gen against the same
+  package to emit the Arrow writer for Snapshot and Delta; run arrow-reader-gen
+  to emit the Arrow reader. In an isolated module, marshal a synthetic Delta
+  value to an Arrow record via the generated writer, then read it back via the
+  generated reader, and assert payload + Header equality. Verifies the
+  cross-subsystem contract — that the type shapes delta-gen emits are compatible
+  with the arrow-gens' supported field-shape vocabulary, end-to-end.
+  - Files: `internal/deltagen/integration_arrow_test.go`,
+    `internal/deltagen/testdata/arrow_roundtrip/*`.
+  - Tests: baseline Snapshot fixture (every non-clearable field
+    shape from §5.1) round-trips Delta → Arrow record → Delta
+    losslessly. Subprocess pattern mirrors arrow-reader-gen's
+    existing integration tests.
+  - Gates: requires no clearable fields (clearable round-trip is
+    CL-09 in Phase 7, gated separately by `PR-01` / `PR-02`).
+
+- [ ] **C-07: Optional — generated-Apply benchmark.** Benchmark
+  `Apply` and `Coalesce` on representative Snapshots. Establish
+  a baseline; no regression target yet.
+  - Files: `internal/deltagen/benchmark_test.go`.
+  - Tests: `go test ./internal/deltagen/... -bench=.
+    -benchtime=1s` runs; record baseline in commit message.
+
+### Phase 7 — Tri-State Clearable Extension
+
+Phase 7 is undertaken only after the baseline (Phases 1 – 6) is
+verified. It layers `eddt:"delta.clearable"` support across runtime,
+tag handling, code emission, and conformance / integration testing,
+starting with two arrow-generator prerequisite checks. Per §1.6.2,
+clearable is opt-in for the Snapshot author; this phase makes that
+opt-in valid. User-facing documentation for the full feature set —
+baseline plus clearable — lives in Phase 8.
+
+Phase 7 items proceed in dependency order (`PR-*` → runtime → tag
+handling → emission → conformance properties → cross-generator
+integration). Each item is one `system-refinement` cycle that
+*extends* the corresponding baseline item without rewriting it.
+
+- [ ] **PR-01: Verify `arrow-writer-gen` handles generic struct
+  instantiations as field types.** Investigate whether
+  `internal/arrow/gencommon` resolves a field of type
+  `runtime.FieldDelta[*ECI]` (for example) and walks its fields
+  correctly. `FieldDelta[T]` is mandated by the delta-gen spec as
+  the on-Delta carrier for clearable fields; without writer-gen
+  support, Phase 7 cannot produce Arrow-round-trippable Deltas. If
+  unsupported, file a follow-up refinement item in
+  `arrow-writer-gen-refinements.md` and complete it before
+  proceeding with CL-05 and later items.
+  - Files: `internal/arrow/gencommon/`,
+    `internal/arrow/writer-gen/` (investigation only at this step).
+  - Tests: existing writer-gen suite passes; new ad-hoc fixture
+    exercises `FieldDelta[T]` as a field type.
+
+- [ ] **PR-02: Verify `arrow-reader-gen` handles the same.** Same
+  check on the reader side; required for the Arrow→Delta direction.
+  File a follow-up refinement in
+  `arrow-reader-gen-refinements.md` if unsupported and complete it
+  before proceeding with CL-09 (cross-generator integration with
+  clearable fields).
+  - Files: `internal/arrow/reader-gen/`,
+    `internal/arrow/gencommon/` (investigation only).
+  - Tests: existing reader-gen suite passes; ad-hoc fixture for
+    `FieldDelta[T]` round-trip.
+
+- [ ] **CL-01: Extend runtime types with `FieldDelta[T]` and
+  `FieldDeltaOp`.** Add to `runtime/types.go`: the
+  `FieldDeltaOp` type, the three `Op*` constants (`OpIgnore`,
+  `OpAssert`, `OpRetract`), and the generic `FieldDelta[T]` struct
+  per delta-gen §6.3 / chain-lifecycle §3.3.
+  - Files: `runtime/types.go`.
+  - Tests: `runtime/types_test.go` — zero values for each Op; struct
+    equality on `FieldDelta[T]` instantiations.
+
+- [ ] **CL-02: Implement `ApplyFieldDelta[T]`.** Pure tri-state
+  switch per delta-gen §6.6 / chain-lifecycle §6.3.
+  - Files: `runtime/field_delta.go`.
+  - Tests: `runtime/field_delta_test.go` — all three Op values,
+    including zero-value behaviour on `OpRetract` for representative
+    `T`.
+
+- [ ] **CL-03: Extend the `eddt:` tag parser for `clearable`.** Add
+  recognition of `delta.clearable` to the existing parser; preserve
+  comma-separated option behaviour from T-01.
+  - Files: `internal/deltagen/tag.go`,
+    `internal/deltagen/tag_test.go`.
+  - Tests: parser recognises `delta.clearable` (with and without
+    options); existing baseline tag tests still pass.
+
+- [ ] **CL-04: Extend tag combination and field-shape validation.**
+  Reject simultaneous `clearable + nested` and `clearable + omit`.
+  Apply the clearable field-shape rule (delta-gen §3.3.1): scalar /
+  pointer / struct value allowed; slice and map rejected.
+  - Files: `internal/deltagen/tag.go`,
+    `internal/deltagen/parse.go`,
+    `internal/deltagen/tag_test.go`.
+  - Tests: invalid combinations produce generation-time errors;
+    slice / map tagged `clearable` rejected with a clear message.
+
+- [ ] **CL-05: Extend Delta type emission with the clearable row.**
+  Add the `X FieldDelta[T]` field-shape emission to the template per
+  the clearable rows of delta-gen §5.1. Import `runtime` for
+  `FieldDelta`.
+  - Files: `internal/deltagen/template.go`.
+  - Tests: `internal/deltagen/template_test.go` — assert emitted
+    struct shape for clearable-tagged scalar, pointer, and struct
+    value fields.
+
+- [ ] **CL-06: Extend `Apply` emission with the clearable
+  contribution.** Emit `result.X = runtime.ApplyFieldDelta(s.X, d.X)`
+  for each clearable field per delta-gen §5.1 (clearable row) /
+  §6.6.
+  - Files: `internal/deltagen/template.go`.
+  - Tests: emitted Apply compiles; behaviour matches the tri-state
+    table for representative `T`.
+
+- [ ] **CL-07: Extend `Diff` emission with the tri-state
+  contribution.** Emit the `FieldDelta[T]` construction per
+  delta-gen §5.4 truth-table (`unset`/`set` × `unset`/`set` /
+  equal / different).
+  - Files: `internal/deltagen/template.go`.
+  - Tests: emitted Diff compiles; produces correct
+    `{Op: OpIgnore | OpAssert | OpRetract, Value: …}` for each of
+    the five cases in §5.4.
+
+- [ ] **CL-08: Conformance — clearable property tests.** Add
+  clearable Snapshot fixtures to the conformance corpus (C-01);
+  extend C-02 / C-03 / C-04 property tests to cover clearable
+  fields; add a dedicated tri-state-Diff test asserting the §5.4
+  truth-table.
+  - Files: `internal/deltagen/testdata/*`,
+    `internal/deltagen/conformance_test.go`.
+  - Tests: round-trip / identity-diff / coalesce-as-fold all hold
+    when clearable fields are present; tri-state-Diff truth-table
+    test passes.
+
+- [ ] **CL-09: Cross-generator integration round-trip with clearable
+  (V-model INT step).** Extend the C-06 cross-generator integration
+  test with a fixture containing clearable fields. Run delta-gen,
+  arrow-writer-gen, and arrow-reader-gen against the same package;
+  marshal a Delta exhibiting all three clearable Op states
+  (`OpIgnore` / `OpAssert` / `OpRetract`) to an Arrow record;
+  read it back and assert lossless equality. Verifies that
+  `FieldDelta[T]` as a generic field type marshals correctly
+  through arrow-writer-gen and arrow-reader-gen (gated by
+  `PR-01` / `PR-02`).
+  - Files: `internal/deltagen/integration_arrow_test.go` (extend),
+    `internal/deltagen/testdata/arrow_roundtrip_clearable/*`.
+  - Tests: clearable Delta round-trip Delta → Arrow record →
+    Delta is lossless for all three Op states; payload + Header
+    equality after round-trip.
+
+### Phase 8 — Documentation
+
+Final phase. Closes out the user-facing documentation for the full
+feature set (baseline plus clearable when Phase 7 has been
+delivered) and the refinement document itself.
+
+- [ ] **D-01: Write `docs/delta-gen.md`.** User-facing
+  documentation: the full tag vocabulary (five `delta.*` tags plus
+  `entity.key`), generated API (Apply / Diff / Coalesce / EntityID),
+  worked example, runtime contract surface, and the clearable
+  section (`delta.clearable` semantics, `FieldDelta[T]` carrier,
+  `runtime.ApplyFieldDelta` helper, worked example with a clearable
+  field) when Phase 7 has been delivered. If Phase 8 is undertaken
+  before Phase 7 (baseline-only release), this item documents the
+  baseline and a follow-up Doc-update item is added at the start of
+  Phase 7.
+  - Files: `docs/delta-gen.md`.
+  - Tests: none (documentation).
+
+- [ ] **D-02: Update `docs/future-plans.md`.** Note that the
+  deltaflow ingestion / analytics direction is now backed by a
+  conforming generator and runtime — including Arrow round-trip
+  for Deltas, with or without clearable depending on Phase 7
+  state.
+  - Files: `docs/future-plans.md`.
+  - Tests: none.
+
+- [ ] **D-03: Close out this refinement document.** Mark all
+  completed checklist items; fill in the Change Log with item IDs,
+  dates, and one-line notes per the precedent set by the arrow
+  refinement docs.
+  - Files: `docs/delta-gen-refinements.md` (this file).
+  - Tests: none.
+
+---
+
+## 4. Errata
+
+This section catalogues gaps, errors, ambiguities, and choice
+points in the source-of-truth specs that affect implementation.
+Each entry's *working assumption* is what the implementation will
+adopt; the *proposed amendment* is what the spec should ultimately
+carry to lift the resolution.
+
+`E-01` and `E-09` from prior planning rounds are subsumed by `E-10`
+and are not separately listed.
+
+### E-02 — Pointer-field set semantics: `ptrEqual` undefined
+
+- **Spec location:** `eddt-delta-gen-spec.md` §5.1, row for `*T`
+  (untagged pointer).
+- **Nature:** Ambiguity. The spec refers to `ptrEqual(a.X, b.X)`
+  but does not define the function.
+- **Source:** Own reading of the spec.
+- **Working assumption:** Nil-equivalence plus value equality when
+  both non-nil. Specifically:
+  `ptrEqual(a, b) := (a == nil && b == nil) || (a != nil && b != nil && *a == *b)`.
+- **Proposed amendment:** Add a footnote to §5.1 specifying the
+  pointer-equality semantics, or replace `ptrEqual` with explicit
+  pseudocode in the cell.
+
+### E-03 — Slice set-diff: survivor order not pinned
+
+- **Spec location:** `eddt-delta-gen-spec.md` §5.3.
+- **Nature:** Ambiguity. The spec states "removals are applied
+  first, then additions appended" but does not specify the order of
+  survivors within `s.X`.
+- **Source:** Own reading.
+- **Working assumption:** Preserve `s.X` order for survivors;
+  append `d.AddedX` in given order.
+- **Proposed amendment:** State explicitly that survivor order is
+  the order of appearance in `s.X`.
+
+### E-04 — `HeaderForDiff.Provenance`: `nil` vs empty slice
+
+- **Spec location:** `eddt-delta-gen-spec.md` §6.5;
+  `eddt-chain-lifecycle-spec.md` §6.2.
+- **Nature:** Ambiguity. The spec says "`Provenance = nil (empty
+  slice)`" — but `nil` and `[]Provenance{}` are distinguishable in
+  Go.
+- **Source:** Own reading.
+- **Working assumption:** `nil` (Go zero-value convention).
+- **Proposed amendment:** State explicitly `nil`.
+
+### E-05 — `Diff` as method or package-level function
+
+- **Spec location:** `eddt-delta-gen-spec.md` §4.2.
+- **Nature:** Choice point. The spec permits either form
+  consistently.
+- **Source:** Own reading.
+- **Working assumption:** Method form `func (a T) Diff(b T) TDelta`
+  for symmetry with `Apply` and `Coalesce`.
+- **Proposed amendment:** Recommend (but do not mandate) the method
+  form in §4.2.
+
+### E-06 — Identity-diff invariant collides with Sequence monotonicity
+
+- **Spec location:** `eddt-delta-gen-spec.md` §8.1 and §8.2;
+  `eddt-chain-lifecycle-spec.md` §6.1.
+- **Nature:** Tension. `Apply(a, Diff(a, a))` (Inv. 8.2) cannot
+  hold against the runtime's `d.Sequence > s.Sequence` precondition
+  (the diff Header has `Sequence == a.Sequence`).
+- **Source:** Own reading; the spec acknowledges the gap via
+  "modulo Header bookkeeping" wording.
+- **Working assumption:** Conformance tests assert payload equality
+  only, not Header equality. A relaxed-validation test runtime (or
+  a test-only flag on `HeaderAfterApply`) is used when constructing
+  the property tests.
+- **Proposed amendment:** Define a `HeaderAfterApply` variant for
+  test / property contexts that relaxes the strict-monotonicity
+  precondition; alternatively, rephrase Inv. 8.1 / 8.2 to bracket
+  the input pair on `b.Sequence > a.Sequence`.
+
+### E-07 — Tag option grammar undefined
+
+- **Spec location:** `eddt-delta-gen-spec.md` §3.3.
+- **Nature:** Gap. The spec mentions
+  `eddt:"delta.retired,since=2025-12-01"` but does not formalise
+  the option grammar.
+- **Source:** Own reading.
+- **Working assumption:** Comma-separated `key=value` options with
+  no escaping; unknown options preserved without action.
+- **Proposed amendment:** State the grammar in §3.3.
+
+### E-10 — Refactor Entity into a content-hashed `EntityID` carried by Header; relocate the typed key to the Snapshot
+
+- **Spec location:** chain-lifecycle §3.1 (Header), §3.4
+  (Structural Convention), §4.3 (Reset), §5.x (Constructors),
+  §6.1 / §6.2 (HeaderAfterApply / HeaderForDiff validation tables);
+  delta-gen §3.1 (Input Grammar), §3.3 (Tag Vocabulary), §6.1
+  (Header), §6.4 / §6.5 (Contract Functions), §11 (Worked Example).
+- **Nature:** Architectural refactor. The spec as written places
+  `Entity Key` inside `Header`, with `Key` "per-entity defined" but
+  never given a concrete Go declaration. This couples Header to a
+  domain type and frustrates the Arrow round-trip requirement (the
+  writer-gen audit explicitly lists `interface{}` / `any` as
+  unsupported). The proposed refactor decouples Header from the
+  domain key entirely.
+- **Source:** Own analysis, in dialogue with the user — the
+  arrow-round-trip constraint plus the cross-chain reset-continuity
+  check together motivate the change.
+- **Working assumption (implementation adopts this immediately):**
+    - `Header` carries `EntityID [32]byte` (uniform-typed
+      content-hash), no `Entity Key` field.
+    - The Snapshot author defines a per-entity *key struct* (e.g.
+      `UEKey { IMSI, IMEI string }`) and embeds it in the Snapshot.
+    - The key struct is marked with `eddt:"entity.key"` (new tag).
+    - delta-gen emits an `EntityID()` method on the key struct that
+      computes a deterministic Blake2b-256 hash of the canonical
+      encoding of the key's fields.
+    - `HeaderAfterApply` and `HeaderForDiff` validate `EntityID`
+      equality uniformly and reject zero-`EntityID` Headers.
+    - Cross-chain reset continuity checks (chain-lifecycle §4.3)
+      are expressed as `pred.EntityID == succ.EntityID` — same
+      shape, same uniform type.
+    - Hash function and canonical-serialisation scheme are fixed
+      forever (Blake2b-256; source-order, big-endian, deterministic
+      UTF-8, no collections, explicit nil marker byte).
+- **Subsumes:** the prior `E-01` (Key type undefined) and `E-09`
+  (cross-chain entity continuity gap) are obviated by this refactor
+  and are not separately listed.
+- **Proposed amendment:**
+    - Replace `Header.Entity Key` with `Header.EntityID EntityID`
+      in chain-lifecycle §3.1 and delta-gen §6.1.
+    - Remove `type Key` as a runtime symbol.
+    - Add `EntityID` to the runtime types section.
+    - Add `eddt:"entity.key"` to the tag vocabulary in delta-gen
+      §3.3 with semantics, validation rules, and tag-combination
+      constraints (incompatible with any `delta.*` tag).
+    - Add the normative requirement that delta-gen emits an
+      `EntityID()` method on the tagged key struct, using a
+      documented canonical serialisation and hash function.
+    - Update `HeaderAfterApply` / `HeaderForDiff` validation tables
+      to reference `EntityID` equality (uniform `==`) and specify
+      zero-`EntityID` rejection.
+    - Add `ValidateResetContinuity(pred, succ Header) error` (or a
+      paired-constructor variant) to chain-lifecycle §5, using the
+      same uniform equality.
+    - Document the hash function and canonical-serialisation rules
+      normatively (new subsection in chain-lifecycle §3).
+    - Update the worked example (delta-gen §11) to show the new
+      shape.
+
+---
+
+## 5. Change Log
+
+Record completed items here with the date (check git blame for the
+git commit).
+
+| Date | Item | Notes |
+|:-----|:-----|:------|
+|      |      |       |
