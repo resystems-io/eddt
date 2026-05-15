@@ -219,4 +219,207 @@ func BenchmarkArrowAppendComplexStruct(b *testing.B) {
 		tmpDir := setupWorkspace(b, structCode, "Complex", testCode)
 		runBenchmarkCmd(b, tmpDir)
 	})
+
+	// GenericPrimArg benchmarks Append on a struct whose only non-trivial field
+	// is FieldDelta[int32] — a generic instantiation with a primitive type argument.
+	// This sub-benchmark isolates two code paths introduced by GI-01/GI-02:
+	//   - The named-type-over-primitive cast: int8(row.Scalar.Op) for FieldDeltaOp.
+	//   - The two-sub-field struct builder path for FieldDelta_Int32 (Op + Value).
+	b.Run("GenericPrimArg", func(b *testing.B) {
+		structCode := `package dummy
+
+// FieldDeltaOp is a named type over int8. The generated writer casts it
+// explicitly: int8(row.Scalar.Op). This exercises the named-type-over-primitive
+// path in gencommon's fieldInfoFromType.
+type FieldDeltaOp int8
+
+// FieldDelta is the generic clearable-field carrier. The generator produces a
+// derived struct FieldDelta_Int32 with Op (Int8) and Value (Int32) columns.
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+// SnapshotScalar is the benchmark payload. It holds a single clearable scalar
+// field; the generator expands FieldDelta[int32] into two Arrow sub-columns.
+type SnapshotScalar struct {
+	Seq    int64
+	Scalar FieldDelta[int32]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkAppendGenericPrimArg measures the per-row cost of Append on a struct
+// containing a FieldDelta[int32] field. Each call exercises:
+//   - Int64 append for Seq.
+//   - StructBuilder begin/end for the FieldDelta_Int32 sub-column.
+//   - Int8 append with FieldDeltaOp named-type cast for Op.
+//   - Int32 append for Value.
+func BenchmarkAppendGenericPrimArg(b *testing.B) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(b, 0) // confirms Release() frees all Arrow builder memory
+
+	writer := NewSnapshotScalarArrowWriter(pool)
+	defer writer.Release()
+
+	// Non-zero Op and Value prevent the compiler from constant-folding the
+	// cast and append into a no-op.
+	row := SnapshotScalar{
+		Seq:    1,
+		Scalar: FieldDelta[int32]{Op: 1, Value: 42},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Append(&row)
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, "SnapshotScalar", testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
+
+	// GenericStructArg benchmarks Append on a struct whose only non-trivial field
+	// is FieldDelta[*Inner] — a generic instantiation where the type argument is a
+	// pointer to a struct. This sub-benchmark isolates the pointer-type-arg path:
+	//   - Nil Value  → AppendNull on the Value struct sub-builder (no recursion).
+	//   - Non-nil Value → struct begin/end + String append for Inner.Z.
+	//
+	// The inner loop alternates 50/50 between both variants so both branches
+	// contribute equally to the reported ns/op.
+	b.Run("GenericStructArg", func(b *testing.B) {
+		structCode := `package dummy
+
+type FieldDeltaOp int8
+
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+// Inner is the pointed-to struct. Its single string field produces a String
+// sub-column nested inside the nullable Value struct builder.
+type Inner struct {
+	Z string
+}
+
+// SnapshotPtr holds a clearable pointer-to-struct field. The generator produces
+// a FieldDelta_PtrInner helper: Op (Int8), Value (nullable Struct{Z: String}).
+type SnapshotPtr struct {
+	Seq       int64
+	PtrStruct FieldDelta[*Inner]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkAppendGenericStructArg measures the per-row cost of Append on a struct
+// containing a FieldDelta[*Inner] field. The loop alternates between:
+//   - Non-nil Value (even i): appends Op, then recurses into Inner.Z (String).
+//   - Nil Value    (odd i):  appends Op, then AppendNull on the Value sub-builder.
+//
+// Both rows are pre-constructed outside the loop so only the Append call itself
+// is measured; struct initialisation overhead does not appear in the result.
+func BenchmarkAppendGenericStructArg(b *testing.B) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(b, 0)
+
+	writer := NewSnapshotPtrArrowWriter(pool)
+	defer writer.Release()
+
+	inner := &Inner{Z: "hello"}
+	// Pre-construct both row variants outside the timed loop.
+	rowNonNil := SnapshotPtr{Seq: 1, PtrStruct: FieldDelta[*Inner]{Op: 2, Value: inner}}
+	rowNil    := SnapshotPtr{Seq: 2, PtrStruct: FieldDelta[*Inner]{Op: 0, Value: nil}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i%2 == 0 {
+			writer.Append(&rowNonNil) // non-nil: recurse into Inner.Z
+		} else {
+			writer.Append(&rowNil)    // nil: AppendNull on Value struct builder
+		}
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, "SnapshotPtr", testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
+
+	// GenericCombined benchmarks Append on the full delta-model Snapshot struct,
+	// which carries both a FieldDelta[int32] scalar field and a FieldDelta[*Inner]
+	// pointer-to-struct field alongside a plain int64 sequence number. This is the
+	// closest benchmark to a real eddt workload and represents the aggregate cost
+	// of both generic field code paths in a single Append call.
+	b.Run("GenericCombined", func(b *testing.B) {
+		structCode := `package dummy
+
+type FieldDeltaOp int8
+
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+type Inner struct {
+	Z string
+}
+
+// Snapshot is the representative delta-model struct. It mirrors the fixture
+// used in TestGenericClearableField and covers both generic field variants
+// in a single generated writer.
+type Snapshot struct {
+	Seq       int64
+	Scalar    FieldDelta[int32]
+	PtrStruct FieldDelta[*Inner]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkAppendGenericCombined measures the aggregate per-row cost of Append
+// on Snapshot, which exercises both generic field paths in a single call:
+//   - FieldDelta[int32]: Int8 cast + Int32 sub-builder (FieldDelta_Int32)
+//   - FieldDelta[*Inner]: Int8 cast + nullable Struct sub-builder (FieldDelta_PtrInner)
+//
+// Use this benchmark to track overall delta-model write throughput end-to-end.
+func BenchmarkAppendGenericCombined(b *testing.B) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(b, 0)
+
+	writer := NewSnapshotArrowWriter(pool)
+	defer writer.Release()
+
+	inner := &Inner{Z: "world"}
+	row := Snapshot{
+		Seq:       99,
+		Scalar:    FieldDelta[int32]{Op: 1, Value: 42},
+		PtrStruct: FieldDelta[*Inner]{Op: 2, Value: inner},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writer.Append(&row)
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, "Snapshot", testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
 }

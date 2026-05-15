@@ -235,4 +235,275 @@ func BenchmarkArrowLoadRowComplexStruct(b *testing.B) {
 		tmpDir := setupWorkspace(b, structCode, []string{"Complex"}, testCode)
 		runBenchmarkCmd(b, tmpDir)
 	})
+
+	// GenericPrimArg benchmarks LoadRow on a struct whose only non-trivial field
+	// is FieldDelta[int32] — a generic instantiation with a primitive type argument.
+	// This sub-benchmark isolates two reader code paths introduced by GI-01/02/03:
+	//   - The named-type cast: FieldDeltaOp(col.Value(i)) for the Op Int8 sub-column.
+	//   - The two-sub-field struct reader path for FieldDelta_Int32 (Op + Value).
+	// All output fields are value types, so the R6 zero-allocation reuse path is
+	// trivially exercised with no pointer pre-allocation needed.
+	b.Run("GenericPrimArg", func(b *testing.B) {
+		structCode := `package dummy
+
+// FieldDeltaOp is a named type over int8. The generated reader casts it back
+// explicitly: FieldDeltaOp(col.Value(i)). This exercises the named-type cast
+// path in the reader template.
+type FieldDeltaOp int8
+
+// FieldDelta is the generic clearable-field carrier. The reader produces a
+// derived struct FieldDelta_Int32 reader with Op (Int8) and Value (Int32) columns.
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+// SnapshotScalar is the benchmark payload. It holds a single clearable scalar
+// field; the reader expands FieldDelta[int32] from two Arrow sub-columns.
+type SnapshotScalar struct {
+	Seq    int64
+	Scalar FieldDelta[int32]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkLoadRowGenericPrimArg measures the per-row cost of LoadRow on a struct
+// containing a FieldDelta[int32] field. Each call exercises:
+//   - Int64 column read for Seq.
+//   - FieldDelta_Int32 sub-reader: Int8 read with FieldDeltaOp named-type cast for Op,
+//     Int32 read for Value.
+//
+// All output fields are value types, so 0 allocs/op is expected: there is
+// no pointer indirection and the R6 reuse path requires no pre-allocation.
+func BenchmarkLoadRowGenericPrimArg(b *testing.B) {
+	pool := memory.NewGoAllocator()
+
+	// Build a 1000-row Arrow record using the generated writer.
+	// Larger row count amortises record-build overhead; struct is lightweight.
+	const numRows = 1000
+	writer := NewSnapshotScalarArrowWriter(pool)
+	for i := 0; i < numRows; i++ {
+		writer.Append(&SnapshotScalar{
+			Seq:    int64(i),
+			Scalar: FieldDelta[int32]{Op: 1, Value: int32(i)},
+		})
+	}
+	rec := writer.NewRecord()
+	defer rec.Release()
+	writer.Release()
+
+	// Create the generated reader over the Arrow record.
+	reader, err := NewSnapshotScalarArrowReader(rec)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// Pre-declare the output struct once outside the timed loop.
+	// Because SnapshotScalar is entirely value-typed, this is all that is
+	// needed for the R6 zero-allocation reuse path.
+	var out SnapshotScalar
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	// Wrap row index modulo numRows so b.N can be arbitrarily large without
+	// stepping outside the record bounds.
+	for i := 0; i < b.N; i++ {
+		reader.LoadRow(i%numRows, &out)
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, []string{"SnapshotScalar"}, testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
+
+	// GenericStructArg benchmarks LoadRow on a struct whose only non-trivial field
+	// is FieldDelta[*Inner] — a generic instantiation where the type argument is a
+	// pointer to a struct. This sub-benchmark isolates the pointer-type-arg reader path:
+	//   - IsValid(i) check on the nullable Value struct column.
+	//   - Non-null: reuse out.PtrStruct.Value if already allocated (R6), else allocate.
+	//   - Null: set out.PtrStruct.Value = nil (pointer assign, no heap allocation).
+	//
+	// The pre-built record contains an even mix of null and non-null Value entries
+	// (even rows non-null, odd rows null). Pre-allocating out.PtrStruct.Value primes
+	// the R6 reuse path for non-null rows. Null rows then set the pointer to nil,
+	// so the *next* non-null row must reallocate — expect ~0.5 allocs/op across the mix.
+	b.Run("GenericStructArg", func(b *testing.B) {
+		structCode := `package dummy
+
+type FieldDeltaOp int8
+
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+// Inner is the pointed-to struct. Its single string field produces a String
+// sub-column nested inside the nullable Value struct reader.
+type Inner struct {
+	Z string
+}
+
+// SnapshotPtr holds a clearable pointer-to-struct field. The reader produces
+// a FieldDelta_PtrInner helper: Op (Int8), Value (nullable Struct{Z: String}).
+type SnapshotPtr struct {
+	Seq       int64
+	PtrStruct FieldDelta[*Inner]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkLoadRowGenericStructArg measures the per-row cost of LoadRow on a struct
+// containing a FieldDelta[*Inner] field. The pre-built record alternates between:
+//   - Even rows (non-null Value): reader checks IsValid → reuses out.PtrStruct.Value
+//     if already allocated (R6), else allocates a new Inner.
+//   - Odd rows (null Value): reader checks IsValid → sets out.PtrStruct.Value = nil.
+//
+// Because null rows set out.PtrStruct.Value to nil, the subsequent non-null row
+// must re-allocate. Across the 50/50 mix, expect approximately 0.5 allocs/op.
+// Pre-allocating out.PtrStruct.Value before the loop primes the R6 path for the
+// very first non-null row only.
+func BenchmarkLoadRowGenericStructArg(b *testing.B) {
+	pool := memory.NewGoAllocator()
+
+	// Build 100 rows alternating null/non-null Value so both reader branches
+	// contribute equally to the reported ns/op.
+	const numRows = 100
+	inner := &Inner{Z: "hello"}
+	writer := NewSnapshotPtrArrowWriter(pool)
+	for i := 0; i < numRows; i++ {
+		var v *Inner
+		if i%2 == 0 {
+			v = inner // even: non-null Value → String sub-column populated
+		}
+		writer.Append(&SnapshotPtr{
+			Seq:       int64(i),
+			PtrStruct: FieldDelta[*Inner]{Op: 1, Value: v},
+		})
+	}
+	rec := writer.NewRecord()
+	defer rec.Release()
+	writer.Release()
+
+	reader, err := NewSnapshotPtrArrowReader(rec)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// Pre-allocate out.PtrStruct.Value so the first non-null row in the loop
+	// exercises R6 reuse rather than a cold allocation. Null rows will set this
+	// to nil; subsequent non-null rows after a null row will allocate once each.
+	var out SnapshotPtr
+	out.PtrStruct.Value = &Inner{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader.LoadRow(i%numRows, &out)
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, []string{"SnapshotPtr"}, testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
+
+	// GenericCombined benchmarks LoadRow on the full delta-model Snapshot struct,
+	// which carries both a FieldDelta[int32] scalar field and a FieldDelta[*Inner]
+	// pointer-to-struct field alongside a plain int64 sequence number. This is the
+	// closest benchmark to a real eddt workload and represents the aggregate cost
+	// of both generic field code paths in a single LoadRow call.
+	//
+	// All 1000 rows carry a non-null PtrStruct.Value. Pre-allocating out.PtrStruct.Value
+	// means every iteration exercises the R6 zero-allocation reuse path, so 0 allocs/op
+	// is the expected steady-state result.
+	b.Run("GenericCombined", func(b *testing.B) {
+		structCode := `package dummy
+
+type FieldDeltaOp int8
+
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T
+}
+
+type Inner struct {
+	Z string
+}
+
+// Snapshot is the representative delta-model struct. It mirrors the fixture
+// used in TestGenericClearableField and covers both generic field variants
+// in a single generated reader.
+type Snapshot struct {
+	Seq       int64
+	Scalar    FieldDelta[int32]
+	PtrStruct FieldDelta[*Inner]
+}
+`
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+// BenchmarkLoadRowGenericCombined measures the aggregate per-row cost of LoadRow
+// on Snapshot, which exercises both generic field paths in a single call:
+//   - FieldDelta[int32]: Int8 cast + Int32 sub-reader (FieldDelta_Int32).
+//   - FieldDelta[*Inner]: Int8 cast + non-null Struct sub-reader (FieldDelta_PtrInner),
+//     with R6 pointer reuse for Inner since all rows carry a non-null Value.
+//
+// With out.PtrStruct.Value pre-allocated and all rows non-null, the R6 reuse
+// path is exercised on every iteration — 0 allocs/op is the expected result.
+// Use this benchmark to track overall delta-model read throughput end-to-end.
+func BenchmarkLoadRowGenericCombined(b *testing.B) {
+	pool := memory.NewGoAllocator()
+
+	// Build 1000 rows, all with a non-null PtrStruct.Value, to exercise the
+	// steady-state R6 reuse path without null-branch interference.
+	const numRows = 1000
+	inner := &Inner{Z: "world"}
+	writer := NewSnapshotArrowWriter(pool)
+	for i := 0; i < numRows; i++ {
+		writer.Append(&Snapshot{
+			Seq:       int64(i),
+			Scalar:    FieldDelta[int32]{Op: 1, Value: int32(i)},
+			PtrStruct: FieldDelta[*Inner]{Op: 2, Value: inner},
+		})
+	}
+	rec := writer.NewRecord()
+	defer rec.Release()
+	writer.Release()
+
+	reader, err := NewSnapshotArrowReader(rec)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// Pre-allocate out.PtrStruct.Value to prime R6 reuse from the very first
+	// iteration. Since all rows are non-null, no reallocation occurs in steady state.
+	var out Snapshot
+	out.PtrStruct.Value = &Inner{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reader.LoadRow(i%numRows, &out)
+	}
+}
+`
+		tmpDir := setupWorkspace(b, structCode, []string{"Snapshot"}, testCode)
+		runBenchmarkCmd(b, tmpDir)
+	})
 }
