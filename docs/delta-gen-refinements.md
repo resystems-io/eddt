@@ -327,7 +327,7 @@ checks.
   - Tests: `runtime/hash_test.go` — determinism across runs;
     known-vector tests against a frozen corpus.
 
-- [ ] **RT-03: Implement `HeaderAfterApply`.** Validates ChainID,
+- [x] **RT-03: Implement `HeaderAfterApply`.** Validates ChainID,
   EntityID (incl. zero-rejection), Sequence monotonicity,
   EffectiveAt non-decrease, Closed != nil rejection. Returns
   result Header per spec.
@@ -335,7 +335,7 @@ checks.
   - Tests: `runtime/header_test.go` — happy path; each
     validation failure mode.
 
-- [ ] **RT-04: Implement `HeaderForDiff`.** Validates ChainID,
+- [x] **RT-04: Implement `HeaderForDiff`.** Validates ChainID,
   EntityID, Sequence ordering, EffectiveAt ordering. Returns
   Delta Header per spec (Provenance = nil per E-04).
   - Files: `runtime/header.go`.
@@ -865,3 +865,4 @@ git commit).
 | 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                          |
 | 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                |
 | 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests. |
+| 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.  |
