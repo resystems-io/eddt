@@ -311,7 +311,7 @@ checks.
 
 ### Phase 1 — Runtime Package
 
-- [ ] **RT-01: Create `runtime/` package; declare envelope types.**
+- [x] **RT-01: Create `runtime/` package; declare envelope types.**
   `Header`, `Provenance`, `SequenceRange`, and `EntityID` (=
   `[32]byte`). `FieldDelta[T]` / `FieldDeltaOp` / the three `Op*`
   constants are deferred to Phase 7 (CL-01).
@@ -319,7 +319,7 @@ checks.
   - Tests: `runtime/types_test.go` — zero values, `IsZero`
     helper, struct-equality.
 
-- [ ] **RT-02: Implement deterministic-hash helpers.**
+- [x] **RT-02: Implement deterministic-hash helpers.**
   Canonical-serialisation primitives (numeric writers, string
   writer, nil marker, finalise-to-`EntityID`). Built on
   `golang.org/x/crypto/blake2b`.
@@ -860,6 +860,8 @@ and are not separately listed.
 Record completed items here with the date (check git blame for the
 git commit).
 
-| Date | Item | Notes |
-|:-----|:-----|:------|
-|      |      |       |
+| Date       | Item         | Notes                                                                                                                                                                                    |
+|:-----------|:-------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                          |
+| 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                |
+| 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests. |
