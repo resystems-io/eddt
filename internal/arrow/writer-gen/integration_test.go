@@ -2914,13 +2914,12 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	runInnerTest(t, tmpDir, testCode, "")
 }
 
-// TestGenericClearableField is the acceptance criterion for arrow-writer-gen
-// handling of generic-instantiation field types (e.g. FieldDelta[int32]).
+// TestGenericClearableField verifies that arrow-writer-gen correctly handles
+// generic-instantiation field types (e.g. FieldDelta[int32]). The generated
+// writer must compile without errors.
 //
-// The test is skipped until gencommon adds *ast.IndexExpr support. Once the
-// fix lands, remove the t.Skip and confirm the generated writer compiles.
+// Covers: GI-02 (writer template generic row type), GI-01 (gencommon *ast.IndexExpr)
 func TestGenericClearableField(t *testing.T) {
-	t.Skip("pending: gencommon does not yet handle *ast.IndexExpr (generic instantiations) — see delta-gen-refinements E-11")
 
 	const goCode = `package dummy
 
@@ -2942,6 +2941,8 @@ type Snapshot struct {
 }
 `
 	tmpDir, _ := setupIntegrationTest(t, goCode, []string{"Snapshot"}, "")
+	runCmd(t, tmpDir, "go", "get", "github.com/apache/arrow/go/v18@v18.0.0-20241007013041-ab95a4d25142")
+	runCmd(t, tmpDir, "go", "mod", "tidy")
 	runCmd(t, tmpDir, "go", "build", ".")
 }
 

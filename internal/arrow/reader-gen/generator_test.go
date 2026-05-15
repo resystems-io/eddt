@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.resystems.io/eddt/internal/arrow/gencommon"
 )
 
@@ -108,7 +109,7 @@ type SimpleStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -158,7 +159,7 @@ type PtrStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -261,7 +262,7 @@ type ListStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -368,7 +369,7 @@ type FixedStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -543,7 +544,7 @@ type MapStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }

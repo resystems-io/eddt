@@ -3302,14 +3302,12 @@ func TestCrossPackageRoundTrip(t *testing.T) {
 	})
 }
 
-// TestGenericClearableField is the acceptance criterion for arrow-reader-gen
-// handling of generic-instantiation field types (e.g. FieldDelta[int32]).
+// TestGenericClearableField verifies that arrow-reader-gen correctly handles
+// generic-instantiation field types (e.g. FieldDelta[int32]). Both the writer
+// and reader must be generated and the combined output must compile.
 //
-// The test is skipped until gencommon adds *ast.IndexExpr support. Once the
-// fix lands, remove the t.Skip and confirm the generated reader compiles and
-// round-trips a Snapshot value correctly.
+// Covers: GI-03 (reader template generic row type), GI-01/GI-02 integration
 func TestGenericClearableField(t *testing.T) {
-	t.Skip("pending: gencommon does not yet handle *ast.IndexExpr (generic instantiations) — see delta-gen-refinements E-11")
 
 	const goCode = `package dummy
 
@@ -3331,6 +3329,7 @@ type Snapshot struct {
 }
 `
 	tmpDir := setupIntegrationTest(t, goCode, []string{"Snapshot"})
+	runCmd(t, tmpDir, "go", "mod", "tidy")
 	runCmd(t, tmpDir, "go", "build", ".")
 }
 

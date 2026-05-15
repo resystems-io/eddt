@@ -90,7 +90,7 @@ func new{{.Name}}ArrowReaderFromStruct(col *array.Struct) (*{{.Name}}ArrowReader
 
 // LoadRow loads the i-th row from the Arrow record into the output struct.
 // Fields whose columns were missing from the record are left untouched.
-func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
+func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
 {{- range .Fields}}
 {{- template "loadField" dict "F" . "HasUM" $.HasUnmarshalFields}}
 {{- end}}
@@ -393,7 +393,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- if and .F.IsStruct (not .F.IsPointer)}}
 	if r.col{{.F.Name}} != nil {
 		if r.col{{.F.Name}}.IsNull(i) {
-			out.{{.F.Name}} = {{.F.StructQualifier}}{{.F.StructName}}{}
+			out.{{.F.Name}} = {{.F.QualifiedGoType}}{}
 		} else {
 			r.reader{{.F.Name}}.LoadRow(i, &out.{{.F.Name}})
 {{- if .HasUM}}
@@ -412,7 +412,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			out.{{.F.Name}} = nil
 		} else {
 			if out.{{.F.Name}} == nil {
-				out.{{.F.Name}} = &{{.F.StructQualifier}}{{.F.StructName}}{}
+				out.{{.F.Name}} = &{{stripPtr .F.QualifiedGoType}}{}
 			}
 			r.reader{{.F.Name}}.LoadRow(i, out.{{.F.Name}})
 {{- if .HasUM}}
@@ -574,7 +574,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					{{$target}}[{{$j}}] = nil
 				} else {
 					if {{$target}}[{{$j}}] == nil {
-						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+						{{$target}}[{{$j}}] = &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					}
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -589,7 +589,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -683,7 +683,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					{{$target}}[{{$j}}] = nil
 				} else {
 					if {{$target}}[{{$j}}] == nil {
-						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+						{{$target}}[{{$j}}] = &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					}
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -698,7 +698,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -802,7 +802,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = nil
 				} else {
-					sv{{$d}} := &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					sv{{$d}} := &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, sv{{$d}})
 {{- if $hasUM}}
 					if len(r.reader{{$prefix}}Items.errs) > 0 {
@@ -816,7 +816,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				}
 {{- else if $info.EltInfo.IsStruct}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
-				var sv{{$d}} {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}
+				var sv{{$d}} {{$info.EltInfo.QualifiedGoType}}
 				if !r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, &sv{{$d}})
 {{- if $hasUM}}

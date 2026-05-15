@@ -107,6 +107,20 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 				return FieldInfo{}, fmt.Errorf("external type *%s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 			}
 		}
+
+		// Pointer to a generic instantiation (e.g. *FieldDelta[int32]).
+		if indexExpr, ok := t.X.(*ast.IndexExpr); ok {
+			typ := pkg.TypesInfo.TypeOf(indexExpr)
+			if typ != nil {
+				return fieldInfoFromGenericInstantiation(name, typ, true, queue, processed)
+			}
+		}
+		if indexListExpr, ok := t.X.(*ast.IndexListExpr); ok {
+			typ := pkg.TypesInfo.TypeOf(indexListExpr)
+			if typ != nil {
+				return fieldInfoFromGenericInstantiation(name, typ, true, queue, processed)
+			}
+		}
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 
 	case *ast.ArrayType:
@@ -155,6 +169,22 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 		}
 
 		return buildMapFieldInfo(name, keyInfo, valInfo, false), nil
+
+	case *ast.IndexExpr:
+		// Generic instantiation with a single type argument (e.g. FieldDelta[int32]).
+		typ := pkg.TypesInfo.TypeOf(t)
+		if typ == nil {
+			return FieldInfo{}, fmt.Errorf("could not resolve type for generic instantiation")
+		}
+		return fieldInfoFromGenericInstantiation(name, typ, false, queue, processed)
+
+	case *ast.IndexListExpr:
+		// Generic instantiation with multiple type arguments (e.g. Pair[A, B]).
+		typ := pkg.TypesInfo.TypeOf(t)
+		if typ == nil {
+			return FieldInfo{}, fmt.Errorf("could not resolve type for multi-arg generic instantiation")
+		}
+		return fieldInfoFromGenericInstantiation(name, typ, false, queue, processed)
 
 	case *ast.SelectorExpr:
 		// External package type (e.g., netip.Addr, time.Time, or pkg2.Inner)
@@ -388,7 +418,22 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", t)
 
 		case *types.Basic:
-			return fieldInfoFromBasic(name, u, isPointer)
+			// Build from the underlying type for Arrow metadata, then overlay the
+			// named type's own name so the reader emits T(x) not underlying(x).
+			fi, err := fieldInfoFromBasic(name, u, isPointer)
+			if err != nil {
+				return FieldInfo{}, err
+			}
+			if t.Obj().Pkg() != nil {
+				namedName := t.Obj().Name()
+				if isPointer {
+					fi.GoType = "*" + namedName
+				} else {
+					fi.GoType = namedName
+				}
+				fi.TypePkgPath = t.Obj().Pkg().Path()
+			}
+			return fi, nil
 
 		case *types.Slice, *types.Map, *types.Array:
 			return fieldInfoFromType(pkg, allPkgs, name, u, isPointer, queue, processed)
@@ -770,6 +815,93 @@ func marshalGoTypeInfo(typ types.Type) (shortType string, importPath string) {
 		shortType = underlying.String()
 	}
 	return
+}
+
+// -- generics: Generic struct instantiation support.
+
+// fieldInfoFromGenericInstantiation handles a generic struct instantiation
+// (e.g. FieldDelta[int32], FieldDelta[*Inner]) resolved via the type checker.
+// It assigns a derived identifier name and queues a structRef with InstantiatedType
+// set so the Parse() loop can expand the instantiation's fields.
+func fieldInfoFromGenericInstantiation(name string, typ types.Type, isPointer bool, queue *[]structRef, processed map[string]bool) (FieldInfo, error) {
+	named, ok := typ.(*types.Named)
+	if !ok {
+		return FieldInfo{}, fmt.Errorf("expected named type for generic instantiation, got %T", typ)
+	}
+	if named.TypeArgs() == nil || named.TypeArgs().Len() == 0 {
+		return FieldInfo{}, fmt.Errorf("type %s has no type arguments", named.Obj().Name())
+	}
+	if _, ok := named.Underlying().(*types.Struct); !ok {
+		return FieldInfo{}, fmt.Errorf("generic instantiation %s is not a struct", named.Obj().Name())
+	}
+	if named.Obj().Pkg() == nil {
+		return FieldInfo{}, fmt.Errorf("generic type %s has no package", named.Obj().Name())
+	}
+
+	derivedName := derivedInstanceName(named)
+	pkgPath := named.Obj().Pkg().Path()
+	qualName := pkgPath + "." + derivedName
+	if !processed[qualName] {
+		*queue = append(*queue, structRef{
+			PkgPath:          pkgPath,
+			Name:             derivedName,
+			InstantiatedType: named,
+		})
+	}
+
+	goType := derivedName
+	if isPointer {
+		goType = "*" + derivedName
+	}
+	zeroExpr := derivedName + "{}"
+	if isPointer {
+		zeroExpr = "nil"
+	}
+
+	return FieldInfo{
+		Name:           name,
+		GoType:         goType,
+		IsStruct:       true,
+		IsPointer:      isPointer,
+		StructName:     derivedName,
+		ArrowType:      fmt.Sprintf("arrow.StructOf(New%sSchema().Fields()...)", derivedName),
+		ArrowBuilder:   "*array.StructBuilder",
+		ArrowArrayType: "*array.Struct",
+		ZeroExpr:       zeroExpr,
+	}, nil
+}
+
+// derivedInstanceName builds a Go-identifier-safe name for a generic instantiation.
+// E.g., FieldDelta[int32] → "FieldDelta_Int32", FieldDelta[*Inner] → "FieldDelta_PtrInner".
+func derivedInstanceName(named *types.Named) string {
+	args := named.TypeArgs()
+	parts := make([]string, args.Len())
+	for i := 0; i < args.Len(); i++ {
+		parts[i] = prettyTypeArg(args.At(i))
+	}
+	return named.Obj().Name() + "_" + strings.Join(parts, "_")
+}
+
+// prettyTypeArg returns a Go-identifier-safe string for a single type argument.
+func prettyTypeArg(t types.Type) string {
+	switch u := t.(type) {
+	case *types.Basic:
+		return capitalize(u.Name())
+	case *types.Pointer:
+		return "Ptr" + prettyTypeArg(u.Elem())
+	case *types.Named:
+		return u.Obj().Name()
+	default:
+		return strings.ReplaceAll(t.String(), ".", "_")
+	}
+}
+
+// capitalize returns s with the first byte uppercased (ASCII-only; sufficient for Go type names).
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.

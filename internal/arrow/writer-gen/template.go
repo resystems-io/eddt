@@ -72,13 +72,13 @@ func (w *{{.Name}}ArrowWriter) Release() {
 }
 
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
-func (w *{{.Name}}ArrowWriter) Append(row *{{.Qualifier}}{{.Name}}) {
+func (w *{{.Name}}ArrowWriter) Append(row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
 {{- template "appendFields" dict "Fields" .Fields "Bldr" "w.b.Field" "Qualifier" .Qualifier}}
 }
 
 // Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
 // This is used for writing nested structs.
-func Append{{.Name}}Struct(b *array.StructBuilder, row *{{.Qualifier}}{{.Name}}) {
+func Append{{.Name}}Struct(b *array.StructBuilder, row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
 	b.Append(true)
 {{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "Qualifier" .Qualifier}}
 }
