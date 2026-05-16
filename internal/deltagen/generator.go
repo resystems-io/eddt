@@ -19,7 +19,12 @@
 //   - Emit    (Phase 4): render the Delta type and function bodies via text/template.
 package deltagen
 
-import "fmt"
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"sync"
+)
 
 // Generator holds the configuration for a single delta-gen invocation.
 type Generator struct {
@@ -61,6 +66,11 @@ type Generator struct {
 	// discovery for every struct. A missing entry for a given struct also
 	// selects tag-based discovery for that struct.
 	KeyFields map[string]string
+
+	// Log is the structured logger used for progress and warning output. When
+	// nil, a package-level default (Warn level, text handler, stderr) is used.
+	// Inject a custom logger in tests to capture output without OS-level pipes.
+	Log *slog.Logger
 }
 
 // NewGenerator constructs a Generator with the supplied parameters.
@@ -72,6 +82,19 @@ func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose boo
 		Verbose:       verbose,
 		PkgAliases:    pkgAliases,
 	}
+}
+
+// defaultLog is the fallback logger: Warn level, text handler, stderr.
+var defaultLog = sync.OnceValue(func() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+})
+
+// log returns g.Log when set, otherwise the package-level default.
+func (g *Generator) log() *slog.Logger {
+	if g.Log != nil {
+		return g.Log
+	}
+	return defaultLog()
 }
 
 // Run executes the full generation pipeline for each target struct.
@@ -99,21 +122,16 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
-	if g.Verbose {
-		fmt.Printf("Loaded %d top-level package(s)\n", len(pkgs))
-	}
+	g.log().Info("loaded packages", "count", len(pkgs))
 
 	// Stage 1.5 — Resolve: determine output package name and cross-package mode.
 	// CrossPackage is true when --pkg-name differs from the source package name;
 	// downstream stages use it to exclude unexported fields and omit method wrappers.
 	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, outPkgNameOverride)
-	if g.Verbose {
-		if g.CrossPackage {
-			fmt.Printf("Cross-package mode: output %q differs from source %q\n",
-				g.OutPkgName, pkgs[0].Name)
-		} else {
-			fmt.Printf("Output package: %q\n", g.OutPkgName)
-		}
+	if g.CrossPackage {
+		g.log().Info("cross-package mode", "output_pkg", g.OutPkgName, "source_pkg", pkgs[0].Name)
+	} else {
+		g.log().Info("output package", "name", g.OutPkgName)
 	}
 
 	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot
@@ -131,24 +149,24 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 			return err
 		}
 
-		// Verbose conflict warning (G-06): when --key-field names a different
-		// field than the eddt:"entity.key" tag, the override wins silently.
-		// The tagged-but-overridden field falls back into ps.Fields (G-04
-		// contract), so we detect the conflict by scanning for RawTag ==
-		// "entity.key" after the parse.
-		if g.Verbose && g.KeyFields[structName] != "" {
+		// Conflict warning (G-06 / G-08): when --key-field names a different field
+		// than the eddt:"entity.key" tag, the override wins. The tagged-but-overridden
+		// field falls back into ps.Fields (G-04 contract); detect the conflict by
+		// scanning for RawTag == "entity.key" after the parse. Warn unconditionally
+		// (Warn level fires regardless of --verbose; the handler level gates it).
+		if g.KeyFields[structName] != "" {
 			for _, f := range ps.Fields {
 				if f.RawTag == "entity.key" {
-					fmt.Printf("delta-gen: warning: struct %q: --key-field %q overrides eddt:\"entity.key\" tag on field %q\n",
-						structName, g.KeyFields[structName], f.Name)
+					g.log().Warn("key-field override supersedes entity.key tag",
+						"struct", structName,
+						"override", g.KeyFields[structName],
+						"tag_field", f.Name)
 					break
 				}
 			}
 		}
 
-		if g.Verbose {
-			fmt.Printf("Parsed struct %q\n", structName)
-		}
+		g.log().Info("parsed struct", "name", structName)
 	}
 
 	// Stage 3 — Tag handling (Phase 3): not yet implemented.

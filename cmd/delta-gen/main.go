@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -50,18 +51,20 @@ Example usage:
 				return err
 			}
 
+			level := slog.LevelWarn
 			if verbose {
-				fmt.Printf("Generating delta types for structs: %v\n", targetStructs)
-				fmt.Printf("Input packages: %v\n", inputPkgs)
-				if outPkgName != "" {
-					fmt.Printf("Output package override: %s\n", outPkgName)
-				}
-				fmt.Printf("Output file: %s\n", outPath)
+				level = slog.LevelInfo
+			}
+			log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+			log.Info("generating delta types", "structs", targetStructs, "packages", inputPkgs, "out", outPath)
+			if outPkgName != "" {
+				log.Info("output package override", "pkg_name", outPkgName)
 			}
 
 			gen := deltagen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
 			gen.Version = vcsRevision()
 			gen.KeyFields = keyFields
+			gen.Log = log
 			if err := gen.Run(outPkgName); err != nil {
 				return err
 			}

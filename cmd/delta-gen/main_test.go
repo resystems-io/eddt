@@ -318,31 +318,33 @@ func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 
 // TestCLI_KeyField_VerboseConflictWarning verifies that when both an
 // eddt:"entity.key" tag and a --key-field override are present, the generator
-// emits a warning to stdout (under --verbose) identifying the override and the
-// tagged field. The valid fixture has Key tagged entity.key; overriding to
-// Location triggers the conflict.
+// emits a slog Warn entry to stderr identifying the override and the tagged
+// field. After G-08 the warning fires unconditionally (at Warn level) without
+// requiring --verbose. The valid fixture has Key tagged entity.key; overriding
+// to Location triggers the conflict.
 // Covers: R-09, E-13
 func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
-	// Redirect os.Stdout so we can capture the verbose warning from fmt.Printf.
-	origStdout := os.Stdout
+	// Redirect os.Stderr to capture the slog Warn output. The slog handler is
+	// constructed inside RunE after os.Stderr has been replaced, so it writes
+	// to the pipe rather than the real stderr.
+	origStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
-	os.Stdout = w
+	os.Stderr = w
 
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
 		"--key-field", "ValidSnapshot=Location",
-		"--verbose",
 		"--out", "dummy.go",
 	})
 	runErr := cmd.Execute()
 
 	w.Close()
-	os.Stdout = origStdout
+	os.Stderr = origStderr
 
 	var buf bytes.Buffer
 	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
@@ -355,14 +357,17 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "warning") {
-		t.Errorf("expected conflict warning in verbose output, got:\n%s", out)
+	// slog text handler emits: level=WARN msg="..." struct=... override=... tag_field=...
+	if !strings.Contains(out, "level=WARN") {
+		t.Errorf("expected level=WARN in slog output, got:\n%s", out)
 	}
-	// Warning must name the override field and the tagged field.
-	if !strings.Contains(out, "Location") {
-		t.Errorf("warning should mention override field 'Location', got:\n%s", out)
+	if !strings.Contains(out, "struct=ValidSnapshot") {
+		t.Errorf("expected struct=ValidSnapshot in slog output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Key") {
-		t.Errorf("warning should mention tagged field 'Key', got:\n%s", out)
+	if !strings.Contains(out, "override=Location") {
+		t.Errorf("expected override=Location in slog output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "tag_field=Key") {
+		t.Errorf("expected tag_field=Key in slog output, got:\n%s", out)
 	}
 }

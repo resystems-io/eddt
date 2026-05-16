@@ -520,6 +520,23 @@ checks.
     End-to-end coverage of the override **parser-side** behaviour
     is in Group G (G-04); G-06 verifies CLI plumbing only.
 
+- [x] **G-08: Migrate verbose output to `log/slog` (refactor).** Replaces
+  `fmt.Printf`-based progress and warning output in `generator.go` and
+  `cmd/delta-gen/main.go` with structured `log/slog` logging. **Behaviour
+  changes (deliberate):** (1) the `--key-field` / `entity.key` conflict
+  warning now fires unconditionally at `Warn` level — no `--verbose` flag
+  required; (2) progress messages (`Info` level) are gated by the slog
+  handler level rather than per-site `if g.Verbose` guards; (3) all
+  informational output routes to stderr. `Generator.Log *slog.Logger` field
+  added; nil-safe `log()` method uses a `sync.OnceValue` default (Warn level,
+  text handler, stderr). `TestCLI_KeyField_VerboseConflictWarning` migrated
+  from stdout-pipe + `--verbose` to stderr-pipe + unconditional Warn
+  assertions (`level=WARN`, `struct=`, `override=`, `tag_field=`).
+  - Files: `internal/deltagen/generator.go`, `cmd/delta-gen/main.go`,
+    `cmd/delta-gen/main_test.go`.
+  - Tests: all existing tests pass; `TestCLI_KeyField_VerboseConflictWarning`
+    migrated to slog text-format assertions.
+
 ### Phase 3 — Tag Handling and Validation
 
 - [ ] **T-01: `eddt:` tag parser.** Parse four of the five tag
@@ -1156,3 +1173,4 @@ git commit).
 | 2026-05-16 | G-07                  | Implemented: `ParseOpts{CrossPackage, KeyFieldOverride}` carrier; `parseSnapshot` now takes opts as third arg; `walkFields` extracted as internal helper; `ParsedSnapshot.KeyVar` field added (nil until G-04). New `TestParse_ParseOptsEquivalence` exercises the zero-value / explicit / override-ignored equivalence guarantees. Stale "G-03/G-04" parse-stage comments updated. All module tests pass; build, idempotency, and dependency-edge verified.                                                                                                                                         |
 | 2026-05-16 | E-10, G-04            | E-10 working assumption relaxed: entity-key field may be any value-typed comparable type (basic, named basic, or struct of comparable fields), not struct only. G-04 implemented: `parseKeyField` selects the key via tag scan or `ParseOpts.KeyFieldOverride`; rejects pointer (identity != value equality), slice, and map types; struct-key errors name the offending sub-field. Override wins over tag; tagged-but-overridden field falls back into payload. Nine Group G tests; three existing fixtures updated, five new fixtures added (incl. `scalar_key/` for the relaxed-acceptance path). |
 | 2026-05-16 | G-06                  | CLI `--key-field` plumbing implemented. `parseKeyFields` helper in `main.go` handles bare expansion, per-struct override, duplicate-bare error, and unrecognised-struct error. `Generator.KeyFields map[string]string` added; `Run()` populates `ParseOpts.KeyFieldOverride` per struct and emits a `--verbose` conflict warning when tag and override diverge. Six `parseKeyFields` unit tests + five CLI integration tests (incl. `os.Pipe` verbose-capture); `TestCLI_Help` updated. No `parse.go` or fixture changes.                                                                            |
+| 2026-05-16 | G-08                  | `fmt.Printf` verbose output migrated to `log/slog`. `Generator.Log *slog.Logger` + nil-safe `log()` helper added. Conflict warning now unconditional (`Warn` level); progress gated by handler level. All output routed to stderr. `TestCLI_KeyField_VerboseConflictWarning` migrated from stdout-pipe + `--verbose` to stderr-pipe + slog assertions.                                                                                                                                                                                                                                               |
