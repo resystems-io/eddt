@@ -32,7 +32,7 @@ package deltagen
 // # Exported surface
 //
 // Only FindPkgByPath is exported. All other symbols are package-private and
-// consumed by generator.go's Run method and by the parse stage added in G-03.
+// consumed by generator.go's Run method and by the parse and emit stages.
 
 import (
 	"fmt"
@@ -171,6 +171,35 @@ func loadPackages(inputPkgs []string, verbose bool) ([]*packages.Package, error)
 	}
 
 	return all, nil
+}
+
+// resolveOutputPkg determines the output package name and whether the generator
+// is in cross-package mode (E-12).
+//
+// If outPkgNameOverride is empty the output package defaults to the name of the
+// first loaded source package and crossPackage is false. If an override is given
+// it becomes the output package name; crossPackage is true when the override
+// differs from the source package name.
+//
+// The first loaded package determines the source name because delta-gen processes
+// one Snapshot type per invocation; additional --pkg arguments exist only to
+// resolve cross-package type references in the source, not to define independent
+// output packages.
+func resolveOutputPkg(pkgs []*packages.Package, outPkgNameOverride string) (pkgName string, crossPackage bool) {
+	// Determine source package name from the first loaded package. Guard against
+	// an empty slice even though loadPackages should never return one without error.
+	srcPkgName := ""
+	if len(pkgs) > 0 {
+		srcPkgName = pkgs[0].Name
+	}
+
+	// No override: output package = source package; always same-package mode.
+	if outPkgNameOverride == "" {
+		return srcPkgName, false
+	}
+
+	// Override provided: cross-package when the names differ.
+	return outPkgNameOverride, outPkgNameOverride != srcPkgName
 }
 
 // FindPkgByPath returns the first package in the full transitive closure of

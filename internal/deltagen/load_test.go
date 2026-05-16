@@ -276,3 +276,102 @@ func TestLoad_IsFilesystemPath(t *testing.T) {
 		}
 	}
 }
+
+// ── Group E: Output-package resolver ─────────────────────────────────────────
+
+// TestResolve_NoOverride verifies that when no --pkg-name override is supplied
+// the output package name equals the source package name and crossPackage is
+// false.
+// Covers: R-09, R-10
+func TestResolve_NoOverride(t *testing.T) {
+	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	name, cross := resolveOutputPkg(pkgs, "")
+	if name != "runtime" {
+		t.Errorf("pkgName: got %q, want %q", name, "runtime")
+	}
+	if cross {
+		t.Error("crossPackage: got true, want false")
+	}
+}
+
+// TestResolve_OverrideMatchingSource verifies that when --pkg-name is set to
+// the same value as the source package name crossPackage is false.
+// Covers: R-09, R-10
+func TestResolve_OverrideMatchingSource(t *testing.T) {
+	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	name, cross := resolveOutputPkg(pkgs, "runtime")
+	if name != "runtime" {
+		t.Errorf("pkgName: got %q, want %q", name, "runtime")
+	}
+	if cross {
+		t.Error("crossPackage: got true, want false")
+	}
+}
+
+// TestResolve_OverrideDiffering verifies that when --pkg-name is set to a
+// value different from the source package name crossPackage is true and the
+// returned name equals the override.
+// Covers: R-09, R-10
+func TestResolve_OverrideDiffering(t *testing.T) {
+	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	name, cross := resolveOutputPkg(pkgs, "myoutputpkg")
+	if name != "myoutputpkg" {
+		t.Errorf("pkgName: got %q, want %q", name, "myoutputpkg")
+	}
+	if !cross {
+		t.Error("crossPackage: got false, want true")
+	}
+}
+
+// TestResolve_MultiPkgInput verifies that when multiple packages are loaded
+// the first package's name determines the source for cross-package detection,
+// regardless of subsequent package names.
+// Covers: R-10
+func TestResolve_MultiPkgInput(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	writeTempModule(t, dirA, "pkga", "package pkga\n")
+	writeTempModule(t, dirB, "pkgb", "package pkgb\n")
+
+	pkgs, err := loadPackages([]string{dirA, dirB}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	// No override: output pkg auto-detected from first loaded package (pkga).
+	name, cross := resolveOutputPkg(pkgs, "")
+	if name != "pkga" {
+		t.Errorf("no-override pkgName: got %q, want %q", name, "pkga")
+	}
+	if cross {
+		t.Errorf("no-override crossPackage: got true, want false")
+	}
+
+	// Override matching first package: same-package.
+	_, cross = resolveOutputPkg(pkgs, "pkga")
+	if cross {
+		t.Errorf("pkga-override crossPackage: got true, want false")
+	}
+
+	// Override matching second package only: cross-package, because the first
+	// package (pkga) determines the source, not the second.
+	name, cross = resolveOutputPkg(pkgs, "pkgb")
+	if name != "pkgb" {
+		t.Errorf("pkgb-override pkgName: got %q, want %q", name, "pkgb")
+	}
+	if !cross {
+		t.Errorf("pkgb-override crossPackage: got false, want true")
+	}
+}

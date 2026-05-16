@@ -372,7 +372,7 @@ checks.
     `isFilesystemPath` unit tests. `TestCLI_ImportPathNotInGoMod`
     now active.
 
-- [ ] **G-05: Output-package resolver.** After `loadPackages` returns
+- [x] **G-05: Output-package resolver.** After `loadPackages` returns
   the source packages, determine the final output package name and
   whether the generator is in cross-package mode. Cross-package mode
   is active when the `--pkg-name` override differs from the source
@@ -989,3 +989,4 @@ git commit).
 | 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.                          |
 | 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                                        |
 | 2026-05-16 | G-02         | Package loader with two-phase loading (filesystem + import paths), NeedDeps/NeedImports for transitive closure, `FindPkgByPath` via `packages.Visit`; 9 tests; `TestCLI_ImportPathNotInGoMod` now active. |
+| 2026-05-16 | G-05         | Output-package resolver: `resolveOutputPkg` in `load.go`; `OutPkgName` and `CrossPackage` fields on `Generator`; 4 Group E tests; package doc and `Run()` updated to reflect function-first API (E-12).   |
