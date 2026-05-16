@@ -350,7 +350,7 @@ checks.
 
 ### Phase 2 — Generator Scaffold and Snapshot Parsing
 
-- [ ] **G-01: Scaffold `cmd/delta-gen/main.go` and
+- [x] **G-01: Scaffold `cmd/delta-gen/main.go` and
   `internal/deltagen/`.** Cobra CLI skeleton; `--pkg`,
   `--struct`, `--out`, `--pkg-alias` flags; filesystem-or-import
   path input acceptance.
@@ -358,7 +358,8 @@ checks.
     `cmd/delta-gen/main_test.go`,
     `internal/deltagen/generator.go`.
   - Tests: `cmd/delta-gen/main_test.go` — flag parsing, help
-    text.
+    text. `TestCLI_ImportPathNotInGoMod` skipped (acceptance
+    criterion for G-02).
 
 - [ ] **G-02: Package loader.** Adapt the writer-gen `loadPackages`
   pattern; pass `NeedTypes | NeedTypesInfo | NeedDeps`.
@@ -867,3 +868,4 @@ git commit).
 | 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests. |
 | 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.  |
 | 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.         |
+| 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                       |

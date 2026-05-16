@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/spf13/cobra"
+	deltagen "go.resystems.io/eddt/internal/deltagen"
 )
 
 func newRootCmd() *cobra.Command {
@@ -51,8 +52,13 @@ Example usage:
 				fmt.Printf("Output file: %s\n", outPath)
 			}
 
-			// Generator implementation is wired in G-01 (Phase 2).
-			return fmt.Errorf("delta-gen: not yet implemented")
+			gen := deltagen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
+			gen.Version = vcsRevision()
+			if err := gen.Run(outPkgName); err != nil {
+				return err
+			}
+			fmt.Printf("Successfully generated %s\n", outPath)
+			return nil
 		},
 	}
 
