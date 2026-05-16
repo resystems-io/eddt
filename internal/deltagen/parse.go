@@ -7,8 +7,8 @@ package deltagen
 // # The parse pipeline
 //
 // Callers invoke `parseSnapshot` once per target struct, passing a `ParseOpts`
-// carrier that conveys cross-package mode and (in G-04 onward) the optional
-// CLI key-field override. Internally parseSnapshot runs four steps:
+// carrier that conveys cross-package mode and the optional CLI key-field
+// override. Internally parseSnapshot runs five steps:
 //
 //  1. headerTypeFor — resolve the runtime.Header type from the transitive
 //     package closure. The Header field is recognised by *type identity*, not
@@ -26,17 +26,22 @@ package deltagen
 //     classified into one of five shapes (scalar, pointer, struct value,
 //     slice, map); function, channel, and interface fields are rejected.
 //
-//  4. Result assembly — the ParsedSnapshot is returned with HeaderVar and
-//     Fields populated. KeyVar is left nil; the G-04 parseKeyField step
-//     (added by a later refinement) will identify the entity.key field
-//     among the candidates and move it out of Fields into KeyVar.
+//  4. parseKeyField — identify the entity.key field among the candidates,
+//     either by tag scan (default) or by ParseOpts.KeyFieldOverride. The
+//     chosen field must be a value-typed comparable type — a scalar (basic
+//     or named basic) or a struct of all-comparable fields. The key is
+//     moved out of the candidate list and surfaced via KeyVar so that the
+//     emit stage's payload loops do not need to filter it.
+//
+//  5. Result assembly — the ParsedSnapshot is returned with HeaderVar,
+//     KeyVar, and Fields (payload only) populated.
 //
 // # What this file does NOT do
 //
 // Tag parsing and tag-combination validation are separate concerns delivered
 // by T-01 through T-03. This file records only the raw eddt: tag string so
 // those stages can act on it. Key-field semantic validation (presence,
-// struct-of-comparable-fields) is delivered by G-04.
+// comparable type) is delivered by parseKeyField in this file.
 //
 // # Exported surface
 //
@@ -133,15 +138,14 @@ type ParsedSnapshot struct {
 
 	// KeyVar is the types.Var for the field that carries the
 	// eddt:"entity.key" tag (or the field named by ParseOpts.KeyFieldOverride).
-	// Nil after parseSnapshot returns in the current refinement step (G-07);
-	// G-04 will populate it as part of an internal parseKeyField step and
-	// move the corresponding entry out of Fields.
+	// Always populated for a successful parseSnapshot return; the emit stage
+	// uses it to render the EntityID() method and EntityID hash invocations.
 	KeyVar *types.Var
 
 	// Fields is the list of payload fields in source declaration order,
-	// with the embedded Header and (in cross-package mode) unexported fields
-	// already removed. Once G-04 lands, the entity.key field is also excluded
-	// from Fields and surfaced via KeyVar instead.
+	// with the embedded Header, the entity.key field, and (in cross-package
+	// mode) unexported fields already removed. The emit stage iterates these
+	// directly without any further filtering.
 	Fields []ParsedField
 }
 
@@ -165,9 +169,8 @@ type ParseOpts struct {
 	// tag scan. The empty string selects tag-based discovery.
 	//
 	// Populated by the CLI layer in G-06 from --key-field; consumed by
-	// G-04's parseKeyField step. G-07 (this refinement) carries the field
-	// through the signature but does not act on it; the value is ignored
-	// until G-04 lands.
+	// parseKeyField. When both a tag and an override name a key field, the
+	// override silently wins (the CLI layer emits a --verbose warning).
 	KeyFieldOverride string
 }
 
@@ -177,11 +180,11 @@ type ParseOpts struct {
 //
 // pkgs must be the result of loadPackages (NeedDeps set) so that the eddt
 // runtime package is reachable via FindPkgByPath. opts carries cross-package
-// mode and (post-G-04) the optional CLI key-field override.
+// mode and the optional CLI key-field override.
 //
-// Returned ParsedSnapshot has HeaderVar and Fields populated. KeyVar is nil
-// at this refinement step (G-07); a subsequent refinement (G-04) will add a
-// parseKeyField step that fills KeyVar and removes the key from Fields.
+// Returned ParsedSnapshot has HeaderVar, KeyVar, and Fields populated. The
+// entity.key field is excluded from Fields and surfaced via KeyVar instead,
+// so the emit stage's payload loops do not have to filter it.
 func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) (*ParsedSnapshot, error) {
 	// Step 1: resolve the runtime.Header type for identity-based recognition.
 	// We compare by type identity rather than field name so that aliased
@@ -200,33 +203,163 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 	// Step 3: walk the struct's fields once, separating the Header envelope
 	// from candidate payload fields. walkFields applies cross-package
 	// unexported-field filtering and rejects unsupported field shapes.
+	// The returned candidate list still contains the entity.key field; step 4
+	// removes it.
 	st := named.Underlying().(*types.Struct)
-	headerVar, fields, err := walkFields(st, structName, headerType, opts)
+	headerVar, candidates, err := walkFields(st, structName, headerType, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 4: require exactly one embedded Header. walkFields rejects more
-	// than one; the remaining failure mode is total absence.
+	// Require exactly one embedded Header. walkFields rejects more than one;
+	// the remaining failure mode is total absence.
 	if headerVar == nil {
 		return nil, fmt.Errorf(
 			"struct %q has no embedded runtime.Header field; a conforming Snapshot must embed exactly one Header",
 			structName)
 	}
 
-	// G-04 hook: a future refinement will call parseKeyField here to identify
-	// the entity.key field among `fields` and move it into KeyVar. Until then
-	// the override carried by opts.KeyFieldOverride is ignored; the field is
-	// retained as a no-op to keep the call-site signature stable across the
-	// G-07 → G-04 transition.
+	// Step 4: identify and validate the entity.key field, partitioning the
+	// candidate list into (keyVar, payload fields).
+	keyVar, fields, err := parseKeyField(candidates, structName, opts)
+	if err != nil {
+		return nil, err
+	}
 
+	// Step 5: assemble the result.
 	return &ParsedSnapshot{
 		Name:      structName,
 		PkgPath:   pkg.PkgPath,
 		PkgName:   pkg.Name,
 		HeaderVar: headerVar,
+		KeyVar:    keyVar,
 		Fields:    fields,
 	}, nil
+}
+
+// parseKeyField identifies the entity-key field among the walkFields
+// candidates and partitions the slice into (keyVar, payload fields).
+//
+// Two identification paths are supported:
+//
+//   - Override path — opts.KeyFieldOverride is non-empty: the named field
+//     is selected directly. Errors if no candidate has that name. Any
+//     eddt:"entity.key" tags on the same struct are silently ignored
+//     (the override wins). The CLI layer emits a --verbose warning when
+//     it detects this combination; the parser does not warn.
+//
+//   - Tag path — opts.KeyFieldOverride is empty: candidates are scanned
+//     for RawTag == "entity.key". Exactly one match is required; zero
+//     and multiple matches each produce a descriptive error.
+//
+// The selected field's type is then validated:
+//
+//   - ShapeScalar (basic and named basic types) is always accepted —
+//     basic types are comparable by definition.
+//   - ShapeStructValue is accepted only when types.Comparable returns
+//     true on the struct type. On failure the underlying struct is
+//     walked to name the offending sub-field in the error message.
+//   - ShapePointer is rejected: pointer equality is identity, not value
+//     equality, which would make two Snapshots with equal key contents
+//     hash to different EntityID values.
+//   - ShapeSlice and ShapeMap are rejected for non-comparability.
+//
+// Returned payload fields are the candidates with the key removed, so the
+// emit stage iterates them without further filtering. structName is used
+// only to scope error messages.
+func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) (keyVar *types.Var, payloadFields []ParsedField, err error) {
+	// Step 1: identify the key field index in candidates.
+	keyIdx := -1
+	if opts.KeyFieldOverride != "" {
+		// Override path: linear scan by field name.
+		for i := range candidates {
+			if candidates[i].Name == opts.KeyFieldOverride {
+				keyIdx = i
+				break
+			}
+		}
+		if keyIdx == -1 {
+			return nil, nil, fmt.Errorf(
+				"struct %q: --key-field override names field %q which is not present in the struct",
+				structName, opts.KeyFieldOverride)
+		}
+	} else {
+		// Tag path: linear scan for eddt:"entity.key". Multiple matches and
+		// zero matches are both errors.
+		for i := range candidates {
+			if candidates[i].RawTag != "entity.key" {
+				continue
+			}
+			if keyIdx != -1 {
+				return nil, nil, fmt.Errorf(
+					"struct %q has multiple fields tagged eddt:%q (at least %q and %q); exactly one entity-key field is required",
+					structName, "entity.key", candidates[keyIdx].Name, candidates[i].Name)
+			}
+			keyIdx = i
+		}
+		if keyIdx == -1 {
+			return nil, nil, fmt.Errorf(
+				"struct %q has no field tagged eddt:%q; a conforming Snapshot must mark exactly one entity-key field "+
+					"(or supply --key-field on the command line)",
+				structName, "entity.key")
+		}
+	}
+
+	keyField := &candidates[keyIdx]
+
+	// Step 2: validate the key field's type. Accept scalars and comparable
+	// struct values; reject pointers (identity != value equality), slices,
+	// and maps (not comparable in Go's type system).
+	switch keyField.Shape {
+	case ShapeScalar:
+		// Basic and named basic types are always comparable.
+
+	case ShapeStructValue:
+		// types.Comparable handles the struct case correctly, but to give
+		// the Snapshot author a useful error we walk the struct fields and
+		// name the offending one on failure.
+		if !types.Comparable(keyField.GoType) {
+			if st, ok := keyField.GoType.Underlying().(*types.Struct); ok {
+				for i := 0; i < st.NumFields(); i++ {
+					f := st.Field(i)
+					if !types.Comparable(f.Type()) {
+						return nil, nil, fmt.Errorf(
+							"struct %q: entity-key field %q has non-comparable sub-field %q of type %s; "+
+								"all fields of a key struct must be comparable",
+							structName, keyField.Name, f.Name(), f.Type())
+					}
+				}
+			}
+			// Fallback if we cannot pinpoint the offending sub-field.
+			return nil, nil, fmt.Errorf(
+				"struct %q: entity-key field %q has non-comparable type %s",
+				structName, keyField.Name, keyField.GoType)
+		}
+
+	case ShapePointer:
+		return nil, nil, fmt.Errorf(
+			"struct %q: entity-key field %q has pointer type %s; key fields must be value types "+
+				"(pointer equality is identity, not value equality)",
+			structName, keyField.Name, keyField.GoType)
+
+	case ShapeSlice:
+		return nil, nil, fmt.Errorf(
+			"struct %q: entity-key field %q has slice type %s; slices are not comparable and cannot be entity keys",
+			structName, keyField.Name, keyField.GoType)
+
+	case ShapeMap:
+		return nil, nil, fmt.Errorf(
+			"struct %q: entity-key field %q has map type %s; maps are not comparable and cannot be entity keys",
+			structName, keyField.Name, keyField.GoType)
+	}
+
+	// Step 3: partition. Return the key's *types.Var and the candidates with
+	// the key removed.
+	keyVar = keyField.Var
+	payloadFields = make([]ParsedField, 0, len(candidates)-1)
+	payloadFields = append(payloadFields, candidates[:keyIdx]...)
+	payloadFields = append(payloadFields, candidates[keyIdx+1:]...)
+	return keyVar, payloadFields, nil
 }
 
 // walkFields walks the fields of st exactly once, returning the embedded

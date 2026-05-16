@@ -11,7 +11,10 @@
 //   - Resolve (G-05): determine the output package name and cross-package mode.
 //   - Parse   (G-03 / G-07 / G-04): walk the loaded types to find the Snapshot
 //     struct, its embedded runtime.Header, its entity.key field, and its
-//     payload fields. Driven by `parseSnapshot(pkgs, name, ParseOpts{...})`.
+//     payload fields. Driven by a single `parseSnapshot(pkgs, name, ParseOpts{...})`
+//     call per target struct; the entity-key field is surfaced via
+//     ParsedSnapshot.KeyVar and excluded from Fields.
+//   - Tag    (Phase 3): parse and validate eddt: tag values on payload fields.
 //   - Emit    (Phase 4): render the Delta type and function bodies via text/template.
 package deltagen
 
@@ -71,8 +74,10 @@ func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose boo
 //   - Resolve (load.go, G-05):           determine output package name and cross-package mode.
 //   - Parse   (parse.go, G-03 / G-07 / G-04):
 //     a single `parseSnapshot(pkgs, name, ParseOpts{...})` call per target
-//     struct identifies the embedded runtime.Header, classifies payload
-//     fields, and (post-G-04) extracts the entity.key field.
+//     struct identifies the embedded runtime.Header, the entity.key field,
+//     and classifies payload fields. The key is surfaced via
+//     ParsedSnapshot.KeyVar and excluded from Fields.
+//   - Tag    (tag.go, Phase 3):          parse and validate eddt: tag values.
 //   - Emit    (template.go, Phase 4):    render the Delta type and Apply / Diff /
 //     Coalesce / EntityID function bodies via text/template; emit method wrappers
 //     when CrossPackage is false.
@@ -103,9 +108,8 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 
 	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot
-	// (G-03 / G-07). The G-04 internal step (parseKeyField) is not yet wired
-	// in; until it is, ParsedSnapshot.KeyVar is left nil and the
-	// KeyFieldOverride hook on ParseOpts carries through unconsumed.
+	// (G-03 / G-07 / G-04). The ParsedSnapshot carries HeaderVar, KeyVar,
+	// and the payload Fields ready for tag handling and emission.
 	opts := ParseOpts{
 		CrossPackage: g.CrossPackage,
 		// KeyFieldOverride is populated by G-06 from g.KeyFields[structName]
@@ -121,6 +125,6 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		}
 	}
 
-	// Stage 3 — Key field parsing (G-04): not yet implemented.
-	return fmt.Errorf("delta-gen: key field parser not yet implemented")
+	// Stage 3 — Tag handling (Phase 3): not yet implemented.
+	return fmt.Errorf("delta-gen: tag parser not yet implemented")
 }

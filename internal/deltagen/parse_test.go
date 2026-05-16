@@ -1,13 +1,12 @@
 package deltagen
 
-// parse_test.go exercises the Snapshot type parser introduced in G-03 and
-// reshaped in G-07 (ParseOpts option carrier; walkFields helper). Tests at
-// this refinement level focus on structural parsing only; key-field semantics
-// land in G-04 with their own Group G test family.
+// parse_test.go exercises the Snapshot type parser introduced in G-03,
+// reshaped in G-07 (ParseOpts option carrier; walkFields helper), and
+// extended in G-04 (parseKeyField; entity-key recognition and validation).
 //
-// # Group F: Snapshot type parser
+// # Group F: Snapshot structural parsing
 //
-// Tests are structured around the three responsibilities of parseSnapshot:
+// Tests are structured around the structural responsibilities of parseSnapshot:
 //
 //   F.1 Happy path — Header found, payload fields enumerated and shaped.
 //   F.2 Shape classification — each supported shape is classified correctly.
@@ -16,9 +15,25 @@ package deltagen
 //   F.5 Map field — classified as ShapeMap without error (T-02 validates tag).
 //   F.6 Cross-package field filtering — unexported fields excluded when
 //       ParseOpts.CrossPackage is true.
-//   F.7 Default ParseOpts equivalence — the zero value of ParseOpts behaves
-//       identically to explicit CrossPackage: false; KeyFieldOverride is
-//       carried through unconsumed (G-04 will consume it).
+//   F.7 ParseOpts equivalence — zero value behaves identically to explicit
+//       CrossPackage: false; a KeyFieldOverride pointing at the same field
+//       as the entity.key tag yields a structurally-equal result.
+//
+// # Group G: Entity-key recognition (G-04)
+//
+// Tests cover the parseKeyField responsibilities:
+//
+//   G.1 Tag-found struct key — happy path via tag scan.
+//   G.2 Tag-found scalar key — named-basic types accepted as keys.
+//   G.3 Override-OK — KeyFieldOverride supersedes tag-based discovery.
+//   G.4 No key — missing tag and missing override → error.
+//   G.5 Multiple keys — two entity.key tags → error.
+//   G.6 Pointer key — pointer-typed key field → error.
+//   G.7 Non-comparable struct key — key struct contains a slice → error
+//       naming the offending sub-field.
+//   G.8 Override missing — override names a field not in the struct → error.
+//   G.9 Override wins over tag — tag and override naming different fields,
+//       override is selected, tagged field falls back into payload Fields.
 //
 // All tests load fixtures from the testdata/parse/ tree. Because the fixtures
 // live within the eddt module, packages.Load resolves go.resystems.io/eddt/runtime
@@ -269,17 +284,17 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 }
 
 // TestParse_ParseOptsEquivalence verifies that the ParseOpts options carrier
-// behaves as designed in G-07:
+// produces equivalent results across redundant invocations:
 //
 //   - The zero value `ParseOpts{}` is equivalent to `ParseOpts{CrossPackage: false}`.
-//   - `KeyFieldOverride` is carried through but ignored at this refinement
-//     step (G-04 will consume it). Passing a non-empty override must not
-//     affect the result of structural parsing.
+//   - A KeyFieldOverride naming the same field as the entity.key tag yields
+//     a structurally-identical result (the override path and tag path
+//     converge when they pick the same field).
 //
-// These guarantees are what keep the call-site signature stable across the
-// G-07 → G-04 → G-06 sequence: G-04 can later interpret KeyFieldOverride
-// without changing any existing G-07-era invocation.
-// Covers: R-12, R-13
+// These guarantees keep the call-site signature stable: G-06 can route the
+// CLI value through ParseOpts.KeyFieldOverride without changing the parser's
+// observable behaviour for tag-conforming Snapshots.
+// Covers: R-12, R-13, R-14
 func TestParse_ParseOptsEquivalence(t *testing.T) {
 	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
 	if err != nil {
@@ -287,9 +302,9 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 	}
 
 	// Three invocations that must yield structurally-identical ParsedSnapshots:
-	//   a) zero value
-	//   b) explicit same-package mode
-	//   c) explicit same-package mode plus an arbitrary KeyFieldOverride (ignored)
+	//   a) zero value (tag path)
+	//   b) explicit same-package mode (tag path)
+	//   c) override naming the same field as the eddt:"entity.key" tag
 	a, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
 	if err != nil {
 		t.Fatalf("zero opts: %v", err)
@@ -298,7 +313,7 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit CrossPackage false: %v", err)
 	}
-	c, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Bearer"})
+	c, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Key"})
 	if err != nil {
 		t.Fatalf("with KeyFieldOverride: %v", err)
 	}
@@ -307,9 +322,13 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 		if snap.HeaderVar == nil {
 			t.Errorf("HeaderVar nil; expected populated")
 		}
-		// G-07 contract: KeyVar is always nil at this refinement step.
-		if snap.KeyVar != nil {
-			t.Errorf("KeyVar = %v; expected nil at G-07", snap.KeyVar)
+		// G-04 contract: KeyVar is always populated for a successful parse.
+		if snap.KeyVar == nil {
+			t.Errorf("KeyVar nil; expected populated after G-04")
+			continue
+		}
+		if snap.KeyVar.Name() != "Key" {
+			t.Errorf("KeyVar.Name = %q, want %q", snap.KeyVar.Name(), "Key")
 		}
 	}
 
@@ -317,6 +336,232 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 	if len(a.Fields) != len(b.Fields) || len(b.Fields) != len(c.Fields) {
 		t.Errorf("Fields counts diverge: zero=%d, explicit=%d, override=%d",
 			len(a.Fields), len(b.Fields), len(c.Fields))
+	}
+}
+
+// ── Group G: Entity-key recognition (G-04) ────────────────────────────────────
+
+// TestParse_KeyField_TagFoundStruct verifies the happy path for tag-based
+// key-field discovery with a struct-valued key. ValidSnapshot has a `Key UEKey
+// \`eddt:"entity.key"\`` field; parseSnapshot must surface UEKey via KeyVar
+// and exclude it from Fields (so the payload count stays at 8).
+// Covers: R-14, R-18
+func TestParse_KeyField_TagFoundStruct(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
+	if err != nil {
+		t.Fatalf("parseSnapshot: %v", err)
+	}
+
+	if snap.KeyVar == nil {
+		t.Fatal("KeyVar: got nil, want populated")
+	}
+	if snap.KeyVar.Name() != "Key" {
+		t.Errorf("KeyVar.Name: got %q, want %q", snap.KeyVar.Name(), "Key")
+	}
+	// Key must not appear in Fields — it was moved to KeyVar.
+	for _, f := range snap.Fields {
+		if f.Name == "Key" {
+			t.Errorf("Fields contains key field %q; expected it to be removed", f.Name)
+		}
+	}
+}
+
+// TestParse_KeyField_TagFoundScalar verifies that a named-basic (scalar) type
+// is accepted as the entity-key type. The relaxation captured in E-10 is that
+// any value-typed comparable type works — not just structs.
+// Covers: R-14, R-18
+func TestParse_KeyField_TagFoundScalar(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/scalar_key"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	snap, err := parseSnapshot(pkgs, "ScalarKeySnapshot", ParseOpts{})
+	if err != nil {
+		t.Fatalf("parseSnapshot: %v", err)
+	}
+
+	if snap.KeyVar == nil {
+		t.Fatal("KeyVar: got nil, want populated for scalar key")
+	}
+	if snap.KeyVar.Name() != "Key" {
+		t.Errorf("KeyVar.Name: got %q, want %q", snap.KeyVar.Name(), "Key")
+	}
+	// Status remains the only payload field after Key is removed.
+	if len(snap.Fields) != 1 {
+		t.Errorf("len(Fields): got %d, want 1; fields: %v", len(snap.Fields), fieldNames(snap))
+	}
+}
+
+// TestParse_KeyField_OverrideOK verifies that ParseOpts.KeyFieldOverride
+// selects the named field even when it carries no entity.key tag. The
+// no_key fixture has no entity.key tag at all; the override path is the
+// only way to identify a key for that Snapshot.
+// Covers: R-14, R-18, E-13
+func TestParse_KeyField_OverrideOK(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/no_key"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	snap, err := parseSnapshot(pkgs, "NoKeySnapshot", ParseOpts{KeyFieldOverride: "Peer"})
+	if err != nil {
+		t.Fatalf("parseSnapshot with override: %v", err)
+	}
+
+	if snap.KeyVar == nil {
+		t.Fatal("KeyVar: got nil, want populated via override")
+	}
+	if snap.KeyVar.Name() != "Peer" {
+		t.Errorf("KeyVar.Name: got %q, want %q", snap.KeyVar.Name(), "Peer")
+	}
+	// Status remains the only payload field after Peer is removed.
+	if len(snap.Fields) != 1 {
+		t.Errorf("len(Fields): got %d, want 1; fields: %v", len(snap.Fields), fieldNames(snap))
+	}
+}
+
+// TestParse_KeyField_NoKey verifies that a Snapshot without an entity.key
+// tag and without a CLI override is rejected with a descriptive error.
+// Covers: R-14
+func TestParse_KeyField_NoKey(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/no_key"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	_, err = parseSnapshot(pkgs, "NoKeySnapshot", ParseOpts{})
+	if err == nil {
+		t.Fatal("expected error for missing entity.key, got nil")
+	}
+	if !strings.Contains(err.Error(), "entity.key") {
+		t.Errorf("error should mention entity.key, got: %v", err)
+	}
+}
+
+// TestParse_KeyField_MultiKey verifies that two fields tagged entity.key
+// in the same Snapshot produce an error containing "multiple".
+// Covers: R-14, R-18
+func TestParse_KeyField_MultiKey(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/multi_key"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	_, err = parseSnapshot(pkgs, "MultiKeySnapshot", ParseOpts{})
+	if err == nil {
+		t.Fatal("expected error for multiple entity.key fields, got nil")
+	}
+	if !strings.Contains(err.Error(), "multiple") {
+		t.Errorf("error should mention 'multiple', got: %v", err)
+	}
+}
+
+// TestParse_KeyField_Pointer verifies that a pointer-typed entity.key field
+// is rejected. Pointer equality is identity, not value equality, so a
+// pointer-typed key would let two Snapshots with equal key contents hash
+// to different EntityIDs.
+// Covers: R-14
+func TestParse_KeyField_Pointer(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/key_pointer"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	_, err = parseSnapshot(pkgs, "PtrKeySnapshot", ParseOpts{})
+	if err == nil {
+		t.Fatal("expected error for pointer-typed entity.key, got nil")
+	}
+	if !strings.Contains(err.Error(), "pointer") {
+		t.Errorf("error should mention 'pointer', got: %v", err)
+	}
+}
+
+// TestParse_KeyField_NonComparable verifies that a struct-valued key whose
+// underlying struct contains a non-comparable (slice) field is rejected,
+// and that the error names the offending sub-field so the Snapshot author
+// can locate the problem quickly.
+// Covers: R-14, R-18
+func TestParse_KeyField_NonComparable(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/key_with_slice"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	_, err = parseSnapshot(pkgs, "SliceyKeySnapshot", ParseOpts{})
+	if err == nil {
+		t.Fatal("expected error for non-comparable key struct, got nil")
+	}
+	if !strings.Contains(err.Error(), "IDs") {
+		t.Errorf("error should name offending sub-field 'IDs', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "comparable") {
+		t.Errorf("error should mention 'comparable', got: %v", err)
+	}
+}
+
+// TestParse_KeyField_OverrideMissing verifies that a KeyFieldOverride naming
+// a field not present in the struct produces a descriptive error.
+// Covers: R-14, E-13
+func TestParse_KeyField_OverrideMissing(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	_, err = parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "NoSuchField"})
+	if err == nil {
+		t.Fatal("expected error for unknown override field, got nil")
+	}
+	if !strings.Contains(err.Error(), "NoSuchField") {
+		t.Errorf("error should mention the override field name, got: %v", err)
+	}
+}
+
+// TestParse_KeyField_OverrideWinsOverTag verifies the precedence rule: when
+// both an entity.key tag and a CLI override are present, the override wins.
+// The tagged field falls back into payload Fields rather than being silently
+// discarded. The parser does not warn; the CLI layer (G-06) emits a
+// --verbose warning.
+// Covers: R-14, E-13
+func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	// ValidSnapshot has `Key UEKey \`eddt:"entity.key"\`` AND a comparable
+	// struct field `Location LocationInfo` (no tag). The override picks
+	// Location; Key is left in Fields as ordinary payload.
+	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Location"})
+	if err != nil {
+		t.Fatalf("parseSnapshot with override: %v", err)
+	}
+
+	if snap.KeyVar == nil {
+		t.Fatal("KeyVar: got nil, want populated via override")
+	}
+	if snap.KeyVar.Name() != "Location" {
+		t.Errorf("KeyVar.Name: got %q, want %q (override should win)", snap.KeyVar.Name(), "Location")
+	}
+
+	// The tagged Key field must now appear in Fields as ordinary payload —
+	// the override silently superseded its tag without dropping the field.
+	foundKey := false
+	for _, f := range snap.Fields {
+		if f.Name == "Key" {
+			foundKey = true
+			break
+		}
+	}
+	if !foundKey {
+		t.Errorf("Fields missing %q; expected the tagged-but-overridden field to fall back to payload: %v",
+			"Key", fieldNames(snap))
 	}
 }
 

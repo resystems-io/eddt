@@ -28,11 +28,12 @@ func TestCLI_MissingStructs(t *testing.T) {
 }
 
 // TestCLI_NotYetImplemented verifies that a valid invocation propagates the
-// generator's "not yet implemented" error back through the CLI layer. With G-03
-// implemented the parse stage succeeds; the first not-yet-implemented stage is
-// G-04 (key field parser). The fixture at
-// ../../internal/deltagen/testdata/parse/valid provides a conforming Snapshot so
-// the parse stage runs to completion and only G-04 is the missing step.
+// generator's "not yet implemented" error back through the CLI layer. With
+// G-03 / G-07 / G-04 implemented the parse stage now runs to completion
+// (Header resolved, entity.key identified, payload fields classified). The
+// first not-yet-implemented stage is Phase 3 tag handling. The fixture at
+// ../../internal/deltagen/testdata/parse/valid provides a conforming Snapshot
+// (including an eddt:"entity.key" field) so parse succeeds end-to-end.
 // Covers: R-09
 func TestCLI_NotYetImplemented(t *testing.T) {
 	cmd := newRootCmd()
