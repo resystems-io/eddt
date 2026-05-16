@@ -52,14 +52,27 @@ func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose boo
 
 // Run executes the full generation pipeline for each target struct.
 //
-// The pipeline stages and the items that implement them:
+// The pipeline has three stages; each is implemented in its own file:
 //
-//   - Load:  G-02 (internal/deltagen/load.go)   — golang.org/x/tools/go/packages
-//   - Parse: G-03 (internal/deltagen/parse.go)  — Snapshot / Header / payload fields
-//           G-04 (internal/deltagen/parse.go)  — entity.key field + type validation
-//   - Emit:  EM-01..EM-05 (internal/deltagen/template.go) — Delta type + methods
-//
-// Until those stages are implemented this function returns an error.
+//   - Load  (load.go, G-02):   resolve --pkg arguments into type-checked packages.
+//   - Parse (parse.go, G-03/G-04): find the Snapshot struct, its embedded
+//     runtime.Header, its entity.key field, and classify payload fields.
+//   - Emit  (template.go, Phase 4): render the Delta type and Apply / Diff /
+//     Coalesce / EntityID method bodies via text/template.
 func (g *Generator) Run(outPkgNameOverride string) error {
-	return fmt.Errorf("delta-gen: not yet implemented")
+	// Stage 1 — Load: resolve all --pkg arguments into *packages.Package values.
+	// Filesystem paths and Go import paths are handled separately; see load.go
+	// for the two-phase loading strategy and the rationale for NeedDeps.
+	pkgs, err := loadPackages(g.InputPkgs, g.Verbose)
+	if err != nil {
+		return err
+	}
+
+	if g.Verbose {
+		fmt.Printf("Loaded %d top-level package(s)\n", len(pkgs))
+	}
+
+	// Stage 2 — Parse: not yet implemented (G-03 / G-04).
+	_ = pkgs
+	return fmt.Errorf("delta-gen: parse stage not yet implemented")
 }

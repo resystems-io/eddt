@@ -361,11 +361,16 @@ checks.
     text. `TestCLI_ImportPathNotInGoMod` skipped (acceptance
     criterion for G-02).
 
-- [ ] **G-02: Package loader.** Adapt the writer-gen `loadPackages`
+- [x] **G-02: Package loader.** Adapt the writer-gen `loadPackages`
   pattern; pass `NeedTypes | NeedTypesInfo | NeedDeps`.
-  - Files: `internal/deltagen/load.go`.
-  - Tests: `internal/deltagen/load_test.go` — load a package
-    fixture; resolve a typed Snapshot reference.
+  - Files: `internal/deltagen/load.go`,
+    `internal/deltagen/load_test.go`,
+    `internal/deltagen/generator.go` (Run wired),
+    `cmd/delta-gen/main_test.go` (t.Skip removed).
+  - Tests: 9 tests across filesystem paths, import paths,
+    dependency traversal (Header type lookup), and
+    `isFilesystemPath` unit tests. `TestCLI_ImportPathNotInGoMod`
+    now active.
 
 - [ ] **G-03: Snapshot type parser.** Find the embedded
   `runtime.Header` field by type; enumerate payload fields;
@@ -861,11 +866,12 @@ and are not separately listed.
 Record completed items here with the date (check git blame for the
 git commit).
 
-| Date       | Item         | Notes                                                                                                                                                                                    |
-|:-----------|:-------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                          |
-| 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                |
-| 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests. |
-| 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.  |
-| 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.         |
-| 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                       |
+| Date       | Item         | Notes                                                                                                                                                                                                     |
+|:-----------|:-------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                                           |
+| 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                                 |
+| 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests.                  |
+| 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.                   |
+| 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.                          |
+| 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                                        |
+| 2026-05-16 | G-02         | Package loader with two-phase loading (filesystem + import paths), NeedDeps/NeedImports for transitive closure, `FindPkgByPath` via `packages.Visit`; 9 tests; `TestCLI_ImportPathNotInGoMod` now active. |

@@ -71,20 +71,13 @@ func TestCLI_Help(t *testing.T) {
 	}
 }
 
-// TestCLI_ImportPathNotInGoMod is an acceptance test for the import-path
-// resolution behaviour that will be implemented in G-02 (package loader).
-// Until G-02 lands, invoking delta-gen with an import path fails with
-// "not yet implemented" before any package loading occurs, so this test
-// is skipped.
-//
-// When G-02 is implemented:
-//   - Remove the t.Skip call.
-//   - The test must pass: a nonexistent import path should produce an error
-//     containing "go get" remediation guidance, not a filesystem-path error.
-//
+// TestCLI_ImportPathNotInGoMod verifies that invoking delta-gen with a
+// nonexistent Go import path produces an error containing "go get" remediation
+// guidance (from formatImportPathErrors in load.go) and does not produce a
+// "failed to load package directory" error (which would indicate the import
+// path was wrongly classified as a filesystem path).
 // Covers: R-11
 func TestCLI_ImportPathNotInGoMod(t *testing.T) {
-	t.Skip("acceptance: requires G-02 package loader")
 
 	tmpDir := t.TempDir()
 
