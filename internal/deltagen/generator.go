@@ -99,7 +99,19 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		}
 	}
 
-	// Stage 2 — Parse: not yet implemented (G-03 / G-04).
-	_ = pkgs
-	return fmt.Errorf("delta-gen: parse stage not yet implemented")
+	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot (G-03).
+	// G-04 (key field parser) and the emit stage are not yet implemented;
+	// the loop below confirms parsing succeeds and stops before key-field work.
+	for _, structName := range g.TargetStructs {
+		_, err := parseSnapshot(pkgs, structName, g.CrossPackage)
+		if err != nil {
+			return err
+		}
+		if g.Verbose {
+			fmt.Printf("Parsed struct %q\n", structName)
+		}
+	}
+
+	// Stage 3 — Key field parsing (G-04): not yet implemented.
+	return fmt.Errorf("delta-gen: key field parser not yet implemented")
 }

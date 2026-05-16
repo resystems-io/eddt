@@ -28,13 +28,17 @@ func TestCLI_MissingStructs(t *testing.T) {
 }
 
 // TestCLI_NotYetImplemented verifies that a valid invocation propagates the
-// generator's "not yet implemented" error back through the CLI layer.
+// generator's "not yet implemented" error back through the CLI layer. With G-03
+// implemented the parse stage succeeds; the first not-yet-implemented stage is
+// G-04 (key field parser). The fixture at
+// ../../internal/deltagen/testdata/parse/valid provides a conforming Snapshot so
+// the parse stage runs to completion and only G-04 is the missing step.
 // Covers: R-09
 func TestCLI_NotYetImplemented(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
-		"--pkg", ".",
-		"--structs", "Foo",
+		"--pkg", "../../internal/deltagen/testdata/parse/valid",
+		"--structs", "ValidSnapshot",
 		"--out", "dummy.go",
 	})
 
