@@ -13,7 +13,8 @@
 //     struct, its embedded runtime.Header, its entity.key field, and its
 //     payload fields. Driven by a single `parseSnapshot(pkgs, name, ParseOpts{...})`
 //     call per target struct; the entity-key field is surfaced via
-//     ParsedSnapshot.KeyVar and excluded from Fields.
+//     ParsedSnapshot.KeyVar and excluded from Fields. Per-struct key-field
+//     overrides are supplied via Generator.KeyFields (G-06).
 //   - Tag    (Phase 3): parse and validate eddt: tag values on payload fields.
 //   - Emit    (Phase 4): render the Delta type and function bodies via text/template.
 package deltagen
@@ -53,6 +54,13 @@ type Generator struct {
 	// When true, the parse stage excludes unexported fields and the emit stage
 	// omits ergonomic method wrappers (E-12). Set by Run after the load stage.
 	CrossPackage bool
+
+	// KeyFields maps Snapshot struct names to the field name that identifies
+	// the entity-key field, bypassing the eddt:"entity.key" tag scan. Set by
+	// the CLI layer (G-06) from --key-field; the empty map selects tag-based
+	// discovery for every struct. A missing entry for a given struct also
+	// selects tag-based discovery for that struct.
+	KeyFields map[string]string
 }
 
 // NewGenerator constructs a Generator with the supplied parameters.
@@ -72,11 +80,12 @@ func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose boo
 //
 //   - Load    (load.go, G-02):           resolve --pkg arguments into type-checked packages.
 //   - Resolve (load.go, G-05):           determine output package name and cross-package mode.
-//   - Parse   (parse.go, G-03 / G-07 / G-04):
+//   - Parse   (parse.go, G-03 / G-07 / G-04 / G-06):
 //     a single `parseSnapshot(pkgs, name, ParseOpts{...})` call per target
 //     struct identifies the embedded runtime.Header, the entity.key field,
 //     and classifies payload fields. The key is surfaced via
-//     ParsedSnapshot.KeyVar and excluded from Fields.
+//     ParsedSnapshot.KeyVar and excluded from Fields. Per-struct key-field
+//     overrides from --key-field are carried via Generator.KeyFields.
 //   - Tag    (tag.go, Phase 3):          parse and validate eddt: tag values.
 //   - Emit    (template.go, Phase 4):    render the Delta type and Apply / Diff /
 //     Coalesce / EntityID function bodies via text/template; emit method wrappers
@@ -108,18 +117,35 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 
 	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot
-	// (G-03 / G-07 / G-04). The ParsedSnapshot carries HeaderVar, KeyVar,
-	// and the payload Fields ready for tag handling and emission.
-	opts := ParseOpts{
-		CrossPackage: g.CrossPackage,
-		// KeyFieldOverride is populated by G-06 from g.KeyFields[structName]
-		// in a later refinement; the empty value selects tag-based discovery.
-	}
+	// (G-03 / G-07 / G-04 / G-06). The ParsedSnapshot carries HeaderVar,
+	// KeyVar, and the payload Fields ready for tag handling and emission.
+	// KeyFieldOverride is populated from g.KeyFields[structName] (G-06);
+	// an absent entry (empty string) selects tag-based discovery.
 	for _, structName := range g.TargetStructs {
-		_, err := parseSnapshot(pkgs, structName, opts)
+		opts := ParseOpts{
+			CrossPackage:     g.CrossPackage,
+			KeyFieldOverride: g.KeyFields[structName],
+		}
+		ps, err := parseSnapshot(pkgs, structName, opts)
 		if err != nil {
 			return err
 		}
+
+		// Verbose conflict warning (G-06): when --key-field names a different
+		// field than the eddt:"entity.key" tag, the override wins silently.
+		// The tagged-but-overridden field falls back into ps.Fields (G-04
+		// contract), so we detect the conflict by scanning for RawTag ==
+		// "entity.key" after the parse.
+		if g.Verbose && g.KeyFields[structName] != "" {
+			for _, f := range ps.Fields {
+				if f.RawTag == "entity.key" {
+					fmt.Printf("delta-gen: warning: struct %q: --key-field %q overrides eddt:\"entity.key\" tag on field %q\n",
+						structName, g.KeyFields[structName], f.Name)
+					break
+				}
+			}
+		}
+
 		if g.Verbose {
 			fmt.Printf("Parsed struct %q\n", structName)
 		}

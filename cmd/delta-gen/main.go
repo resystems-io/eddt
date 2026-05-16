@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 	deltagen "go.resystems.io/eddt/internal/deltagen"
@@ -11,12 +12,13 @@ import (
 
 func newRootCmd() *cobra.Command {
 	var (
-		inputPkgs     []string
-		outPkgName    string
-		pkgAliases    []string
-		targetStructs []string
-		outPath       string
-		verbose       bool
+		inputPkgs      []string
+		outPkgName     string
+		pkgAliases     []string
+		targetStructs  []string
+		outPath        string
+		verbose        bool
+		keyFieldValues []string
 	)
 
 	cmd := &cobra.Command{
@@ -43,6 +45,11 @@ Example usage:
 				return fmt.Errorf("at least one target struct must be specified")
 			}
 
+			keyFields, err := parseKeyFields(keyFieldValues, targetStructs)
+			if err != nil {
+				return err
+			}
+
 			if verbose {
 				fmt.Printf("Generating delta types for structs: %v\n", targetStructs)
 				fmt.Printf("Input packages: %v\n", inputPkgs)
@@ -54,6 +61,7 @@ Example usage:
 
 			gen := deltagen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
 			gen.Version = vcsRevision()
+			gen.KeyFields = keyFields
 			if err := gen.Run(outPkgName); err != nil {
 				return err
 			}
@@ -68,12 +76,87 @@ Example usage:
 	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Snapshot struct(s) to generate delta types for (comma-separated)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "delta-gen.go", "Output file path")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	cmd.Flags().StringSliceVar(&keyFieldValues, "key-field", nil,
+		"Entity-key field override: bare 'FieldName' applies to all --structs targets; "+
+			"'StructName=FieldName' applies to one struct only. Repeatable and comma-separated. "+
+			"Overrides the eddt:\"entity.key\" tag when both are present.")
 
 	if err := cmd.MarkFlagRequired("structs"); err != nil {
 		panic(err)
 	}
 
 	return cmd
+}
+
+// parseKeyFields converts the raw --key-field flag values into a per-struct map.
+//
+// Each value is either a bare FieldName (applies to all structs in targetStructs)
+// or a StructName=FieldName pair (applies to one named struct). The two forms
+// mirror the --pkg-alias importpath=alias convention. StringSliceVarP splits
+// comma-separated values at the Cobra layer, so --key-field "A=X,B=Y" and two
+// separate --key-field flags are equivalent.
+//
+// Precedence rules:
+//   - Bare values are applied first (expanding to every struct).
+//   - Per-struct values then overwrite the bare entry for the named struct.
+//   - Two bare values for the same struct is an error (ambiguous).
+//   - A StructName that is not in targetStructs is an error.
+//   - An empty FieldName part (e.g. "StructName=") is an error.
+func parseKeyFields(values []string, targetStructs []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	structSet := make(map[string]bool, len(targetStructs))
+	for _, s := range targetStructs {
+		structSet[s] = true
+	}
+
+	result := make(map[string]string, len(targetStructs))
+
+	// Pass 1: expand bare values to all structs. Two bare values for the same
+	// struct are ambiguous — the last bare value would win silently, so we
+	// detect the duplicate and error instead.
+	var bareField string
+	var bareSeen bool
+	for _, v := range values {
+		if strings.Contains(v, "=") {
+			continue
+		}
+		if v == "" {
+			return nil, fmt.Errorf("--key-field: empty field name")
+		}
+		if bareSeen && v != bareField {
+			return nil, fmt.Errorf("--key-field: ambiguous bare values %q and %q; use StructName=FieldName form to target specific structs", bareField, v)
+		}
+		bareField = v
+		bareSeen = true
+		for _, s := range targetStructs {
+			result[s] = v
+		}
+	}
+
+	// Pass 2: apply per-struct values, overriding any bare entry.
+	for _, v := range values {
+		if !strings.Contains(v, "=") {
+			continue
+		}
+		idx := strings.Index(v, "=")
+		structName := v[:idx]
+		fieldName := v[idx+1:]
+		if structName == "" {
+			return nil, fmt.Errorf("--key-field: missing struct name in %q", v)
+		}
+		if fieldName == "" {
+			return nil, fmt.Errorf("--key-field: empty field name in %q", v)
+		}
+		if !structSet[structName] {
+			return nil, fmt.Errorf("--key-field: struct %q is not listed in --structs", structName)
+		}
+		result[structName] = fieldName
+	}
+
+	return result, nil
 }
 
 func vcsRevision() string {

@@ -468,50 +468,57 @@ checks.
     `KeyVar != nil` and to use an override naming the actual key
     field.
 
-- [ ] **G-06: CLI key-field override (Errata E-13).** Pure CLI
+- [x] **G-06: CLI key-field override (Errata E-13).** Pure CLI
   plumbing on top of G-04. The parser-side semantics (override
   path, validation, precedence over tags) are already implemented
   in G-04 via `ParseOpts.KeyFieldOverride`; G-06 only wires the
   command line through to that hook.
-  - New flag: `--key-field` — repeatable; each value is either a
-    bare `FieldName` (applies uniformly to all `--structs` targets)
-    or a `StructName=FieldName` pair (applies to one named struct
-    only). The `=` form mirrors the `--pkg-alias importpath=alias`
-    convention already in the CLI. Field-name form is used rather
-    than type-name form because the same type may appear in more
-    than one field position. Examples:
+  - New flag: `--key-field` — repeatable and comma-separated
+    (`StringSliceVar`, same convention as `--pkg-alias`); each
+    value (after Cobra's comma-split) is either a bare `FieldName`
+    (applies uniformly to all `--structs` targets) or a
+    `StructName=FieldName` pair (applies to one named struct only).
+    Field-name form is used rather than type-name form because the
+    same type may appear in more than one field position. Examples:
     ```
     # single struct, bare form
     --structs UESessionSnapshot --key-field Key
 
-    # multiple structs, per-struct form
+    # multiple structs, per-struct form — two flags or one comma-separated
     --structs UESessionSnapshot,PDUSessionSnapshot \
-      --key-field UESessionSnapshot=Key \
-      --key-field PDUSessionSnapshot=PDUID
+      --key-field UESessionSnapshot=Key,PDUSessionSnapshot=PDUID
     ```
-  - Parsing rules: bare values are expanded to
-    `StructName=FieldName` for every struct in `--structs` at
-    flag-parse time. If both a bare and a per-struct value
-    are given for the same struct, the per-struct value wins.
-    If `--key-field` is given without a matching struct name in
-    `--structs`, the generator errors at startup.
+  - Parsing rules (`parseKeyFields` helper in `main.go`): bare
+    values are expanded to every struct in `--structs` first;
+    per-struct values then override any bare entry for the same
+    struct. Two different bare values for the same struct set are
+    an error (ambiguous). A `StructName` not in `--structs` is a
+    startup error. An empty field-name part (`StructName=`) is a
+    startup error.
   - Verbose conflict warning: when a struct has both an
     `eddt:"entity.key"` tag and a `--key-field` override targeting
-    it, emit a `--verbose` log line noting that the CLI value
-    overrides the tag. The parser does not warn; the CLI layer
-    does (comparison happens at the call site, after parse).
-  - Files: `cmd/delta-gen/main.go` (flag wiring, bare-to-per-struct
-    expansion, unrecognised-struct startup error),
-    `internal/deltagen/generator.go` (add
-    `KeyFields map[string]string`; pass per-struct entry into
-    `ParseOpts.KeyFieldOverride`). No changes to
+    a different field, `Run()` emits a `--verbose` log line. The
+    tagged-but-overridden field falls back into `ps.Fields` (G-04
+    contract), so the conflict is detected after `parseSnapshot`
+    by scanning for `RawTag == "entity.key"` — no `parse.go`
+    change needed.
+  - Files: `cmd/delta-gen/main.go` (flag wiring, `parseKeyFields`
+    helper, unrecognised-struct startup error),
+    `internal/deltagen/generator.go` (`KeyFields map[string]string`
+    field; `ParseOpts.KeyFieldOverride` populated per struct;
+    verbose conflict warning). No changes to
     `internal/deltagen/parse.go` or to any test fixture.
-  - Tests: `cmd/delta-gen/main_test.go` — bare flag accepted and
-    expanded; per-struct flag accepted; mixed bare + per-struct
-    (per-struct wins); unrecognised struct name (startup error);
-    `--verbose` conflict warning emitted when tag and flag
-    coexist. End-to-end coverage of the override **parser-side**
-    behavior is in Group G (G-04); G-06 verifies CLI plumbing only.
+  - Tests: `cmd/delta-gen/main_test.go` — six `parseKeyFields`
+    unit tests (single bare, single per-struct, per-struct wins
+    over bare, two per-struct for different structs covering the
+    comma-separated form `["ThingA=Key","ThingB=Name"]`, duplicate
+    bare error, unrecognised struct error); five CLI integration
+    tests (bare flag accepted; per-struct flag accepted; per-struct
+    wins over bare end-to-end; unrecognised struct startup error;
+    `--verbose` conflict warning captured via `os.Pipe`);
+    `TestCLI_Help` updated to assert `--key-field` in help output.
+    End-to-end coverage of the override **parser-side** behaviour
+    is in Group G (G-04); G-06 verifies CLI plumbing only.
 
 ### Phase 3 — Tag Handling and Validation
 
@@ -1148,3 +1155,4 @@ git commit).
 | 2026-05-16 | G-07, G-04, G-06 plan | Phase 2 architecture reworked. New G-07 step (pure mechanical refactor) lands `ParseOpts` options struct, `ParsedSnapshot.KeyVar` slot, and a `walkFields` helper before G-04 adds key-field semantics. G-04 then moves the entity.key field out of `Fields` into `KeyVar` (so emit-stage payload loops don't need to filter it) and accepts an override via `ParseOpts.KeyFieldOverride`. G-06 is now pure CLI plumbing — no `parse.go` changes, no fixture changes.                                                                                                                                |
 | 2026-05-16 | G-07                  | Implemented: `ParseOpts{CrossPackage, KeyFieldOverride}` carrier; `parseSnapshot` now takes opts as third arg; `walkFields` extracted as internal helper; `ParsedSnapshot.KeyVar` field added (nil until G-04). New `TestParse_ParseOptsEquivalence` exercises the zero-value / explicit / override-ignored equivalence guarantees. Stale "G-03/G-04" parse-stage comments updated. All module tests pass; build, idempotency, and dependency-edge verified.                                                                                                                                         |
 | 2026-05-16 | E-10, G-04            | E-10 working assumption relaxed: entity-key field may be any value-typed comparable type (basic, named basic, or struct of comparable fields), not struct only. G-04 implemented: `parseKeyField` selects the key via tag scan or `ParseOpts.KeyFieldOverride`; rejects pointer (identity != value equality), slice, and map types; struct-key errors name the offending sub-field. Override wins over tag; tagged-but-overridden field falls back into payload. Nine Group G tests; three existing fixtures updated, five new fixtures added (incl. `scalar_key/` for the relaxed-acceptance path). |
+| 2026-05-16 | G-06                  | CLI `--key-field` plumbing implemented. `parseKeyFields` helper in `main.go` handles bare expansion, per-struct override, duplicate-bare error, and unrecognised-struct error. `Generator.KeyFields map[string]string` added; `Run()` populates `ParseOpts.KeyFieldOverride` per struct and emits a `--verbose` conflict warning when tag and override diverge. Six `parseKeyFields` unit tests + five CLI integration tests (incl. `os.Pipe` verbose-capture); `TestCLI_Help` updated. No `parse.go` or fixture changes.                                                                            |

@@ -343,7 +343,7 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 
 // TestParse_KeyField_TagFoundStruct verifies the happy path for tag-based
 // key-field discovery with a struct-valued key. ValidSnapshot has a `Key UEKey
-// \`eddt:"entity.key"\`` field; parseSnapshot must surface UEKey via KeyVar
+// \`eddt:"entity.key"\“ field; parseSnapshot must surface UEKey via KeyVar
 // and exclude it from Fields (so the payload count stays at 8).
 // Covers: R-14, R-18
 func TestParse_KeyField_TagFoundStruct(t *testing.T) {
