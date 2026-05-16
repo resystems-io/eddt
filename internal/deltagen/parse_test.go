@@ -42,6 +42,8 @@ package deltagen
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // ── Group F: Snapshot type parser ─────────────────────────────────────────────
@@ -52,15 +54,7 @@ import (
 // TestParse_ShapeClassification); it asserts structural correctness only.
 // Covers: R-12, R-13
 func TestParse_ValidSnapshot(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
-	if err != nil {
-		t.Fatalf("parseSnapshot: unexpected error: %v", err)
-	}
+	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
 	// Header must be found and named "Header" (Go's anonymous-embed convention).
 	if snap.HeaderVar == nil {
@@ -92,15 +86,7 @@ func TestParse_ValidSnapshot(t *testing.T) {
 // classifyShape function.
 // Covers: R-13
 func TestParse_ShapeClassification(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
-	if err != nil {
-		t.Fatalf("parseSnapshot: %v", err)
-	}
+	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
 	// Build a name→shape index for assertion.
 	shapes := make(map[string]FieldShape, len(snap.Fields))
@@ -138,12 +124,9 @@ func TestParse_ShapeClassification(t *testing.T) {
 // not exist in the loaded package produces a descriptive error.
 // Covers: R-12
 func TestParse_StructNotFound(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "valid")
 
-	_, err = parseSnapshot(pkgs, "DoesNotExist", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "DoesNotExist", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for missing struct, got nil")
 	}
@@ -177,12 +160,9 @@ func TestParse_NoHeader(t *testing.T) {
 // fields produces an error containing "multiple".
 // Covers: R-12
 func TestParse_MultipleHeaders(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/multi_header"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "multi_header")
 
-	_, err = parseSnapshot(pkgs, "DualHeaderSnapshot", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "DualHeaderSnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for struct with multiple Headers, got nil")
 	}
@@ -207,12 +187,9 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
-			pkgs, err := loadPackages([]string{"./testdata/parse/" + tc.fixture}, false)
-			if err != nil {
-				t.Fatalf("loadPackages: %v", err)
-			}
+			pkgs := loadFixture(t, tc.fixture)
 
-			_, err = parseSnapshot(pkgs, tc.structName, ParseOpts{})
+			_, err := parseSnapshot(pkgs, tc.structName, ParseOpts{})
 			if err == nil {
 				t.Fatalf("expected error for unsupported field shape in %s, got nil", tc.fixture)
 			}
@@ -228,15 +205,7 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 // fields require delta.omit) is enforced by T-02, not by the parser.
 // Covers: R-13
 func TestParse_MapField(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/with_map"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "MapSnapshot", ParseOpts{})
-	if err != nil {
-		t.Fatalf("parseSnapshot: unexpected error: %v", err)
-	}
+	snap := parseFixture(t, "with_map", "MapSnapshot", ParseOpts{})
 
 	if len(snap.Fields) != 1 {
 		t.Fatalf("Fields: got %d, want 1", len(snap.Fields))
@@ -252,10 +221,7 @@ func TestParse_MapField(t *testing.T) {
 // two exported ones should appear in cross-package mode.
 // Covers: R-10, E-12
 func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/mixed_exported"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "mixed_exported")
 
 	// Same-package parse: all three payload fields visible.
 	snapSame, err := parseSnapshot(pkgs, "MixedSnapshot", ParseOpts{})
@@ -296,10 +262,7 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 // observable behaviour for tag-conforming Snapshots.
 // Covers: R-12, R-13, R-14
 func TestParse_ParseOptsEquivalence(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "valid")
 
 	// Three invocations that must yield structurally-identical ParsedSnapshots:
 	//   a) zero value (tag path)
@@ -347,15 +310,7 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 // and exclude it from Fields (so the payload count stays at 8).
 // Covers: R-14, R-18
 func TestParse_KeyField_TagFoundStruct(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
-	if err != nil {
-		t.Fatalf("parseSnapshot: %v", err)
-	}
+	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
 	if snap.KeyVar == nil {
 		t.Fatal("KeyVar: got nil, want populated")
@@ -376,15 +331,7 @@ func TestParse_KeyField_TagFoundStruct(t *testing.T) {
 // any value-typed comparable type works — not just structs.
 // Covers: R-14, R-18
 func TestParse_KeyField_TagFoundScalar(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/scalar_key"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "ScalarKeySnapshot", ParseOpts{})
-	if err != nil {
-		t.Fatalf("parseSnapshot: %v", err)
-	}
+	snap := parseFixture(t, "scalar_key", "ScalarKeySnapshot", ParseOpts{})
 
 	if snap.KeyVar == nil {
 		t.Fatal("KeyVar: got nil, want populated for scalar key")
@@ -404,15 +351,7 @@ func TestParse_KeyField_TagFoundScalar(t *testing.T) {
 // only way to identify a key for that Snapshot.
 // Covers: R-14, R-18, E-13
 func TestParse_KeyField_OverrideOK(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/no_key"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
-	snap, err := parseSnapshot(pkgs, "NoKeySnapshot", ParseOpts{KeyFieldOverride: "Peer"})
-	if err != nil {
-		t.Fatalf("parseSnapshot with override: %v", err)
-	}
+	snap := parseFixture(t, "no_key", "NoKeySnapshot", ParseOpts{KeyFieldOverride: "Peer"})
 
 	if snap.KeyVar == nil {
 		t.Fatal("KeyVar: got nil, want populated via override")
@@ -430,12 +369,9 @@ func TestParse_KeyField_OverrideOK(t *testing.T) {
 // tag and without a CLI override is rejected with a descriptive error.
 // Covers: R-14
 func TestParse_KeyField_NoKey(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/no_key"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "no_key")
 
-	_, err = parseSnapshot(pkgs, "NoKeySnapshot", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "NoKeySnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for missing entity.key, got nil")
 	}
@@ -448,12 +384,9 @@ func TestParse_KeyField_NoKey(t *testing.T) {
 // in the same Snapshot produce an error containing "multiple".
 // Covers: R-14, R-18
 func TestParse_KeyField_MultiKey(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/multi_key"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "multi_key")
 
-	_, err = parseSnapshot(pkgs, "MultiKeySnapshot", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "MultiKeySnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for multiple entity.key fields, got nil")
 	}
@@ -468,12 +401,9 @@ func TestParse_KeyField_MultiKey(t *testing.T) {
 // to different EntityIDs.
 // Covers: R-14
 func TestParse_KeyField_Pointer(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/key_pointer"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "key_pointer")
 
-	_, err = parseSnapshot(pkgs, "PtrKeySnapshot", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "PtrKeySnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for pointer-typed entity.key, got nil")
 	}
@@ -488,12 +418,9 @@ func TestParse_KeyField_Pointer(t *testing.T) {
 // can locate the problem quickly.
 // Covers: R-14, R-18
 func TestParse_KeyField_NonComparable(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/key_with_slice"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "key_with_slice")
 
-	_, err = parseSnapshot(pkgs, "SliceyKeySnapshot", ParseOpts{})
+	_, err := parseSnapshot(pkgs, "SliceyKeySnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for non-comparable key struct, got nil")
 	}
@@ -509,12 +436,9 @@ func TestParse_KeyField_NonComparable(t *testing.T) {
 // a field not present in the struct produces a descriptive error.
 // Covers: R-14, E-13
 func TestParse_KeyField_OverrideMissing(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
+	pkgs := loadFixture(t, "valid")
 
-	_, err = parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "NoSuchField"})
+	_, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "NoSuchField"})
 	if err == nil {
 		t.Fatal("expected error for unknown override field, got nil")
 	}
@@ -530,18 +454,10 @@ func TestParse_KeyField_OverrideMissing(t *testing.T) {
 // --verbose warning.
 // Covers: R-14, E-13
 func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
-	if err != nil {
-		t.Fatalf("loadPackages: %v", err)
-	}
-
 	// ValidSnapshot has `Key UEKey \`eddt:"entity.key"\`` AND a comparable
 	// struct field `Location LocationInfo` (no tag). The override picks
 	// Location; Key is left in Fields as ordinary payload.
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Location"})
-	if err != nil {
-		t.Fatalf("parseSnapshot with override: %v", err)
-	}
+	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{KeyFieldOverride: "Location"})
 
 	if snap.KeyVar == nil {
 		t.Fatal("KeyVar: got nil, want populated via override")
@@ -566,6 +482,28 @@ func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
+
+// loadFixture loads the testdata/parse/<name> fixture package.
+func loadFixture(t *testing.T, name string) []*packages.Package {
+	t.Helper()
+	pkgs, err := loadPackages([]string{"./testdata/parse/" + name}, false)
+	if err != nil {
+		t.Fatalf("loadFixture(%q): %v", name, err)
+	}
+	return pkgs
+}
+
+// parseFixture loads then parses the given fixture+struct. Fatals on any error.
+// Use the direct loadPackages/parseSnapshot pair when the test asserts on errors.
+func parseFixture(t *testing.T, fixture, structName string, opts ParseOpts) *ParsedSnapshot {
+	t.Helper()
+	pkgs := loadFixture(t, fixture)
+	snap, err := parseSnapshot(pkgs, structName, opts)
+	if err != nil {
+		t.Fatalf("parseFixture(%q, %q): %v", fixture, structName, err)
+	}
+	return snap
+}
 
 // fieldNames returns the field names from a ParsedSnapshot for use in error
 // messages. It avoids importing fmt in the test output path.

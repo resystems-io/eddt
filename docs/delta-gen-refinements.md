@@ -547,6 +547,17 @@ checks.
   - Files: `internal/deltagen/generator.go`, `cmd/delta-gen/main.go`.
   - Tests: all existing tests pass unchanged.
 
+- [x] **G-10: Test fixture helpers in `parse_test.go` (refactor).** Adds two
+  helpers to eliminate the load-then-parse boilerplate repeated across Group F
+  and G tests: `loadFixture(t, name)` loads a named fixture; `parseFixture(t,
+  fixture, struct, opts)` loads then parses (fatals on error). Every happy-path
+  test migrates to `parseFixture`; error-asserting tests migrate to `loadFixture`
+  + direct `parseSnapshot`; `TestParse_NoHeader` (two-package load) and the
+  multi-invocation tests (`CrossPackageFilters`, `ParseOptsEquivalence`) keep
+  `loadFixture` + direct `parseSnapshot`. No behaviour change.
+  - Files: `internal/deltagen/parse_test.go`.
+  - Tests: all existing tests pass unchanged.
+
 ### Phase 3 — Tag Handling and Validation
 
 - [ ] **T-01: `eddt:` tag parser.** Parse four of the five tag
@@ -1185,3 +1196,4 @@ git commit).
 | 2026-05-16 | G-06                  | CLI `--key-field` plumbing implemented. `parseKeyFields` helper in `main.go` handles bare expansion, per-struct override, duplicate-bare error, and unrecognised-struct error. `Generator.KeyFields map[string]string` added; `Run()` populates `ParseOpts.KeyFieldOverride` per struct and emits a `--verbose` conflict warning when tag and override diverge. Six `parseKeyFields` unit tests + five CLI integration tests (incl. `os.Pipe` verbose-capture); `TestCLI_Help` updated. No `parse.go` or fixture changes.                                                                            |
 | 2026-05-16 | G-08                  | `fmt.Printf` verbose output migrated to `log/slog`. `Generator.Log *slog.Logger` + nil-safe `log()` helper added. Conflict warning now unconditional (`Warn` level); progress gated by handler level. All output routed to stderr. `TestCLI_KeyField_VerboseConflictWarning` migrated from stdout-pipe + `--verbose` to stderr-pipe + slog assertions.                                                                                                                                                                                                                                               |
 | 2026-05-16 | G-09                  | `Config` struct + `New(cfg Config)` constructor replace positional `NewGenerator`. `OutPkgNameOverride` lifted from `Run()` parameter to `Config`. `Run()` is now parameterless. `NewGenerator` deleted. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-05-16 | G-10                  | `loadFixture` and `parseFixture` helpers added to `parse_test.go`; load-then-parse boilerplate eliminated from all Group F / G tests. `TestParse_NoHeader` (two-package load) stays direct. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                                     |
