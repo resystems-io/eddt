@@ -4,45 +4,46 @@ package deltagen
 // named Snapshot struct into a structured description that the tag-handling
 // (T-01 through T-03) and emit (Phase 4) stages consume.
 //
-// # What this file does
+// # The parse pipeline
 //
-// Given the type-checked packages from the load stage and the name of the
-// target Snapshot struct, parseSnapshot:
+// Callers invoke `parseSnapshot` once per target struct, passing a `ParseOpts`
+// carrier that conveys cross-package mode and (in G-04 onward) the optional
+// CLI key-field override. Internally parseSnapshot runs four steps:
 //
-//  1. Resolves the runtime.Header type object from the transitive package
-//     closure. The Header field is recognised by type identity, not by name,
-//     so that aliased imports ("import eddt go.resystems.io/eddt/runtime")
-//     are handled correctly.
+//  1. headerTypeFor — resolve the runtime.Header type from the transitive
+//     package closure. The Header field is recognised by *type identity*, not
+//     by name, so that aliased imports
+//     ("import eddt go.resystems.io/eddt/runtime") work correctly.
 //
-//  2. Finds the named struct in the top-level packages' scopes. The struct
-//     must be exported; an unexported or missing name is an error.
+//  2. findNamedStruct — locate the named struct in the top-level packages'
+//     scopes. The struct must exist and be a named struct type.
 //
-//  3. Walks the struct's fields, separating the single embedded runtime.Header
-//     from payload fields. Exactly one Header field is required; zero or more
-//     than one is a generation-time error.
+//  3. walkFields — walk the struct's fields exactly once, separating the
+//     single embedded runtime.Header from the candidate payload fields.
+//     In cross-package mode (ParseOpts.CrossPackage == true), unexported
+//     fields are silently dropped because they are inaccessible from
+//     outside the source package (E-12). Each candidate field's Go type is
+//     classified into one of five shapes (scalar, pointer, struct value,
+//     slice, map); function, channel, and interface fields are rejected.
 //
-//  4. In cross-package mode (Generator.CrossPackage == true), unexported
-//     payload fields are silently dropped before the result is returned,
-//     because they are inaccessible from outside the source package (E-12).
-//
-//  5. Classifies each remaining payload field's Go type into one of five
-//     shapes. Unsupported types (function, channel, interface) are rejected
-//     with a descriptive error. Map types are classified as ShapeMap and
-//     returned without error; the tag-combination constraint (maps require
-//     delta.omit) is enforced separately by T-02.
+//  4. Result assembly — the ParsedSnapshot is returned with HeaderVar and
+//     Fields populated. KeyVar is left nil; the G-04 parseKeyField step
+//     (added by a later refinement) will identify the entity.key field
+//     among the candidates and move it out of Fields into KeyVar.
 //
 // # What this file does NOT do
 //
-// Tag parsing, tag-combination validation, and entity.key field recognition
-// are separate concerns delivered by G-04 (key field parser) and T-01 through
-// T-03 (tag handling). This file records only the raw eddt: tag string so
-// those stages can act on it.
+// Tag parsing and tag-combination validation are separate concerns delivered
+// by T-01 through T-03. This file records only the raw eddt: tag string so
+// those stages can act on it. Key-field semantic validation (presence,
+// struct-of-comparable-fields) is delivered by G-04.
 //
 // # Exported surface
 //
-// Only the result types (ParsedSnapshot, ParsedField, FieldShape and its
-// constants) are exported; all functions are package-private. The exported
-// types are consumed by generator.go and by the parse and emit stages.
+// Only the result types (`ParsedSnapshot`, `ParsedField`, `FieldShape` and
+// its constants) and the options carrier (`ParseOpts`) are exported. All
+// functions are package-private. The exported types are consumed by
+// generator.go and by the emit stage.
 
 import (
 	"fmt"
@@ -130,19 +131,58 @@ type ParsedSnapshot struct {
 	// generated Apply/Diff calls (s.<HeaderVar.Name()>.EntityID, etc.).
 	HeaderVar *types.Var
 
+	// KeyVar is the types.Var for the field that carries the
+	// eddt:"entity.key" tag (or the field named by ParseOpts.KeyFieldOverride).
+	// Nil after parseSnapshot returns in the current refinement step (G-07);
+	// G-04 will populate it as part of an internal parseKeyField step and
+	// move the corresponding entry out of Fields.
+	KeyVar *types.Var
+
 	// Fields is the list of payload fields in source declaration order,
 	// with the embedded Header and (in cross-package mode) unexported fields
-	// already removed.
+	// already removed. Once G-04 lands, the entity.key field is also excluded
+	// from Fields and surfaced via KeyVar instead.
 	Fields []ParsedField
 }
 
-// parseSnapshot resolves and parses the Snapshot struct named structName from
-// the loaded packages. It is the top-level entry point for the parse stage.
+// ParseOpts is the options carrier accepted by parseSnapshot. It encapsulates
+// per-invocation tuning so that the function's positional signature does not
+// grow as new parsing concerns land (key-field override in G-04 / G-06,
+// future tag-validation hooks, etc.).
 //
-// pkgs must be the result of loadPackages (NeedDeps set), so that the eddt
-// runtime package is reachable via FindPkgByPath. crossPackage must match
-// Generator.CrossPackage so that unexported fields are filtered correctly.
-func parseSnapshot(pkgs []*packages.Package, structName string, crossPackage bool) (*ParsedSnapshot, error) {
+// The zero value (`ParseOpts{}`) is a valid configuration: same-package mode,
+// no override. Callers should construct named-field literals so that future
+// additions remain backward-compatible.
+type ParseOpts struct {
+	// CrossPackage is true when the generator output package differs from
+	// the source package (E-12). It instructs walkFields to silently drop
+	// unexported fields, which would otherwise be inaccessible from the
+	// generated code.
+	CrossPackage bool
+
+	// KeyFieldOverride names the field in the Snapshot struct that should
+	// be treated as the entity-key field, bypassing the eddt:"entity.key"
+	// tag scan. The empty string selects tag-based discovery.
+	//
+	// Populated by the CLI layer in G-06 from --key-field; consumed by
+	// G-04's parseKeyField step. G-07 (this refinement) carries the field
+	// through the signature but does not act on it; the value is ignored
+	// until G-04 lands.
+	KeyFieldOverride string
+}
+
+// parseSnapshot resolves and parses the Snapshot struct named structName from
+// the loaded packages. It is the single top-level entry point for the parse
+// stage; the caller never needs to invoke any other helper from this file.
+//
+// pkgs must be the result of loadPackages (NeedDeps set) so that the eddt
+// runtime package is reachable via FindPkgByPath. opts carries cross-package
+// mode and (post-G-04) the optional CLI key-field override.
+//
+// Returned ParsedSnapshot has HeaderVar and Fields populated. KeyVar is nil
+// at this refinement step (G-07); a subsequent refinement (G-04) will add a
+// parseKeyField step that fills KeyVar and removes the key from Fields.
+func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) (*ParsedSnapshot, error) {
 	// Step 1: resolve the runtime.Header type for identity-based recognition.
 	// We compare by type identity rather than field name so that aliased
 	// imports (e.g. "import eddt go.resystems.io/eddt/runtime") work correctly.
@@ -157,40 +197,94 @@ func parseSnapshot(pkgs []*packages.Package, structName string, crossPackage boo
 		return nil, err
 	}
 
-	// Step 3: walk the struct's fields.
-	// For each field: if its type is runtime.Header record it as the envelope;
-	// otherwise classify its shape and add it to the payload list.
+	// Step 3: walk the struct's fields once, separating the Header envelope
+	// from candidate payload fields. walkFields applies cross-package
+	// unexported-field filtering and rejects unsupported field shapes.
 	st := named.Underlying().(*types.Struct)
-	var headerVar *types.Var
-	var fields []ParsedField
+	headerVar, fields, err := walkFields(st, structName, headerType, opts)
+	if err != nil {
+		return nil, err
+	}
 
+	// Step 4: require exactly one embedded Header. walkFields rejects more
+	// than one; the remaining failure mode is total absence.
+	if headerVar == nil {
+		return nil, fmt.Errorf(
+			"struct %q has no embedded runtime.Header field; a conforming Snapshot must embed exactly one Header",
+			structName)
+	}
+
+	// G-04 hook: a future refinement will call parseKeyField here to identify
+	// the entity.key field among `fields` and move it into KeyVar. Until then
+	// the override carried by opts.KeyFieldOverride is ignored; the field is
+	// retained as a no-op to keep the call-site signature stable across the
+	// G-07 → G-04 transition.
+
+	return &ParsedSnapshot{
+		Name:      structName,
+		PkgPath:   pkg.PkgPath,
+		PkgName:   pkg.Name,
+		HeaderVar: headerVar,
+		Fields:    fields,
+	}, nil
+}
+
+// walkFields walks the fields of st exactly once, returning the embedded
+// runtime.Header field separately from the candidate payload fields. It is
+// the internal helper that step 3 of parseSnapshot delegates to.
+//
+// Responsibilities:
+//
+//   - Identify the embedded runtime.Header field by type identity (compared
+//     against headerType). Multiple Header fields are an error.
+//   - In cross-package mode (opts.CrossPackage), silently drop unexported
+//     fields — they are inaccessible from the generated code.
+//   - Classify each non-Header field's Go type via classifyShape and reject
+//     unsupported shapes (function, channel, interface).
+//   - Capture each candidate's raw eddt: tag string verbatim for downstream
+//     consumers (G-04 key-field discovery, T-01 tag parsing).
+//
+// The candidate slice may include a field tagged eddt:"entity.key"; G-04's
+// parseKeyField will subsequently remove it. walkFields itself is tag-blind
+// — it does not interpret the captured RawTag strings.
+//
+// structName is supplied only for error-message context; it is not used in
+// any structural decision.
+func walkFields(
+	st *types.Struct,
+	structName string,
+	headerType types.Type,
+	opts ParseOpts,
+) (header *types.Var, fields []ParsedField, err error) {
 	for i := 0; i < st.NumFields(); i++ {
 		field := st.Field(i)
 
-		// Cross-package mode: drop unexported fields — they are inaccessible
+		// Cross-package mode: drop unexported fields. They are inaccessible
 		// from outside the source package and must not appear in generated code.
-		if crossPackage && !field.Exported() {
+		if opts.CrossPackage && !field.Exported() {
 			continue
 		}
 
 		// Identify the embedded runtime.Header field by type identity.
+		// Multiple Headers are a generation-time error (E-10 / R-12).
 		if types.Identical(field.Type(), headerType) {
-			if headerVar != nil {
-				return nil, fmt.Errorf(
+			if header != nil {
+				return nil, nil, fmt.Errorf(
 					"struct %q has multiple embedded runtime.Header fields; exactly one is required",
 					structName)
 			}
-			headerVar = field
+			header = field
 			continue
 		}
 
-		// Classify the payload field's shape.
+		// Classify the payload field's structural Go-type shape.
 		shape, err := classifyShape(field.Type())
 		if err != nil {
-			return nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
+			return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
 		}
 
-		// Extract the raw eddt: struct tag (empty string if no eddt: tag).
+		// Capture the raw eddt: tag string verbatim. Tag parsing is a
+		// separate concern (G-04 / T-01); walkFields stores only the string.
 		rawTag := reflect.StructTag(st.Tag(i)).Get("eddt")
 
 		fields = append(fields, ParsedField{
@@ -202,20 +296,7 @@ func parseSnapshot(pkgs []*packages.Package, structName string, crossPackage boo
 		})
 	}
 
-	// Step 4: require exactly one embedded Header.
-	if headerVar == nil {
-		return nil, fmt.Errorf(
-			"struct %q has no embedded runtime.Header field; a conforming Snapshot must embed exactly one Header",
-			structName)
-	}
-
-	return &ParsedSnapshot{
-		Name:      structName,
-		PkgPath:   pkg.PkgPath,
-		PkgName:   pkg.Name,
-		HeaderVar: headerVar,
-		Fields:    fields,
-	}, nil
+	return header, fields, nil
 }
 
 // headerTypeFor returns the types.Type for runtime.Header by resolving the

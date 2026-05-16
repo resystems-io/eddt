@@ -9,8 +9,9 @@
 //
 //   - Load    (G-02): resolve the input package(s) with golang.org/x/tools/go/packages.
 //   - Resolve (G-05): determine the output package name and cross-package mode.
-//   - Parse   (G-03/G-04): walk the loaded types to find the Snapshot struct, its
-//     embedded runtime.Header, its entity.key field, and its payload fields.
+//   - Parse   (G-03 / G-07 / G-04): walk the loaded types to find the Snapshot
+//     struct, its embedded runtime.Header, its entity.key field, and its
+//     payload fields. Driven by `parseSnapshot(pkgs, name, ParseOpts{...})`.
 //   - Emit    (Phase 4): render the Delta type and function bodies via text/template.
 package deltagen
 
@@ -66,11 +67,13 @@ func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose boo
 //
 // The pipeline has four stages; each is implemented in its own file:
 //
-//   - Load    (load.go, G-02):      resolve --pkg arguments into type-checked packages.
-//   - Resolve (load.go, G-05):      determine output package name and cross-package mode.
-//   - Parse   (parse.go, G-03/G-04): find the Snapshot struct, its embedded
-//     runtime.Header, its entity.key field, and classify payload fields.
-//   - Emit    (template.go, Phase 4): render the Delta type and Apply / Diff /
+//   - Load    (load.go, G-02):           resolve --pkg arguments into type-checked packages.
+//   - Resolve (load.go, G-05):           determine output package name and cross-package mode.
+//   - Parse   (parse.go, G-03 / G-07 / G-04):
+//     a single `parseSnapshot(pkgs, name, ParseOpts{...})` call per target
+//     struct identifies the embedded runtime.Header, classifies payload
+//     fields, and (post-G-04) extracts the entity.key field.
+//   - Emit    (template.go, Phase 4):    render the Delta type and Apply / Diff /
 //     Coalesce / EntityID function bodies via text/template; emit method wrappers
 //     when CrossPackage is false.
 func (g *Generator) Run(outPkgNameOverride string) error {
@@ -99,11 +102,17 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		}
 	}
 
-	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot (G-03).
-	// G-04 (key field parser) and the emit stage are not yet implemented;
-	// the loop below confirms parsing succeeds and stops before key-field work.
+	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot
+	// (G-03 / G-07). The G-04 internal step (parseKeyField) is not yet wired
+	// in; until it is, ParsedSnapshot.KeyVar is left nil and the
+	// KeyFieldOverride hook on ParseOpts carries through unconsumed.
+	opts := ParseOpts{
+		CrossPackage: g.CrossPackage,
+		// KeyFieldOverride is populated by G-06 from g.KeyFields[structName]
+		// in a later refinement; the empty value selects tag-based discovery.
+	}
 	for _, structName := range g.TargetStructs {
-		_, err := parseSnapshot(pkgs, structName, g.CrossPackage)
+		_, err := parseSnapshot(pkgs, structName, opts)
 		if err != nil {
 			return err
 		}

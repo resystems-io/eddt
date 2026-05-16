@@ -397,7 +397,7 @@ checks.
   - Tests: `internal/deltagen/parse_test.go` — fixture Snapshots
     covering every shape in §3.2.
 
-- [ ] **G-07: Phase 2 parse-stage refactor.** Lay down the
+- [x] **G-07: Phase 2 parse-stage refactor.** Lay down the
   architecture Phase 2 needs as a coherent whole before adding
   key-field semantics. This is a **pure mechanical refactor with
   no behavior change** — all existing G-03 tests must still pass
@@ -1137,3 +1137,4 @@ git commit).
 | 2026-05-16 | G-03                  | Snapshot type parser: `parseSnapshot`, `classifyShape`, `headerTypeFor`, `findNamedStruct` in `parse.go`; `ParsedSnapshot`, `ParsedField`, `FieldShape` types; 8 Group F tests across 8 fixture packages; `generator.go` `Run()` wired to call parse stage per struct; `TestCLI_NotYetImplemented` updated to reflect G-04 as next sentinel.                                                                                                                          |
 | 2026-05-16 | E-13, G-06            | Spec gap filed: `eddt:"entity.key"` tags cannot be added to upstream/vendored Snapshot structs. G-06 plan added: repeatable `--key-field` flag accepting bare `FieldName` (all structs) or `StructName=FieldName` (per-struct) forms; field-name chosen over type-name to avoid positional ambiguity; CLI value takes precedence over tag when both present.                                                                                                          |
 | 2026-05-16 | G-07, G-04, G-06 plan | Phase 2 architecture reworked. New G-07 step (pure mechanical refactor) lands `ParseOpts` options struct, `ParsedSnapshot.KeyVar` slot, and a `walkFields` helper before G-04 adds key-field semantics. G-04 then moves the entity.key field out of `Fields` into `KeyVar` (so emit-stage payload loops don't need to filter it) and accepts an override via `ParseOpts.KeyFieldOverride`. G-06 is now pure CLI plumbing — no `parse.go` changes, no fixture changes. |
+| 2026-05-16 | G-07                  | Implemented: `ParseOpts{CrossPackage, KeyFieldOverride}` carrier; `parseSnapshot` now takes opts as third arg; `walkFields` extracted as internal helper; `ParsedSnapshot.KeyVar` field added (nil until G-04). New `TestParse_ParseOptsEquivalence` exercises the zero-value / explicit / override-ignored equivalence guarantees. Stale "G-03/G-04" parse-stage comments updated. All module tests pass; build, idempotency, and dependency-edge verified.          |

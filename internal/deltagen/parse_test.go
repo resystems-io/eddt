@@ -1,6 +1,9 @@
 package deltagen
 
-// parse_test.go exercises the Snapshot type parser (G-03) in a single group.
+// parse_test.go exercises the Snapshot type parser introduced in G-03 and
+// reshaped in G-07 (ParseOpts option carrier; walkFields helper). Tests at
+// this refinement level focus on structural parsing only; key-field semantics
+// land in G-04 with their own Group G test family.
 //
 // # Group F: Snapshot type parser
 //
@@ -12,7 +15,10 @@ package deltagen
 //   F.4 Unsupported field shapes — func, chan, interface each rejected.
 //   F.5 Map field — classified as ShapeMap without error (T-02 validates tag).
 //   F.6 Cross-package field filtering — unexported fields excluded when
-//       crossPackage is true.
+//       ParseOpts.CrossPackage is true.
+//   F.7 Default ParseOpts equivalence — the zero value of ParseOpts behaves
+//       identically to explicit CrossPackage: false; KeyFieldOverride is
+//       carried through unconsumed (G-04 will consume it).
 //
 // All tests load fixtures from the testdata/parse/ tree. Because the fixtures
 // live within the eddt module, packages.Load resolves go.resystems.io/eddt/runtime
@@ -36,7 +42,7 @@ func TestParse_ValidSnapshot(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", false)
+	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
 	if err != nil {
 		t.Fatalf("parseSnapshot: unexpected error: %v", err)
 	}
@@ -76,7 +82,7 @@ func TestParse_ShapeClassification(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	snap, err := parseSnapshot(pkgs, "ValidSnapshot", false)
+	snap, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
 	if err != nil {
 		t.Fatalf("parseSnapshot: %v", err)
 	}
@@ -122,7 +128,7 @@ func TestParse_StructNotFound(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	_, err = parseSnapshot(pkgs, "DoesNotExist", false)
+	_, err = parseSnapshot(pkgs, "DoesNotExist", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for missing struct, got nil")
 	}
@@ -143,7 +149,7 @@ func TestParse_NoHeader(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	_, err = parseSnapshot(pkgs, "PlainStruct", false)
+	_, err = parseSnapshot(pkgs, "PlainStruct", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for struct without Header, got nil")
 	}
@@ -161,7 +167,7 @@ func TestParse_MultipleHeaders(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	_, err = parseSnapshot(pkgs, "DualHeaderSnapshot", false)
+	_, err = parseSnapshot(pkgs, "DualHeaderSnapshot", ParseOpts{})
 	if err == nil {
 		t.Fatal("expected error for struct with multiple Headers, got nil")
 	}
@@ -191,7 +197,7 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 				t.Fatalf("loadPackages: %v", err)
 			}
 
-			_, err = parseSnapshot(pkgs, tc.structName, false)
+			_, err = parseSnapshot(pkgs, tc.structName, ParseOpts{})
 			if err == nil {
 				t.Fatalf("expected error for unsupported field shape in %s, got nil", tc.fixture)
 			}
@@ -212,7 +218,7 @@ func TestParse_MapField(t *testing.T) {
 		t.Fatalf("loadPackages: %v", err)
 	}
 
-	snap, err := parseSnapshot(pkgs, "MapSnapshot", false)
+	snap, err := parseSnapshot(pkgs, "MapSnapshot", ParseOpts{})
 	if err != nil {
 		t.Fatalf("parseSnapshot: unexpected error: %v", err)
 	}
@@ -237,7 +243,7 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 	}
 
 	// Same-package parse: all three payload fields visible.
-	snapSame, err := parseSnapshot(pkgs, "MixedSnapshot", false)
+	snapSame, err := parseSnapshot(pkgs, "MixedSnapshot", ParseOpts{})
 	if err != nil {
 		t.Fatalf("parseSnapshot (same-pkg): %v", err)
 	}
@@ -247,7 +253,7 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 	}
 
 	// Cross-package parse: only exported fields visible.
-	snapCross, err := parseSnapshot(pkgs, "MixedSnapshot", true)
+	snapCross, err := parseSnapshot(pkgs, "MixedSnapshot", ParseOpts{CrossPackage: true})
 	if err != nil {
 		t.Fatalf("parseSnapshot (cross-pkg): %v", err)
 	}
@@ -259,6 +265,58 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 		if !isExported(f.Name) {
 			t.Errorf("cross-pkg: unexported field %q present in result", f.Name)
 		}
+	}
+}
+
+// TestParse_ParseOptsEquivalence verifies that the ParseOpts options carrier
+// behaves as designed in G-07:
+//
+//   - The zero value `ParseOpts{}` is equivalent to `ParseOpts{CrossPackage: false}`.
+//   - `KeyFieldOverride` is carried through but ignored at this refinement
+//     step (G-04 will consume it). Passing a non-empty override must not
+//     affect the result of structural parsing.
+//
+// These guarantees are what keep the call-site signature stable across the
+// G-07 → G-04 → G-06 sequence: G-04 can later interpret KeyFieldOverride
+// without changing any existing G-07-era invocation.
+// Covers: R-12, R-13
+func TestParse_ParseOptsEquivalence(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	// Three invocations that must yield structurally-identical ParsedSnapshots:
+	//   a) zero value
+	//   b) explicit same-package mode
+	//   c) explicit same-package mode plus an arbitrary KeyFieldOverride (ignored)
+	a, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
+	if err != nil {
+		t.Fatalf("zero opts: %v", err)
+	}
+	b, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{CrossPackage: false})
+	if err != nil {
+		t.Fatalf("explicit CrossPackage false: %v", err)
+	}
+	c, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Bearer"})
+	if err != nil {
+		t.Fatalf("with KeyFieldOverride: %v", err)
+	}
+
+	for _, snap := range []*ParsedSnapshot{a, b, c} {
+		if snap.HeaderVar == nil {
+			t.Errorf("HeaderVar nil; expected populated")
+		}
+		// G-07 contract: KeyVar is always nil at this refinement step.
+		if snap.KeyVar != nil {
+			t.Errorf("KeyVar = %v; expected nil at G-07", snap.KeyVar)
+		}
+	}
+
+	// Field counts must match across the three invocations.
+	if len(a.Fields) != len(b.Fields) || len(b.Fields) != len(c.Fields) {
+		t.Errorf("Fields counts diverge: zero=%d, explicit=%d, override=%d",
+			len(a.Fields), len(b.Fields), len(c.Fields))
 	}
 }
 
