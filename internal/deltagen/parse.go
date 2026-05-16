@@ -93,8 +93,10 @@ type ParsedField struct {
 	Name string
 
 	// RawTag is the raw value of the eddt: struct tag, empty when the field
-	// carries no eddt: tag. Tag parsing and validation are performed by G-04
-	// and T-01 through T-03; this stage only records the raw string.
+	// carries no eddt: tag. The structured parser (parseTag in tag.go, T-01)
+	// converts this string into a ParsedTag; T-02 wires it into walkFields
+	// for combination and shape validation; T-03 migrates parseKeyField and
+	// the generator conflict warning to use ParsedTag.Kind directly.
 	RawTag string
 
 	// Shape is the classified Go type shape of the field.
