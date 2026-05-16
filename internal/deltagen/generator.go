@@ -24,6 +24,8 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // Config holds every caller-supplied input for a single delta-gen invocation.
@@ -139,31 +141,49 @@ func (g *Generator) log() *slog.Logger {
 //   - Emit    (template.go): render the Delta type and function bodies via
 //     text/template; emit method wrappers when CrossPackage is false.
 func (g *Generator) Run() error {
-	// Stage 1 — Load: resolve all --pkg arguments into *packages.Package values.
-	// Filesystem paths and Go import paths are handled separately; see load.go
-	// for the two-phase loading strategy and the rationale for NeedDeps.
-	pkgs, err := loadPackages(g.InputPkgs, g.Verbose)
+	pkgs, err := g.loadStage()
 	if err != nil {
 		return err
 	}
 
-	g.log().Info("loaded packages", "count", len(pkgs))
+	g.resolveStage(pkgs)
 
-	// Stage 1.5 — Resolve: determine output package name and cross-package mode.
-	// CrossPackage is true when --pkg-name differs from the source package name;
-	// downstream stages use it to exclude unexported fields and omit method wrappers.
+	snapshots, err := g.parseStage(pkgs)
+	if err != nil {
+		return err
+	}
+
+	return g.emitStage(snapshots)
+}
+
+// loadStage resolves all --pkg arguments into type-checked *packages.Package
+// values using the two-phase loading strategy in load.go.
+func (g *Generator) loadStage() ([]*packages.Package, error) {
+	pkgs, err := loadPackages(g.InputPkgs, g.Verbose)
+	if err != nil {
+		return nil, err
+	}
+	g.log().Info("loaded packages", "count", len(pkgs))
+	return pkgs, nil
+}
+
+// resolveStage determines the output package name and cross-package mode.
+// CrossPackage is true when --pkg-name differs from the source package name;
+// downstream stages use it to exclude unexported fields and omit method wrappers.
+func (g *Generator) resolveStage(pkgs []*packages.Package) {
 	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, g.OutPkgNameOverride)
 	if g.CrossPackage {
 		g.log().Info("cross-package mode", "output_pkg", g.OutPkgName, "source_pkg", pkgs[0].Name)
 	} else {
 		g.log().Info("output package", "name", g.OutPkgName)
 	}
+}
 
-	// Stage 2 — Parse: resolve each target struct into a ParsedSnapshot
-	// (G-03 / G-07 / G-04 / G-06). The ParsedSnapshot carries HeaderVar,
-	// KeyVar, and the payload Fields ready for tag handling and emission.
-	// KeyFieldOverride is populated from g.KeyFields[structName] (G-06);
-	// an absent entry (empty string) selects tag-based discovery.
+// parseStage resolves each target struct into a ParsedSnapshot. KeyFieldOverride
+// is populated from g.KeyFields per struct; an absent entry selects tag-based
+// discovery. A Warn is emitted when a CLI override supersedes an entity.key tag.
+func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, error) {
+	snapshots := make([]*ParsedSnapshot, 0, len(g.TargetStructs))
 	for _, structName := range g.TargetStructs {
 		opts := ParseOpts{
 			CrossPackage:     g.CrossPackage,
@@ -171,14 +191,12 @@ func (g *Generator) Run() error {
 		}
 		ps, err := parseSnapshot(pkgs, structName, opts)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		// Conflict warning (G-06 / G-08): when --key-field names a different field
-		// than the eddt:"entity.key" tag, the override wins. The tagged-but-overridden
-		// field falls back into ps.Fields (G-04 contract); detect the conflict by
-		// scanning for RawTag == "entity.key" after the parse. Warn unconditionally
-		// (Warn level fires regardless of --verbose; the handler level gates it).
+		// Conflict warning: when --key-field overrides a tagged entity.key field,
+		// the tagged field falls back into ps.Fields (G-04 contract). Detect and
+		// warn unconditionally so the Snapshot author is informed.
 		if g.KeyFields[structName] != "" {
 			for _, f := range ps.Fields {
 				if f.RawTag == "entity.key" {
@@ -192,8 +210,13 @@ func (g *Generator) Run() error {
 		}
 
 		g.log().Info("parsed struct", "name", structName)
+		snapshots = append(snapshots, ps)
 	}
+	return snapshots, nil
+}
 
-	// Stage 3 — Tag handling (Phase 3): not yet implemented.
+// emitStage renders the Delta type and associated functions for each snapshot.
+// Tag handling (Phase 3) and code emission (Phase 4) are not yet implemented.
+func (g *Generator) emitStage(_ []*ParsedSnapshot) error {
 	return fmt.Errorf("delta-gen: tag parser not yet implemented")
 }

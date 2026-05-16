@@ -572,11 +572,12 @@ checks.
     `internal/deltagen/parse_lookup.go` (new).
   - Tests: all existing tests pass unchanged.
 
-- [ ] **G-12: Extract stage methods from `Run()` (refactor).** Decomposes
+- [x] **G-12: Extract stage methods from `Run()` (refactor).** Decomposes
   `Run()` into four single-responsibility private methods — `loadStage`,
   `resolveStage`, `parseStage`, `emitStage` — retaining `Run()` as an
-  orchestrating shell. `parseStage` must surface the `[]*ParsedSnapshot` slice
-  it already computes (currently discarded). No behaviour change.
+  orchestrating shell. `parseStage` surfaces the `[]*ParsedSnapshot` slice it
+  builds (previously discarded) so future stages can consume it. No behaviour
+  change.
   - Files: `internal/deltagen/generator.go`.
   - Tests: all existing tests pass unchanged.
 
@@ -1220,3 +1221,4 @@ git commit).
 | 2026-05-16 | G-09                  | `Config` struct + `New(cfg Config)` constructor replace positional `NewGenerator`. `OutPkgNameOverride` lifted from `Run()` parameter to `Config`. `Run()` is now parameterless. `NewGenerator` deleted. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                        |
 | 2026-05-16 | G-10                  | `loadFixture` and `parseFixture` helpers added to `parse_test.go`; load-then-parse boilerplate eliminated from all Group F / G tests. `TestParse_NoHeader` (two-package load) stays direct. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                                     |
 | 2026-05-16 | G-11                  | `parse.go` split into four files: `parse.go` (orchestration only), `parse_fields.go` (`walkFields`, `classifyShape`), `parse_key.go` (`parseKeyField`), `parse_lookup.go` (`headerTypeFor`, `findNamedStruct`, `runtimePkgImportPath`). Pure mechanical rearrangement — no symbol changes, no behaviour change.                                                                                                                                                                                                                                                                                      |
+| 2026-05-16 | G-12                  | `Run()` decomposed into `loadStage`, `resolveStage`, `parseStage`, `emitStage` private methods; `Run()` is now an orchestrating shell. `parseStage` surfaces `[]*ParsedSnapshot` (previously discarded). No behaviour change.                                                                                                                                                                                                                                                                                                                                                                        |

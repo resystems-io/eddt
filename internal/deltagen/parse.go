@@ -231,4 +231,3 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 		Fields:    fields,
 	}, nil
 }
-
