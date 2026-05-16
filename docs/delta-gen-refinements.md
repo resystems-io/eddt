@@ -537,6 +537,16 @@ checks.
   - Tests: all existing tests pass; `TestCLI_KeyField_VerboseConflictWarning`
     migrated to slog text-format assertions.
 
+- [x] **G-09: `Config` struct constructor; `OutPkgNameOverride` field (refactor).**
+  Replaces the positional `NewGenerator(...)` + post-construction field
+  assignments with `New(cfg Config) *Generator` taking a `Config` struct that
+  carries all input fields. Lifts `outPkgNameOverride` from `Run()` parameter to
+  `Config.OutPkgNameOverride`; `Run()` becomes parameterless. `NewGenerator`
+  deleted (internal package, single caller). CLI (`main.go`) updated to use the
+  single `deltagen.New(deltagen.Config{...})` call. No behaviour change.
+  - Files: `internal/deltagen/generator.go`, `cmd/delta-gen/main.go`.
+  - Tests: all existing tests pass unchanged.
+
 ### Phase 3 — Tag Handling and Validation
 
 - [ ] **T-01: `eddt:` tag parser.** Parse four of the five tag
@@ -1174,3 +1184,4 @@ git commit).
 | 2026-05-16 | E-10, G-04            | E-10 working assumption relaxed: entity-key field may be any value-typed comparable type (basic, named basic, or struct of comparable fields), not struct only. G-04 implemented: `parseKeyField` selects the key via tag scan or `ParseOpts.KeyFieldOverride`; rejects pointer (identity != value equality), slice, and map types; struct-key errors name the offending sub-field. Override wins over tag; tagged-but-overridden field falls back into payload. Nine Group G tests; three existing fixtures updated, five new fixtures added (incl. `scalar_key/` for the relaxed-acceptance path). |
 | 2026-05-16 | G-06                  | CLI `--key-field` plumbing implemented. `parseKeyFields` helper in `main.go` handles bare expansion, per-struct override, duplicate-bare error, and unrecognised-struct error. `Generator.KeyFields map[string]string` added; `Run()` populates `ParseOpts.KeyFieldOverride` per struct and emits a `--verbose` conflict warning when tag and override diverge. Six `parseKeyFields` unit tests + five CLI integration tests (incl. `os.Pipe` verbose-capture); `TestCLI_Help` updated. No `parse.go` or fixture changes.                                                                            |
 | 2026-05-16 | G-08                  | `fmt.Printf` verbose output migrated to `log/slog`. `Generator.Log *slog.Logger` + nil-safe `log()` helper added. Conflict warning now unconditional (`Warn` level); progress gated by handler level. All output routed to stderr. `TestCLI_KeyField_VerboseConflictWarning` migrated from stdout-pipe + `--verbose` to stderr-pipe + slog assertions.                                                                                                                                                                                                                                               |
+| 2026-05-16 | G-09                  | `Config` struct + `New(cfg Config)` constructor replace positional `NewGenerator`. `OutPkgNameOverride` lifted from `Run()` parameter to `Config`. `Run()` is now parameterless. `NewGenerator` deleted. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                        |

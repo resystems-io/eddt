@@ -61,11 +61,18 @@ Example usage:
 				log.Info("output package override", "pkg_name", outPkgName)
 			}
 
-			gen := deltagen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
-			gen.Version = vcsRevision()
-			gen.KeyFields = keyFields
-			gen.Log = log
-			if err := gen.Run(outPkgName); err != nil {
+			gen := deltagen.New(deltagen.Config{
+				InputPkgs:          inputPkgs,
+				TargetStructs:      targetStructs,
+				OutPath:            outPath,
+				Verbose:            verbose,
+				PkgAliases:         pkgAliases,
+				Version:            vcsRevision(),
+				KeyFields:          keyFields,
+				Log:                log,
+				OutPkgNameOverride: outPkgName,
+			})
+			if err := gen.Run(); err != nil {
 				return err
 			}
 			fmt.Printf("Successfully generated %s\n", outPath)

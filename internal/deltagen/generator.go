@@ -26,8 +26,10 @@ import (
 	"sync"
 )
 
-// Generator holds the configuration for a single delta-gen invocation.
-type Generator struct {
+// Config holds every caller-supplied input for a single delta-gen invocation.
+// Pass it to New to obtain a Generator ready to Run. Derived state (OutPkgName,
+// CrossPackage) is computed by Run and is not part of Config.
+type Config struct {
 	// InputPkgs is the list of Go import paths or filesystem paths that contain
 	// the target Snapshot struct. Corresponds to the --pkg flag.
 	InputPkgs []string
@@ -39,7 +41,8 @@ type Generator struct {
 	// OutPath is the filesystem path of the file to write. Corresponds to --out.
 	OutPath string
 
-	// Verbose enables progress logging to stdout. Corresponds to --verbose.
+	// Verbose enables progress logging at Info level. Corresponds to --verbose.
+	// The slog handler level is set from this value by the CLI layer.
 	Verbose bool
 
 	// PkgAliases is the raw list of "importpath=alias" mappings. Corresponds to
@@ -47,40 +50,62 @@ type Generator struct {
 	PkgAliases []string
 
 	// Version is the short VCS revision embedded in the generated file header.
-	// Set by the caller (cmd/delta-gen) from debug.BuildInfo; may be empty.
+	// Set from debug.BuildInfo by the CLI layer; may be empty.
 	Version string
 
-	// OutPkgName is the resolved output package name — from --pkg-name when
-	// supplied, otherwise auto-detected from the first source package. Set by
-	// Run after the load stage; zero-value before Run is called.
+	// KeyFields maps Snapshot struct names to the field name that identifies
+	// the entity-key field, bypassing the eddt:"entity.key" tag scan. An absent
+	// or empty entry selects tag-based discovery for that struct.
+	KeyFields map[string]string
+
+	// Log is the structured logger for progress and warning output. When nil,
+	// a package-level default (Warn level, text handler, stderr) is used.
+	Log *slog.Logger
+
+	// OutPkgNameOverride is the caller-supplied --pkg-name value. When non-empty
+	// it overrides the auto-detected source package name in the output file.
+	OutPkgNameOverride string
+}
+
+// Generator holds the configuration for a single delta-gen invocation.
+type Generator struct {
+	// Input fields — set from Config by New.
+	InputPkgs          []string
+	TargetStructs      []string
+	OutPath            string
+	Verbose            bool
+	PkgAliases         []string
+	Version            string
+	KeyFields          map[string]string
+	Log                *slog.Logger
+	OutPkgNameOverride string
+
+	// Derived state — populated by Run after the load/resolve stages.
+
+	// OutPkgName is the resolved output package name (from OutPkgNameOverride
+	// or auto-detected from the first source package).
 	OutPkgName string
 
 	// CrossPackage is true when OutPkgName differs from the source package name.
 	// When true, the parse stage excludes unexported fields and the emit stage
-	// omits ergonomic method wrappers (E-12). Set by Run after the load stage.
+	// omits ergonomic method wrappers (E-12).
 	CrossPackage bool
-
-	// KeyFields maps Snapshot struct names to the field name that identifies
-	// the entity-key field, bypassing the eddt:"entity.key" tag scan. Set by
-	// the CLI layer (G-06) from --key-field; the empty map selects tag-based
-	// discovery for every struct. A missing entry for a given struct also
-	// selects tag-based discovery for that struct.
-	KeyFields map[string]string
-
-	// Log is the structured logger used for progress and warning output. When
-	// nil, a package-level default (Warn level, text handler, stderr) is used.
-	// Inject a custom logger in tests to capture output without OS-level pipes.
-	Log *slog.Logger
 }
 
-// NewGenerator constructs a Generator with the supplied parameters.
-func NewGenerator(inputPkgs, targetStructs []string, outPath string, verbose bool, pkgAliases []string) *Generator {
+// New constructs a Generator from the supplied Config. Input fields are copied
+// from cfg; derived state (OutPkgName, CrossPackage) is left zero and populated
+// by Run.
+func New(cfg Config) *Generator {
 	return &Generator{
-		InputPkgs:     inputPkgs,
-		TargetStructs: targetStructs,
-		OutPath:       outPath,
-		Verbose:       verbose,
-		PkgAliases:    pkgAliases,
+		InputPkgs:          cfg.InputPkgs,
+		TargetStructs:      cfg.TargetStructs,
+		OutPath:            cfg.OutPath,
+		Verbose:            cfg.Verbose,
+		PkgAliases:         cfg.PkgAliases,
+		Version:            cfg.Version,
+		KeyFields:          cfg.KeyFields,
+		Log:                cfg.Log,
+		OutPkgNameOverride: cfg.OutPkgNameOverride,
 	}
 }
 
@@ -97,23 +122,23 @@ func (g *Generator) log() *slog.Logger {
 	return defaultLog()
 }
 
-// Run executes the full generation pipeline for each target struct.
+// Run executes the full generation pipeline for each target struct using the
+// Config fields set by New. OutPkgNameOverride drives the resolve stage;
+// OutPkgName and CrossPackage are written to the Generator on return.
 //
 // The pipeline has four stages; each is implemented in its own file:
 //
-//   - Load    (load.go, G-02):           resolve --pkg arguments into type-checked packages.
-//   - Resolve (load.go, G-05):           determine output package name and cross-package mode.
-//   - Parse   (parse.go, G-03 / G-07 / G-04 / G-06):
-//     a single `parseSnapshot(pkgs, name, ParseOpts{...})` call per target
-//     struct identifies the embedded runtime.Header, the entity.key field,
-//     and classifies payload fields. The key is surfaced via
-//     ParsedSnapshot.KeyVar and excluded from Fields. Per-struct key-field
-//     overrides from --key-field are carried via Generator.KeyFields.
-//   - Tag    (tag.go, Phase 3):          parse and validate eddt: tag values.
-//   - Emit    (template.go, Phase 4):    render the Delta type and Apply / Diff /
-//     Coalesce / EntityID function bodies via text/template; emit method wrappers
-//     when CrossPackage is false.
-func (g *Generator) Run(outPkgNameOverride string) error {
+//   - Load    (load.go):    resolve --pkg arguments into type-checked packages.
+//   - Resolve (load.go):    determine output package name and cross-package mode.
+//   - Parse   (parse.go):   a single parseSnapshot call per target struct
+//     identifies the embedded runtime.Header, the entity.key field, and
+//     classifies payload fields. The key is surfaced via ParsedSnapshot.KeyVar
+//     and excluded from Fields. Per-struct key-field overrides are carried via
+//     KeyFields.
+//   - Tag    (tag.go):      parse and validate eddt: tag values.
+//   - Emit    (template.go): render the Delta type and function bodies via
+//     text/template; emit method wrappers when CrossPackage is false.
+func (g *Generator) Run() error {
 	// Stage 1 — Load: resolve all --pkg arguments into *packages.Package values.
 	// Filesystem paths and Go import paths are handled separately; see load.go
 	// for the two-phase loading strategy and the rationale for NeedDeps.
@@ -127,7 +152,7 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	// Stage 1.5 — Resolve: determine output package name and cross-package mode.
 	// CrossPackage is true when --pkg-name differs from the source package name;
 	// downstream stages use it to exclude unexported fields and omit method wrappers.
-	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, outPkgNameOverride)
+	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, g.OutPkgNameOverride)
 	if g.CrossPackage {
 		g.log().Info("cross-package mode", "output_pkg", g.OutPkgName, "source_pkg", pkgs[0].Name)
 	} else {
