@@ -558,6 +558,28 @@ checks.
   - Files: `internal/deltagen/parse_test.go`.
   - Tests: all existing tests pass unchanged.
 
+- [x] **G-11: Split `parse.go` into orchestration / fields / key / lookup
+  (refactor).** Mechanical file-level split: `parseSnapshot` (orchestration)
+  stays in `parse.go`; helper functions migrate to three new sibling files —
+  `parse_fields.go` (`walkFields`, `classifyShape`), `parse_key.go`
+  (`parseKeyField`), `parse_lookup.go` (`headerTypeFor`, `findNamedStruct`,
+  `runtimePkgImportPath`). Package membership, exported surface, and runtime
+  behaviour are unchanged. No new symbols. No imports added or removed at the
+  package level.
+  - Files: `internal/deltagen/parse.go` (trimmed to orchestration only),
+    `internal/deltagen/parse_fields.go` (new),
+    `internal/deltagen/parse_key.go` (new),
+    `internal/deltagen/parse_lookup.go` (new).
+  - Tests: all existing tests pass unchanged.
+
+- [ ] **G-12: Extract stage methods from `Run()` (refactor).** Decomposes
+  `Run()` into four single-responsibility private methods — `loadStage`,
+  `resolveStage`, `parseStage`, `emitStage` — retaining `Run()` as an
+  orchestrating shell. `parseStage` must surface the `[]*ParsedSnapshot` slice
+  it already computes (currently discarded). No behaviour change.
+  - Files: `internal/deltagen/generator.go`.
+  - Tests: all existing tests pass unchanged.
+
 ### Phase 3 — Tag Handling and Validation
 
 - [ ] **T-01: `eddt:` tag parser.** Parse four of the five tag
@@ -1197,3 +1219,4 @@ git commit).
 | 2026-05-16 | G-08                  | `fmt.Printf` verbose output migrated to `log/slog`. `Generator.Log *slog.Logger` + nil-safe `log()` helper added. Conflict warning now unconditional (`Warn` level); progress gated by handler level. All output routed to stderr. `TestCLI_KeyField_VerboseConflictWarning` migrated from stdout-pipe + `--verbose` to stderr-pipe + slog assertions.                                                                                                                                                                                                                                               |
 | 2026-05-16 | G-09                  | `Config` struct + `New(cfg Config)` constructor replace positional `NewGenerator`. `OutPkgNameOverride` lifted from `Run()` parameter to `Config`. `Run()` is now parameterless. `NewGenerator` deleted. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                        |
 | 2026-05-16 | G-10                  | `loadFixture` and `parseFixture` helpers added to `parse_test.go`; load-then-parse boilerplate eliminated from all Group F / G tests. `TestParse_NoHeader` (two-package load) stays direct. No behaviour change.                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-05-16 | G-11                  | `parse.go` split into four files: `parse.go` (orchestration only), `parse_fields.go` (`walkFields`, `classifyShape`), `parse_key.go` (`parseKeyField`), `parse_lookup.go` (`headerTypeFor`, `findNamedStruct`, `runtimePkgImportPath`). Pure mechanical rearrangement — no symbol changes, no behaviour change.                                                                                                                                                                                                                                                                                      |
