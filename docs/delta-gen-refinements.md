@@ -238,11 +238,11 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 
 ### 2.2 Generator: CLI and Input Loading
 
-| ID   | Requirement       | Spec reference                           | Description                                                                               |
-|:-----|:------------------|:-----------------------------------------|:------------------------------------------------------------------------------------------|
-| R-09 | CLI flags         | precedent: arrow-writer-gen / reader-gen | `--pkg`, `--struct`, `--out`, `--pkg-alias` flags. Same semantics as existing generators. |
-| R-10 | Package loading   | delta-gen §3.5                           | Use `golang.org/x/tools/go/packages` with `NeedTypes | NeedTypesInfo | NeedDeps`.         |
-| R-11 | Path/import input | precedent: arrow-writer-gen S5           | Accept Go import paths in addition to filesystem paths.                                   |
+| ID   | Requirement                           | Spec reference                           | Description                                                                                                                                                                                                                                                                                                   |
+|:-----|:--------------------------------------|:-----------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| R-09 | CLI flags                             | precedent: arrow-writer-gen / reader-gen | `--pkg`, `--structs`, `--out`, `--pkg-alias`, `--pkg-name`, `--verbose` flags. `--pkg-name` overrides the output `package` declaration; when it differs from the source package name the generator operates in cross-package mode (function signatures only, no method wrappers, unexported fields excluded). |
+| R-10 | Package loading and output resolution | delta-gen §3.5 (as amended by E-12)      | Use `golang.org/x/tools/go/packages` with `NeedTypes | NeedTypesInfo | NeedDeps`. After loading, resolve the output package name from `--pkg-name` or auto-detect from the first loaded package; derive `crossPackage` flag when the resolved name differs from the source.                                   |
+| R-11 | Path/import input                     | precedent: arrow-writer-gen S5           | Accept Go import paths in addition to filesystem paths.                                                                                                                                                                                                                                                       |
 
 ### 2.3 Generator: Snapshot Parsing
 
@@ -263,15 +263,15 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 
 ### 2.5 Generator: Code Emission
 
-| ID   | Requirement                  | Spec reference                    | Description                                                                                             |
-|:-----|:-----------------------------|:----------------------------------|:--------------------------------------------------------------------------------------------------------|
-| R-19 | Delta type emission          | delta-gen §4.1; §3.4              | Emit `TDelta` struct embedding `runtime.Header`; payload fields shaped per §5.1.                        |
-| R-20 | `Apply` method emission      | delta-gen §7.1; §5.1              | Pure function; calls `HeaderAfterApply` once; applies per-field rules.                                  |
-| R-21 | `Diff` method emission       | delta-gen §7.2; §5.1; Errata E-05 | Pure function; calls `HeaderForDiff` once; computes per-field diff contributions. Method form.          |
-| R-22 | `Coalesce` method emission   | delta-gen §7.3                    | Literal fold of `Apply` over the delta slice.                                                           |
-| R-23 | Nested type recursion        | delta-gen §4.3; §9.2              | Emit companion `<T>Delta` + `Apply` + `Diff` for `delta.nested` fields. No `Coalesce` for nested types. |
-| R-24 | `EntityID()` method emission | Errata E-10                       | Emit deterministic content-hash method on the key struct using runtime hash helpers.                    |
-| R-25 | Deterministic output         | delta-gen §10.1                   | Identical input produces byte-equal output (modulo line-ending normalisation).                          |
+| ID   | Requirement           | Spec reference                          | Description                                                                                                                                                                                          |
+|:-----|:----------------------|:----------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| R-19 | Delta type emission   | delta-gen §4.1; §3.4                    | Emit `TDelta` struct embedding `runtime.Header`; payload fields shaped per §5.1.                                                                                                                     |
+| R-20 | `Apply` emission      | delta-gen §7.1; §5.1; Errata E-12       | Emit `func Apply(s T, d TDelta) T`; calls `HeaderAfterApply` once; applies per-field rules. When same-package, MAY also emit `func (s T) Apply(d TDelta) T` wrapper delegating to the function.      |
+| R-21 | `Diff` emission       | delta-gen §7.2; §5.1; Errata E-05, E-12 | Emit `func Diff(a, b T) TDelta`; calls `HeaderForDiff` once; computes per-field diff contributions. When same-package, MAY also emit `func (s T) Diff(b T) TDelta` wrapper.                          |
+| R-22 | `Coalesce` emission   | delta-gen §7.3; Errata E-12             | Emit `func Coalesce(s T, ds []TDelta) T`; literal fold of `Apply` over the delta slice. When same-package, MAY also emit `func (s T) Coalesce(ds []TDelta) T` wrapper.                               |
+| R-23 | Nested type recursion | delta-gen §4.3; §9.2                    | Emit companion `<T>Delta` + `Apply` + `Diff` for `delta.nested` fields. No `Coalesce` for nested types.                                                                                              |
+| R-24 | `EntityID` emission   | Errata E-10, E-12                       | Emit `func EntityID(k KeyStruct) runtime.EntityID` using runtime hash helpers. When same-package, MAY also emit `func (k KeyStruct) EntityID() runtime.EntityID` wrapper delegating to the function. |
+| R-25 | Deterministic output  | delta-gen §10.1                         | Identical input produces byte-equal output (modulo line-ending normalisation).                                                                                                                       |
 
 ### 2.6 Generator: Helper Functions
 
@@ -371,6 +371,22 @@ checks.
     dependency traversal (Header type lookup), and
     `isFilesystemPath` unit tests. `TestCLI_ImportPathNotInGoMod`
     now active.
+
+- [ ] **G-05: Output-package resolver.** After `loadPackages` returns
+  the source packages, determine the final output package name and
+  whether the generator is in cross-package mode. Cross-package mode
+  is active when the `--pkg-name` override differs from the source
+  package name; downstream stages use it to exclude unexported fields,
+  qualify source-type references, and omit method wrappers (E-12).
+  - Files: `internal/deltagen/load.go` (add `resolveOutputPkg`
+    helper), `internal/deltagen/generator.go` (add `OutPkgName` and
+    `CrossPackage` fields; call resolver in `Run()` after loading),
+    `internal/deltagen/load_test.go` (new resolver tests).
+  - Tests: four cases — no `--pkg-name` (output pkg auto-detected
+    from source; `crossPackage` false); `--pkg-name` matching source
+    name (`crossPackage` false); `--pkg-name` differing from source
+    (`crossPackage` true); multi-`--pkg` input (first loaded package
+    determines source pkg name).
 
 - [ ] **G-03: Snapshot type parser.** Find the embedded
   `runtime.Header` field by type; enumerate payload fields;
@@ -858,6 +874,104 @@ and are not separately listed.
       normatively (new subsection in chain-lifecycle §3).
     - Update the worked example (delta-gen §11) to show the new
       shape.
+
+### E-11 — `gencommon` does not handle generic struct instantiations (`*ast.IndexExpr`) *(Resolved 2026-05-15)*
+
+- **Resolution:** Implemented as `arrow-writer-gen-refinements.md` item S6 and
+  `arrow-reader-gen-refinements.md` item G1. `fieldInfoFromExpr` now handles
+  `*ast.IndexExpr` and `*ast.IndexListExpr`; `fieldInfoFromGenericInstantiation`
+  queues type-checker-driven instantiation; `derivedInstanceName` produces stable
+  identifiers; `StructInfo.GoTypeExpr` carries the qualified type string. All
+  acceptance-criteria tests pass without `t.Skip`.
+- **Spec location:** delta-gen §3.3 (`delta.clearable` tag), §5.1
+  (clearable column in field-shape table), §6.3 (`FieldDelta[T]`
+  runtime type), §6.6 (`ApplyFieldDelta`).
+- **Nature:** Implementation gap. `internal/arrow/gencommon/resolve.go`
+  — `fieldInfoFromExpr` — dispatches on AST expression type but has
+  no case for `*ast.IndexExpr` (Go 1.18+ single-type-argument
+  generic instantiation) or `*ast.IndexListExpr` (multi-argument).
+  A field of type `FieldDelta[int32]` therefore hits the fall-through
+  error path and is silently skipped (logged as a `Warning:`). The
+  type-checker backup path (`fieldInfoFromType` for `*types.Named`)
+  also does not check `named.TypeArgs().Len() > 0`, so if the AST
+  path were patched to delegate there, it would still queue `FieldDelta`
+  for recursive processing under its generic definition — which fails
+  when the `T`-typed `Value` field is resolved.
+- **Source:** PR-01/PR-02 verification (2026-05-15). Confirmed by
+  `TestParse_GenericField_CurrentBehavior` — error text:
+  `unsupported AST expression type: *ast.IndexExpr`.
+- **Working assumption:** The fix requires two coordinated changes to
+  gencommon: (a) add a `*ast.IndexExpr` case in `fieldInfoFromExpr`
+  that delegates to the type-checker; (b) in `fieldInfoFromType` for
+  `*types.Named`, check `TypeArgs().Len() > 0` and, if so, walk the
+  fields of `named.Underlying().(*types.Struct)` — which the type
+  checker has already fully instantiated — using `fieldInfoFromType`
+  on each concrete field type. The instantiated fields should be
+  inlined into the parent struct's `FieldInfo` (not queued as a
+  separate named struct) to avoid `AppendInnerXxx` naming collisions
+  between distinct instantiations (e.g. `FieldDelta[int32]` and
+  `FieldDelta[*ECI]`).
+- **Follow-up action:** File a new refinement item in
+  `arrow-writer-gen-refinements.md` (writer side) and
+  `arrow-reader-gen-refinements.md` (reader side), then complete
+  them before resuming CL-05 / CL-09.
+- **Acceptance criteria:** `TestParse_GenericField_ScalarArg`,
+  `TestParse_GenericField_PtrStructArg`, and
+  `TestGenericClearableField` (in both writer-gen and reader-gen)
+  pass without `t.Skip`.
+- **Proposed spec amendment:** None required. The spec mandates
+  `FieldDelta[T]` as the clearable carrier; this errata captures an
+  implementation gap in the generator toolchain, not a spec error.
+
+### E-12 — Function-first generated API; method wrappers as same-package ergonomic bonus
+
+- **Spec location:** `eddt-delta-gen-spec.md` §3.5 (Package Layout);
+  §4.2 (Generated Methods).
+- **Nature:** Architectural choice. The spec mandates method form for
+  `Apply`, `Diff`, `Coalesce`, and implicitly for `EntityID()`. Go
+  prohibits defining methods on types from other packages, so method
+  form is incompatible with cross-package emission — including the case
+  where the Snapshot or key struct is defined in an external or
+  read-only package (protobuf-generated types, external module
+  dependencies). The same constraint applies to `EntityID()` on the key
+  struct: the key struct is defined in the same package as the Snapshot,
+  so if that package is not owned, `EntityID()` cannot be emitted as a
+  method either.
+- **Source:** Own analysis during G-02 review. Cross-package requirement
+  identified by analogy with `--pkg-name` support in arrow-writer-gen
+  and arrow-reader-gen (whose integration tests cover two concrete
+  cross-package scenarios: unexported-field filtering and type-reference
+  qualification).
+- **Working assumption (implementation adopts immediately):**
+  - The primary emitted form for all generated operations (`Apply`,
+    `Diff`, `Coalesce`, `EntityID`) is **package-level functions**.
+    These are always emitted regardless of output package.
+  - When the output package equals the source package (no `--pkg-name`,
+    or `--pkg-name` matching the source name), the generator **MAY**
+    additionally emit thin **method wrappers** that delegate to the
+    corresponding functions, providing ergonomic call sites
+    (`s.Apply(d)`, `k.EntityID()`).
+  - When in cross-package mode (`--pkg-name` differs from the source
+    package name): method wrappers are omitted; unexported source fields
+    are excluded from the generated Delta; source type references in
+    function signatures are qualified with the source package name.
+  - The `--pkg-name` flag is already present in the CLI (G-01); no new
+    flag is needed. Cross-package mode is derived at generation time by
+    `resolveOutputPkg` (G-05).
+- **Proposed amendment:**
+  - §3.5: replace "SHALL emit … in the **same Go package**" with "SHALL
+    emit the output file into the package declared by `--pkg-name`; when
+    no override is given the output package defaults to the source
+    package." Remove the same-package constraint.
+  - §4.2: replace method signatures with package-level function
+    signatures as normative: `func Apply(s T, d TDelta) T`,
+    `func Diff(a, b T) TDelta`, `func Coalesce(s T, ds []TDelta) T`.
+    Add: "When the output package is the same as the source package, a
+    conforming generator MAY additionally emit thin method wrappers that
+    delegate to the corresponding functions."
+  - §6.4 (worked example): update the emitted `EntityID` to
+    `func EntityID(k KeyStruct) runtime.EntityID`; add wrapper form in a
+    same-package note.
 
 ---
 
