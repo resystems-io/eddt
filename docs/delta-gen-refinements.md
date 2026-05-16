@@ -399,12 +399,61 @@ checks.
 
 - [ ] **G-04: Key field parser.** Locate the `eddt:"entity.key"`
   tagged field; validate its type is a struct of comparable
-  fields; reject if absent or multiple.
+  fields; reject if absent or multiple. Tag-based discovery is
+  the primary path; G-06 adds the CLI-override fallback for
+  upstream code that cannot carry `eddt:` annotations.
   - Files: `internal/deltagen/parse.go`,
     `internal/deltagen/parse_test.go`.
   - Tests: fixtures — single-key Snapshot (OK); no-key Snapshot
     (error); multi-key Snapshot (error); non-comparable-key
     Snapshot (error).
+
+- [ ] **G-06: CLI key-field override (Errata E-13).** When the
+  Snapshot struct lives in upstream code that cannot be annotated
+  with `eddt:"entity.key"` tags (e.g., a vendor package or a
+  generated protobuf struct), the key field must be identified
+  via the command line instead.
+  - New flag: `--key-field` — repeatable; each value is either a
+    bare `FieldName` (applies uniformly to all `--structs` targets)
+    or a `StructName=FieldName` pair (applies to one named struct
+    only). The `=` form mirrors the `--pkg-alias importpath=alias`
+    convention already in the CLI. Field-name form is used rather
+    than type-name form because the same type may appear in more
+    than one field position. Examples:
+    ```
+    # single struct, bare form
+    --structs UESessionSnapshot --key-field Key
+
+    # multiple structs, per-struct form
+    --structs UESessionSnapshot,PDUSessionSnapshot \
+      --key-field UESessionSnapshot=Key \
+      --key-field PDUSessionSnapshot=PDUID
+    ```
+  - Parsing rules: bare values are expanded to
+    `StructName=FieldName` for every struct in `--structs` at
+    flag-parse time. If both a bare and a per-struct value
+    are given for the same struct, the per-struct value wins.
+    If `--key-field` is given without a matching struct name in
+    `--structs`, the generator errors at startup.
+  - Interaction with G-04: when a `--key-field` entry covers a
+    struct, the parser skips the tag scan for that struct and
+    treats the named field directly as the key field; the same
+    comparable-struct validation still applies. When both a tag
+    and a `--key-field` entry are present for the same struct, the
+    CLI value wins (with a `--verbose` warning to flag the
+    conflict).
+  - Files: `cmd/delta-gen/main.go` (new flag wiring and
+    bare-to-per-struct expansion), `internal/deltagen/generator.go`
+    (`KeyFields map[string]string` field, keyed by struct name),
+    `internal/deltagen/parse.go` (pass per-struct override into
+    the key-field parser).
+  - Tests: `internal/deltagen/parse_test.go` — bare override
+    accepted (valid field); per-struct override accepted; override
+    names non-existent field (error); override names non-struct
+    field (error); tag present plus override (CLI wins, no error);
+    cross-package Snapshot without tag but with override (key
+    found); unrecognised struct name in `--key-field` (startup
+    error).
 
 ### Phase 3 — Tag Handling and Validation
 
@@ -973,6 +1022,44 @@ and are not separately listed.
     `func EntityID(k KeyStruct) runtime.EntityID`; add wrapper form in a
     same-package note.
 
+### E-13 — CLI key-field override for un-annotatable upstream Snapshots
+
+- **Spec location:** `eddt-delta-gen-spec.md` §3.1 (Snapshot
+  Requirements); §4.1 (entity.key field).
+- **Nature:** Spec gap. The spec assumes the Snapshot author can always
+  add `eddt:"entity.key"` struct tag annotations. In practice, the
+  Snapshot struct may live in upstream code that delta-gen cannot
+  modify: a vendored package, a protobuf-generated struct, or a
+  third-party model — all cross-package scenarios where tag injection
+  is impossible.
+- **Working assumption (G-06 implements):**
+  - A new repeatable `--key-field` flag allows the operator to
+    identify the entity key field by name, bypassing the tag scan.
+    Each value is either a bare `FieldName` (applies to all target
+    structs) or a `StructName=FieldName` pair (applies to one struct
+    only), mirroring the `--pkg-alias importpath=alias` convention.
+  - Field-name form is used rather than type-name form because the
+    same type may appear in multiple field positions; the field name
+    is unambiguous within the struct.
+  - Bare values are expanded to per-struct entries at flag-parse time.
+    Per-struct values take precedence over bare values for the same
+    struct. A `--key-field` entry that does not match any struct in
+    `--structs` is a startup error.
+  - When a `--key-field` entry covers a struct the parser skips
+    tag-based discovery for that struct and applies the same
+    comparable-struct validation to the named field. When both a tag
+    and a `--key-field` entry are present for the same struct, the
+    CLI value takes precedence (a `--verbose` warning is emitted).
+  - This override is relevant primarily in cross-package mode (E-12)
+    but is accepted in same-package mode too for consistency.
+- **Proposed amendment:**
+  - §3.1: add "When the Snapshot struct is defined in a package that
+    cannot carry `eddt:` annotations, the entity key field MUST be
+    identified via the `--key-field` command-line flag."
+  - §4.1: add `--key-field` as an alternative to the `eddt:"entity.key"`
+    tag; document the bare vs. `StructName=FieldName` forms; specify
+    that the CLI value takes precedence when both are present.
+
 ---
 
 ## 5. Change Log
@@ -980,14 +1067,15 @@ and are not separately listed.
 Record completed items here with the date (check git blame for the
 git commit).
 
-| Date       | Item         | Notes                                                                                                                                                                                                                                                                                                                                        |
-|:-----------|:-------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                                                                                                                                                                              |
-| 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                                                                                                                                                                    |
-| 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests.                                                                                                                                                     |
-| 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.                                                                                                                                                      |
-| 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.                                                                                                                                                             |
-| 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                                                                                                                                                                           |
-| 2026-05-16 | G-02         | Package loader with two-phase loading (filesystem + import paths), NeedDeps/NeedImports for transitive closure, `FindPkgByPath` via `packages.Visit`; 9 tests; `TestCLI_ImportPathNotInGoMod` now active.                                                                                                                                    |
-| 2026-05-16 | G-05         | Output-package resolver: `resolveOutputPkg` in `load.go`; `OutPkgName` and `CrossPackage` fields on `Generator`; 4 Group E tests; package doc and `Run()` updated to reflect function-first API (E-12).                                                                                                                                      |
-| 2026-05-16 | G-03         | Snapshot type parser: `parseSnapshot`, `classifyShape`, `headerTypeFor`, `findNamedStruct` in `parse.go`; `ParsedSnapshot`, `ParsedField`, `FieldShape` types; 8 Group F tests across 8 fixture packages; `generator.go` `Run()` wired to call parse stage per struct; `TestCLI_NotYetImplemented` updated to reflect G-04 as next sentinel. |
+| Date       | Item         | Notes                                                                                                                                                                                                                                                                                                                                                        |
+|:-----------|:-------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-05-15 | PR-01, PR-02 | Gap confirmed: gencommon has no `*ast.IndexExpr` support. Verification tests added; E-11 filed.                                                                                                                                                                                                                                                              |
+| 2026-05-15 | E-11         | Resolved: `*ast.IndexExpr`/`IndexListExpr` support added to gencommon (S6/G1); all acceptance tests pass.                                                                                                                                                                                                                                                    |
+| 2026-05-16 | RT-01, RT-02 | `runtime/` package created; `Header`, `Provenance`, `SequenceRange`, `EntityID` types (E-10 shape); Blake2b-256 hash helpers with cross-validation and frozen-corpus known-vector tests.                                                                                                                                                                     |
+| 2026-05-16 | RT-03, RT-04 | `HeaderAfterApply` and `HeaderForDiff` implemented in `runtime/header.go`; 12 tests covering happy paths, all validation failure modes, boundary conditions, and Provenance edge cases.                                                                                                                                                                      |
+| 2026-05-16 | RT-05        | `build/delta-gen` Makefile target added; `cmd/delta-gen/main.go` placeholder scaffold with Cobra CLI, all flags, and stub RunE. Clean, idempotent, and dependency-edge verified.                                                                                                                                                                             |
+| 2026-05-16 | G-01         | CLI wired to `deltagen.NewGenerator(...).Run(...)`; `internal/deltagen/generator.go` scaffold; 3 CLI tests pass, import-path acceptance test skipped pending G-02.                                                                                                                                                                                           |
+| 2026-05-16 | G-02         | Package loader with two-phase loading (filesystem + import paths), NeedDeps/NeedImports for transitive closure, `FindPkgByPath` via `packages.Visit`; 9 tests; `TestCLI_ImportPathNotInGoMod` now active.                                                                                                                                                    |
+| 2026-05-16 | G-05         | Output-package resolver: `resolveOutputPkg` in `load.go`; `OutPkgName` and `CrossPackage` fields on `Generator`; 4 Group E tests; package doc and `Run()` updated to reflect function-first API (E-12).                                                                                                                                                      |
+| 2026-05-16 | G-03         | Snapshot type parser: `parseSnapshot`, `classifyShape`, `headerTypeFor`, `findNamedStruct` in `parse.go`; `ParsedSnapshot`, `ParsedField`, `FieldShape` types; 8 Group F tests across 8 fixture packages; `generator.go` `Run()` wired to call parse stage per struct; `TestCLI_NotYetImplemented` updated to reflect G-04 as next sentinel.                 |
+| 2026-05-16 | E-13, G-06   | Spec gap filed: `eddt:"entity.key"` tags cannot be added to upstream/vendored Snapshot structs. G-06 plan added: repeatable `--key-field` flag accepting bare `FieldName` (all structs) or `StructName=FieldName` (per-struct) forms; field-name chosen over type-name to avoid positional ambiguity; CLI value takes precedence over tag when both present. |
