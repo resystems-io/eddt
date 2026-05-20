@@ -745,20 +745,28 @@ checks.
 ### Phase 4 — Code Emission: Top-Level Types and Methods
 
 - [ ] **EM-01: Delta type emission — atomic rows.** `text/template`
-  skeleton; emit `TDelta` struct embedding `runtime.Header`; emit
-  per-field Delta-side declarations for the **atomic** rows of the
-  harmonised §1.6.3 table — covering scalar, pointer, struct value,
-  slice (under the flipped default per E-15), map (per E-16),
-  embedded Header. `omit` / `retired` rows are also covered here
-  (no Delta-side field). The compositional rows (`delta.nested`)
-  land in Phase 5 (N-01 — struct, N-03 — map, N-04 — slice). The
-  tri-state envelope (`delta.clearable`) is layered in Phase 7
-  (CL-05).
+  skeleton. Two structural pieces, kept distinct:
+    - **TDelta carries its own embedded `runtime.Header`** (not a
+      per-field declaration — the Snapshot's embedded Header maps to
+      a parallel Header on TDelta, combined via `HeaderAfterApply` at
+      Apply time).
+    - **Per-field Delta-side declarations** for the **atomic** rows
+      of the harmonised §1.6.3 table — across the five payload
+      shapes: scalar, pointer, struct value, slice (under the flipped
+      default per E-15), map (per E-16). `delta.omit` and
+      `delta.retired` suppress the Delta-side field for any shape.
+      `delta.commutative`-tagged fields emit as if untagged (§9.5;
+      v1 generators accept the tag without semantic effect).
+  The compositional rows (`delta.nested`) land in Phase 5 (N-01 —
+  struct, N-03 — map, N-04 — slice). The tri-state envelope
+  (`delta.clearable`) is layered in Phase 7 (CL-05).
   - Files: `internal/deltagen/template.go`,
     `internal/deltagen/generator.go`.
-  - Tests: `internal/deltagen/template_test.go` — assert emitted
-    struct shape for each atomic / omit / retired field-shape
-    combination, including `SetX *map[K]V` and `SetX *[]T`.
+  - Tests: `internal/deltagen/template_test.go` — assert one atomic
+    emission per shape (including `SetX *map[K]V` and `SetX *[]T`);
+    assert `delta.omit` and `delta.retired` suppress the Delta-side
+    field regardless of underlying shape; assert `delta.commutative`
+    emits identically to untagged.
 
 - [ ] **EM-02: `Apply` method emission — atomic rows.** Emit `Apply`
   body: `HeaderAfterApply` call + per-field Apply contributions for
@@ -831,9 +839,9 @@ rejection and depth handling, shared by all three.
   `cmp.Ordered` constraint on K (determinism applies to the
   generated file, not the runtime Delta value). Value-equality for
   change detection follows §5.2 (existing equality discipline).
-  - Files: `internal/deltagen/template.go`,
-    `internal/deltagen/parse_fields.go` (relax map gating from
-    T-02 baseline to admit `delta.nested`).
+  - Files: `internal/deltagen/template.go`. (T-02's
+    `validateTagShape` already admits `delta.nested` on `ShapeMap`,
+    so no parser-side gating change is required.)
   - Tests: fixture Snapshot with `map[K]V` field tagged
     `delta.nested`; emitted Delta carries `UpdatedX` + `RemovedX`;
     Apply / Diff round-trip property holds; value-changed entry
