@@ -199,7 +199,7 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 		// warn unconditionally so the Snapshot author is informed.
 		if g.KeyFields[structName] != "" {
 			for _, f := range ps.Fields {
-				if f.RawTag == "entity.key" {
+				if f.Tag.Kind == TagKindEntityKey {
 					g.log().Warn("key-field override supersedes entity.key tag",
 						"struct", structName,
 						"override", g.KeyFields[structName],

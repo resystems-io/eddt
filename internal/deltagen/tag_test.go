@@ -18,6 +18,7 @@ func TestParseTag(t *testing.T) {
 		wantNilOpts bool              // assert Options == nil
 		wantOpts    map[string]string // assert each entry present with exact value
 		wantOptsLen int               // >0: assert len(Options) == this
+		wantRaw     string            // non-empty: assert Raw == this value
 		wantErr     bool
 		wantErrHas  []string // substrings that must appear in error
 	}{
@@ -87,6 +88,14 @@ func TestParseTag(t *testing.T) {
 			wantErr:    true,
 			wantErrHas: []string{"delta.bogus"},
 		},
+		{
+			// Raw preserves the verbatim input string.
+			name:     "T16_RawPreserved",
+			input:    "delta.retired,since=2026-01-15",
+			wantKind: TagKindRetired,
+			wantOpts: map[string]string{"since": "2026-01-15"},
+			wantRaw:  "delta.retired,since=2026-01-15",
+		},
 	}
 
 	for _, tc := range cases {
@@ -122,6 +131,9 @@ func TestParseTag(t *testing.T) {
 			}
 			if tc.wantOptsLen > 0 && len(pt.Options) != tc.wantOptsLen {
 				t.Errorf("len(Options): got %d, want %d", len(pt.Options), tc.wantOptsLen)
+			}
+			if tc.wantRaw != "" && pt.Raw != tc.wantRaw {
+				t.Errorf("Raw: got %q, want %q", pt.Raw, tc.wantRaw)
 			}
 		})
 	}

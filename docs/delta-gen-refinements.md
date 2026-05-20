@@ -557,7 +557,7 @@ checks.
   - Override path (`KeyFieldOverride != ""`): find the candidate
     by `Name`; error if no field matches.
   - Tag path (`KeyFieldOverride == ""`): scan candidates for
-    `RawTag == "entity.key"`; error if zero or more than one match.
+    `Tag.Kind == TagKindEntityKey`; error if zero or more than one match.
   - When both a tag and an override name a key field, the override
     silently wins (a CLI-level `--verbose` warning is added in G-06;
     the parser does not warn). The tagged-but-overridden field falls
@@ -620,7 +620,7 @@ checks.
     a different field, `Run()` emits a `--verbose` log line. The
     tagged-but-overridden field falls back into `ps.Fields` (G-04
     contract), so the conflict is detected after `parseSnapshot`
-    by scanning for `RawTag == "entity.key"` — no `parse.go`
+    by scanning for `Tag.Kind == TagKindEntityKey` — no `parse.go`
     change needed.
   - Files: `cmd/delta-gen/main.go` (flag wiring, `parseKeyFields`
     helper, unrecognised-struct startup error),
@@ -734,7 +734,7 @@ checks.
     for `nested` (struct / slice / map → ok; scalar / pointer →
     error).
 
-- [ ] **T-03: `entity.key` recognition wired into parser.**
+- [x] **T-03: `entity.key` recognition wired into parser.**
   Cross-link Phase 2 / G-04 with the tag parser so all tags flow
   through the same code path.
   - Files: `internal/deltagen/tag.go`,
@@ -1632,4 +1632,5 @@ git commit).
 | 2026-05-16 | G-12                     | `Run()` decomposed into `loadStage`, `resolveStage`, `parseStage`, `emitStage` private methods; `Run()` is now an orchestrating shell. `parseStage` surfaces `[]*ParsedSnapshot` (previously discarded). No behaviour change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2026-05-16 | T-01                     | `eddt:` tag parser added in `tag.go`: `TagKind` constants (None, EntityKey, Nested, Omit, Retired, Commutative), `ParsedTag{Kind, Options}`, `parseTag` internal function. Parses four baseline `delta.*` tags + `entity.key`; `delta.clearable` deferred to CL-03. Option grammar: comma-separated `key=value`; unknown keys preserved (E-07); bare options and unrecognised tag values are errors. 15 Group-T unit tests. `ParsedField.RawTag` doc comment tightened (TODO resolved).                                                                                                                                                                                                                                                                                                                                                                                                |
 | 2026-05-20 | T-02                     | Tag-shape gate landed: `parseTag` wired into `walkFields`; `ParsedField` gains `Tag ParsedTag` (`RawTag` kept for T-03 migration); `validateTagShape` enforces `delta.nested`-on-composite-only (E-14); `validateTagCombination` is a documented no-op stub (CL-04 extends in Phase 7). Two new fixtures (`nested_ok`, `nested_bad`) cover the five-shape admit/reject matrix. `TestParse_MapField` docstring updated to reflect E-16 admission. 11 Group T2 unit tests + 4 Group F2 integration tests; all module tests pass; clean rebuild idempotent.                                                                                                                                                                                                                                                                                                                               |
+| 2026-05-20 | T-03                     | Tag-based key recognition migrated from `RawTag == "entity.key"` to `Tag.Kind == TagKindEntityKey` in `parseKeyField` and the generator conflict-warning loop. `ParsedField.RawTag` removed; verbatim source preserved in `ParsedTag.Raw` so diagnostics and downstream dumps retain access. Parse-error wrapping now includes the full raw tag string. `combined_tags` fixture + `TestParse_CombinedTags` verify all `eddt:` tag families coexist on one struct and flow through the unified parsed-tag path. `TestParseTag` gains T16 asserting `Raw` round-trip. Phase 3 complete.                                                                                                                                                                                                                                                                                                  |
 | 2026-05-20 | E-14 … E-18, plan rework | Harmonised three-axis tag model adopted (presence × granularity × envelope; §1.6.3). Five new errata: E-14 (axis model), E-15 (slice default flip to atomic; `delta.nested` opts into set-diff), E-16 (map admission with `UpdatedX map[K]V` + `RemovedX []K` for `delta.nested`; upsert semantics for changed values), E-17 (admit `delta.nested + delta.clearable`; `OpRetract` resets to zero composite), E-18 (admit `delta.clearable` on slice / map). Plan items updated: pre-existing "Phases 1-7 baseline" bug fixed (now 1-6); R-13 admits map; R-15/R-16/R-17 reference harmonised rules; T-02 covers harmonised combination + shape gating; EM-01..EM-03 split atomic from compositional; Phase 5 expanded with N-03 (compositional map) and N-04 (compositional slice); CL-04..CL-07 broadened across all shapes incl. compositional inner via E-17. No phase renumbering. |

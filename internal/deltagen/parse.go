@@ -85,22 +85,16 @@ const (
 
 // ParsedField describes one payload field of a Snapshot struct as returned by
 // the parse stage. It carries enough information for both the tag-handling
-// stage (T-02 inspects Tag; T-03 migrates callers off RawTag) and the emit
-// stage (Phase 4, which uses GoType and Var for type-string rendering).
+// and emit stages (Phase 4, which uses GoType and Var for type-string
+// rendering).
 type ParsedField struct {
 	// Name is the Go field identifier, preserving the source case. Used
 	// verbatim by the emit stage to derive Delta field names (e.g. SetName).
 	Name string
 
-	// RawTag is the raw value of the eddt: struct tag, empty when the field
-	// carries no eddt: tag. Retained for the parseKeyField path and the
-	// generator conflict-warning path during the T-02 → T-03 transition.
-	// After T-03 migrates those callers to Tag.Kind, RawTag is removed.
-	RawTag string
-
-	// Tag is the structured form of RawTag, parsed at walk time by T-02.
-	// Downstream stages (shape gating, parseKeyField after T-03, emit-stage
-	// shape dispatch) consume Tag rather than re-parsing RawTag.
+	// Tag is the parsed eddt: struct tag for this field. The verbatim source
+	// string is preserved in Tag.Raw; downstream stages consume Tag.Kind and
+	// Tag.Options rather than re-parsing the raw string.
 	Tag ParsedTag
 
 	// Shape is the classified Go type shape of the field.

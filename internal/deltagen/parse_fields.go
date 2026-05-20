@@ -22,11 +22,10 @@ import (
 //     fields — they are inaccessible from the generated code.
 //   - Classify each non-Header field's Go type via classifyShape and reject
 //     unsupported shapes (function, channel, interface).
-//   - Parse each candidate's eddt: tag string via parseTag (T-01); validate
-//     the parsed tag against the field shape (T-02 / validateTagShape) and
-//     against the combination rules (T-02 / validateTagCombination); store
-//     both the raw string (for parseKeyField, pending T-03) and the
-//     structured Tag on the candidate.
+//   - Parse each candidate's eddt: tag string via parseTag; validate the
+//     parsed tag against the field shape (validateTagShape) and combination
+//     rules (validateTagCombination); store the structured Tag on the
+//     candidate (Tag.Raw preserves the verbatim source for diagnostics).
 //
 // The candidate slice may include a field tagged eddt:"entity.key";
 // parseKeyField will subsequently remove it.
@@ -64,7 +63,7 @@ func walkFields(
 
 		tag, err := parseTag(rawTag)
 		if err != nil {
-			return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
+			return nil, nil, fmt.Errorf("field %s.%s: parsing eddt:%q: %w", structName, field.Name(), rawTag, err)
 		}
 
 		if err := validateTagShape(tag, shape); err != nil {
@@ -77,7 +76,6 @@ func walkFields(
 
 		fields = append(fields, ParsedField{
 			Name:   field.Name(),
-			RawTag: rawTag,
 			Tag:    tag,
 			Shape:  shape,
 			GoType: field.Type(),

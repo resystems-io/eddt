@@ -548,6 +548,60 @@ func TestParse_TagShapeGate_NestedReject(t *testing.T) {
 	}
 }
 
+// TestParse_CombinedTags verifies that a Snapshot carrying entity.key and
+// delta.* tags simultaneously produces correct Tag.Kind and Tag.Raw values
+// for every payload field — proving all eddt: tags flow through the same
+// parsed-tag code path after the T-03 migration.
+// Covers: R-15, R-18
+func TestParse_CombinedTags(t *testing.T) {
+	snap := parseFixture(t, "combined_tags", "CombinedTagsSnapshot", ParseOpts{})
+
+	if snap.KeyVar == nil {
+		t.Fatal("KeyVar: got nil, want populated (entity.key recognised via Tag.Kind)")
+	}
+	if snap.KeyVar.Name() != "Key" {
+		t.Errorf("KeyVar.Name: got %q, want %q", snap.KeyVar.Name(), "Key")
+	}
+
+	// Build a lookup by field name for the assertions below.
+	byName := make(map[string]ParsedField, len(snap.Fields))
+	for _, f := range snap.Fields {
+		byName[f.Name] = f
+	}
+
+	want := []struct {
+		name   string
+		kind   TagKind
+		rawTag string
+		optKey string
+		optVal string
+	}{
+		{"Omitted", TagKindOmit, "delta.omit", "", ""},
+		{"Legacy", TagKindRetired, "delta.retired,since=2026-05-20", "since", "2026-05-20"},
+		{"Sub", TagKindNested, "delta.nested", "", ""},
+		{"Plain", TagKindNone, "", "", ""},
+	}
+
+	for _, w := range want {
+		f, ok := byName[w.name]
+		if !ok {
+			t.Errorf("field %q missing from payload Fields", w.name)
+			continue
+		}
+		if f.Tag.Kind != w.kind {
+			t.Errorf("field %q: Tag.Kind = %v, want %v", w.name, f.Tag.Kind, w.kind)
+		}
+		if f.Tag.Raw != w.rawTag {
+			t.Errorf("field %q: Tag.Raw = %q, want %q", w.name, f.Tag.Raw, w.rawTag)
+		}
+		if w.optKey != "" {
+			if got := f.Tag.Options[w.optKey]; got != w.optVal {
+				t.Errorf("field %q: Options[%q] = %q, want %q", w.name, w.optKey, got, w.optVal)
+			}
+		}
+	}
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 // loadFixture loads the testdata/parse/<name> fixture package.

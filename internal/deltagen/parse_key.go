@@ -20,8 +20,8 @@ import (
 //     layer emits a warning when it detects this combination.
 //
 //   - Tag path — opts.KeyFieldOverride is empty: candidates are scanned for
-//     RawTag == "entity.key". Exactly one match is required; zero and multiple
-//     matches each produce a descriptive error.
+//     Tag.Kind == TagKindEntityKey. Exactly one match is required; zero and
+//     multiple matches each produce a descriptive error.
 //
 // The selected field's type is validated: scalars and comparable struct values
 // are accepted; pointers (identity != value equality), slices, and maps are
@@ -45,7 +45,7 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 		}
 	} else {
 		for i := range candidates {
-			if candidates[i].RawTag != "entity.key" {
+			if candidates[i].Tag.Kind != TagKindEntityKey {
 				continue
 			}
 			if keyIdx != -1 {

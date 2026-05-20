@@ -7,8 +7,8 @@ package deltagen
 //     ParsedTag carrying a TagKind and any comma-separated key=value options.
 //   - T-02: wire parseTag into walkFields; validate tag combinations and
 //     per-tag field-shape constraints.
-//   - T-03: migrate parseKeyField and the generator conflict warning to use
-//     ParsedTag.Kind instead of literal RawTag string comparisons.
+//   - T-03: migrate all callers to ParsedTag.Kind; consolidate entity.key
+//     and delta.* tag handling onto the same parsed-tag code path.
 //
 // delta.clearable is not recognised in the baseline generator; it is added
 // in Phase 7 (CL-03) alongside the runtime FieldDelta[T] support.
@@ -68,6 +68,11 @@ type ParsedTag struct {
 	// (e.g. since=2026-01-15 for delta.retired). Unknown keys are preserved.
 	// nil when no options are present.
 	Options map[string]string
+
+	// Raw is the verbatim eddt: tag value supplied to parseTag. Preserved for
+	// diagnostics, downstream dumps, and error-message context. Empty for the
+	// zero value (absent tag).
+	Raw string
 }
 
 // parseTag parses the raw value of an eddt: struct tag. The raw string is the
@@ -88,7 +93,7 @@ type ParsedTag struct {
 //   - An empty value (e.g. "k=") is accepted; the key maps to "".
 func parseTag(raw string) (ParsedTag, error) {
 	if raw == "" {
-		return ParsedTag{Kind: TagKindNone}, nil
+		return ParsedTag{Kind: TagKindNone, Raw: raw}, nil
 	}
 
 	parts := strings.Split(raw, ",")
@@ -100,7 +105,7 @@ func parseTag(raw string) (ParsedTag, error) {
 	}
 
 	if len(parts) == 1 {
-		return ParsedTag{Kind: kind}, nil
+		return ParsedTag{Kind: kind, Raw: raw}, nil
 	}
 
 	opts := make(map[string]string, len(parts)-1)
@@ -116,7 +121,7 @@ func parseTag(raw string) (ParsedTag, error) {
 		opts[key] = opt[idx+1:]
 	}
 
-	return ParsedTag{Kind: kind, Options: opts}, nil
+	return ParsedTag{Kind: kind, Options: opts, Raw: raw}, nil
 }
 
 // validateTagShape returns an error if a tag is incompatible with a field
