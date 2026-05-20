@@ -201,9 +201,10 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 }
 
 // TestParse_MapField verifies that a map payload field is classified as
-// ShapeMap without a parse-time error. The tag-combination constraint (map
-// fields require delta.omit) is enforced by T-02, not by the parser.
-// Covers: R-13
+// ShapeMap without a parse-time error. Under the harmonised three-axis
+// model (refinements §1.6.3, Errata E-16), untagged maps are admitted
+// with the atomic default; no tag-combination constraint applies.
+// Covers: R-13, R-17
 func TestParse_MapField(t *testing.T) {
 	snap := parseFixture(t, "with_map", "MapSnapshot", ParseOpts{})
 
@@ -478,6 +479,72 @@ func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
 	if !foundKey {
 		t.Errorf("Fields missing %q; expected the tagged-but-overridden field to fall back to payload: %v",
 			"Key", fieldNames(snap))
+	}
+}
+
+// TestParse_TagWiring verifies that ParsedField.Tag is populated from the
+// raw tag string by walkFields (T-02). ValidSnapshot has no delta.* tags,
+// so every payload field carries Tag.Kind = TagKindNone.
+// Covers: R-15
+func TestParse_TagWiring(t *testing.T) {
+	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
+	for _, f := range snap.Fields {
+		if f.Tag.Kind != TagKindNone {
+			t.Errorf("field %q: Tag.Kind = %v, want TagKindNone",
+				f.Name, f.Tag.Kind)
+		}
+	}
+}
+
+// TestParse_TagShapeGate_NestedOK verifies the harmonised granularity-axis
+// gate admits delta.nested on every composite shape (struct value, slice,
+// map). One Snapshot per shape.
+// Covers: R-15, R-17 (E-14)
+func TestParse_TagShapeGate_NestedOK(t *testing.T) {
+	cases := []struct {
+		structName string
+	}{
+		{"NestedStructSnap"},
+		{"NestedSliceSnap"},
+		{"NestedMapSnap"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.structName, func(t *testing.T) {
+			snap := parseFixture(t, "nested_ok", tc.structName, ParseOpts{})
+			if len(snap.Fields) != 1 {
+				t.Fatalf("len(Fields): got %d, want 1; fields: %v",
+					len(snap.Fields), fieldNames(snap))
+			}
+			if snap.Fields[0].Tag.Kind != TagKindNested {
+				t.Errorf("Tag.Kind: got %v, want TagKindNested",
+					snap.Fields[0].Tag.Kind)
+			}
+		})
+	}
+}
+
+// TestParse_TagShapeGate_NestedReject verifies the harmonised granularity-
+// axis gate rejects delta.nested on non-composite shapes (scalar, pointer).
+// Error must mention "composite" so the message is actionable.
+// Covers: R-15, R-17 (E-14)
+func TestParse_TagShapeGate_NestedReject(t *testing.T) {
+	cases := []struct {
+		structName string
+	}{
+		{"NestedScalarSnap"},
+		{"NestedPointerSnap"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.structName, func(t *testing.T) {
+			pkgs := loadFixture(t, "nested_bad")
+			_, err := parseSnapshot(pkgs, tc.structName, ParseOpts{})
+			if err == nil {
+				t.Fatalf("expected error for nested on non-composite, got nil")
+			}
+			if !strings.Contains(err.Error(), "composite") {
+				t.Errorf("error should mention 'composite', got: %v", err)
+			}
+		})
 	}
 }
 

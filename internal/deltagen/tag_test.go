@@ -1,223 +1,180 @@
 package deltagen
 
-// tag_test.go exercises the eddt: tag parser introduced in T-01.
-//
-// # Group T: parseTag unit tests
-//
-// Tests are structured around the parsing responsibilities of parseTag:
-//
-//   T.01 Empty tag — "" produces TagKindNone with no options.
-//   T.02 EntityKey — "entity.key" recognised.
-//   T.03 Nested — "delta.nested" recognised.
-//   T.04 Omit — "delta.omit" recognised.
-//   T.05 Retired — "delta.retired" recognised.
-//   T.06 Commutative — "delta.commutative" recognised.
-//   T.07 KnownOption — "delta.retired,since=2026-01-15" → option preserved.
-//   T.08 UnknownOption — "delta.nested,extra=foo" → unknown key preserved (E-07).
-//   T.09 MultipleOptions — two options parsed independently.
-//   T.10 CommutativeOption — commutative with reserved option key.
-//   T.11 EntityKeyOption — entity.key with option preserved.
-//   T.12 EmptyValue — "delta.retired,k=" → empty value accepted.
-//   T.13 BareOption — option without "=" → error.
-//   T.14 Clearable — "delta.clearable" → error (deferred to CL-03).
-//   T.15 Unknown — "delta.bogus" → error (unrecognised).
+// tag_test.go exercises the eddt: tag parser (T-01) and the harmonised
+// tag-validation gate (T-02).
 
 import (
 	"strings"
 	"testing"
 )
 
-// TestParseTag is the umbrella for all Group T cases.
+// TestParseTag covers all Group T parseTag cases.
 // Covers: R-15 (partial), E-07
 func TestParseTag(t *testing.T) {
-	t.Run("T01_Empty", func(t *testing.T) {
-		pt, err := parseTag("")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindNone {
-			t.Errorf("Kind: got %v, want TagKindNone", pt.Kind)
-		}
-		if pt.Options != nil {
-			t.Errorf("Options: got %v, want nil", pt.Options)
-		}
-	})
+	cases := []struct {
+		name        string
+		input       string
+		wantKind    TagKind
+		wantNilOpts bool              // assert Options == nil
+		wantOpts    map[string]string // assert each entry present with exact value
+		wantOptsLen int               // >0: assert len(Options) == this
+		wantErr     bool
+		wantErrHas  []string // substrings that must appear in error
+	}{
+		{name: "T01_Empty", input: "", wantKind: TagKindNone, wantNilOpts: true},
+		{name: "T02_EntityKey", input: "entity.key", wantKind: TagKindEntityKey, wantNilOpts: true},
+		{name: "T03_Nested", input: "delta.nested", wantKind: TagKindNested, wantNilOpts: true},
+		{name: "T04_Omit", input: "delta.omit", wantKind: TagKindOmit},
+		{name: "T05_Retired", input: "delta.retired", wantKind: TagKindRetired},
+		{name: "T06_Commutative", input: "delta.commutative", wantKind: TagKindCommutative},
+		{
+			name:     "T07_KnownOption",
+			input:    "delta.retired,since=2026-01-15",
+			wantKind: TagKindRetired,
+			wantOpts: map[string]string{"since": "2026-01-15"},
+		},
+		{
+			// Unknown option keys are preserved without acting on them (E-07).
+			name:     "T08_UnknownOption",
+			input:    "delta.nested,extra=foo",
+			wantKind: TagKindNested,
+			wantOpts: map[string]string{"extra": "foo"},
+		},
+		{
+			name:        "T09_MultipleOptions",
+			input:       "delta.retired,since=2026-01-15,reason=drop",
+			wantKind:    TagKindRetired,
+			wantOpts:    map[string]string{"since": "2026-01-15", "reason": "drop"},
+			wantOptsLen: 2,
+		},
+		{
+			name:     "T10_CommutativeOption",
+			input:    "delta.commutative,mode=lww",
+			wantKind: TagKindCommutative,
+			wantOpts: map[string]string{"mode": "lww"},
+		},
+		{
+			// entity.key with an unknown option: option is preserved (E-07).
+			name:     "T11_EntityKeyOption",
+			input:    "entity.key,scope=global",
+			wantKind: TagKindEntityKey,
+			wantOpts: map[string]string{"scope": "global"},
+		},
+		{
+			// Empty option value ("k=") is accepted; key maps to "".
+			name:     "T12_EmptyValue",
+			input:    "delta.retired,k=",
+			wantKind: TagKindRetired,
+			wantOpts: map[string]string{"k": ""},
+		},
+		{
+			// Bare option with no "=" separator is malformed.
+			name:       "T13_BareOption",
+			input:      "delta.nested,novalue",
+			wantErr:    true,
+			wantErrHas: []string{"novalue", "key=value"},
+		},
+		{
+			// delta.clearable is deferred to Phase 7 (CL-03).
+			name:       "T14_Clearable",
+			input:      "delta.clearable",
+			wantErr:    true,
+			wantErrHas: []string{"delta.clearable"},
+		},
+		{
+			name:       "T15_Unknown",
+			input:      "delta.bogus",
+			wantErr:    true,
+			wantErrHas: []string{"delta.bogus"},
+		},
+	}
 
-	t.Run("T02_EntityKey", func(t *testing.T) {
-		pt, err := parseTag("entity.key")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindEntityKey {
-			t.Errorf("Kind: got %v, want TagKindEntityKey", pt.Kind)
-		}
-		if pt.Options != nil {
-			t.Errorf("Options: got %v, want nil", pt.Options)
-		}
-	})
-
-	t.Run("T03_Nested", func(t *testing.T) {
-		pt, err := parseTag("delta.nested")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindNested {
-			t.Errorf("Kind: got %v, want TagKindNested", pt.Kind)
-		}
-		if pt.Options != nil {
-			t.Errorf("Options: got %v, want nil", pt.Options)
-		}
-	})
-
-	t.Run("T04_Omit", func(t *testing.T) {
-		pt, err := parseTag("delta.omit")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindOmit {
-			t.Errorf("Kind: got %v, want TagKindOmit", pt.Kind)
-		}
-	})
-
-	t.Run("T05_Retired", func(t *testing.T) {
-		pt, err := parseTag("delta.retired")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindRetired {
-			t.Errorf("Kind: got %v, want TagKindRetired", pt.Kind)
-		}
-	})
-
-	t.Run("T06_Commutative", func(t *testing.T) {
-		pt, err := parseTag("delta.commutative")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindCommutative {
-			t.Errorf("Kind: got %v, want TagKindCommutative", pt.Kind)
-		}
-	})
-
-	t.Run("T07_KnownOption", func(t *testing.T) {
-		pt, err := parseTag("delta.retired,since=2026-01-15")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindRetired {
-			t.Errorf("Kind: got %v, want TagKindRetired", pt.Kind)
-		}
-		if got := pt.Options["since"]; got != "2026-01-15" {
-			t.Errorf("Options[since]: got %q, want %q", got, "2026-01-15")
-		}
-	})
-
-	t.Run("T08_UnknownOption", func(t *testing.T) {
-		// Unknown option keys are preserved without acting on them (E-07).
-		pt, err := parseTag("delta.nested,extra=foo")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindNested {
-			t.Errorf("Kind: got %v, want TagKindNested", pt.Kind)
-		}
-		if got := pt.Options["extra"]; got != "foo" {
-			t.Errorf("Options[extra]: got %q, want %q", got, "foo")
-		}
-	})
-
-	t.Run("T09_MultipleOptions", func(t *testing.T) {
-		pt, err := parseTag("delta.retired,since=2026-01-15,reason=drop")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindRetired {
-			t.Errorf("Kind: got %v, want TagKindRetired", pt.Kind)
-		}
-		if got := pt.Options["since"]; got != "2026-01-15" {
-			t.Errorf("Options[since]: got %q, want %q", got, "2026-01-15")
-		}
-		if got := pt.Options["reason"]; got != "drop" {
-			t.Errorf("Options[reason]: got %q, want %q", got, "drop")
-		}
-		if len(pt.Options) != 2 {
-			t.Errorf("len(Options): got %d, want 2", len(pt.Options))
-		}
-	})
-
-	t.Run("T10_CommutativeOption", func(t *testing.T) {
-		pt, err := parseTag("delta.commutative,mode=lww")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindCommutative {
-			t.Errorf("Kind: got %v, want TagKindCommutative", pt.Kind)
-		}
-		if got := pt.Options["mode"]; got != "lww" {
-			t.Errorf("Options[mode]: got %q, want %q", got, "lww")
-		}
-	})
-
-	t.Run("T11_EntityKeyOption", func(t *testing.T) {
-		// entity.key with an unknown option: option is preserved (E-07).
-		pt, err := parseTag("entity.key,scope=global")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindEntityKey {
-			t.Errorf("Kind: got %v, want TagKindEntityKey", pt.Kind)
-		}
-		if got := pt.Options["scope"]; got != "global" {
-			t.Errorf("Options[scope]: got %q, want %q", got, "global")
-		}
-	})
-
-	t.Run("T12_EmptyValue", func(t *testing.T) {
-		// An empty option value ("k=") is accepted; the key maps to "".
-		pt, err := parseTag("delta.retired,k=")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pt.Kind != TagKindRetired {
-			t.Errorf("Kind: got %v, want TagKindRetired", pt.Kind)
-		}
-		if got, ok := pt.Options["k"]; !ok || got != "" {
-			t.Errorf("Options[k]: got (%q, %v), want (%q, true)", got, ok, "")
-		}
-	})
-
-	t.Run("T13_BareOption", func(t *testing.T) {
-		// A bare option with no "=" separator is malformed.
-		_, err := parseTag("delta.nested,novalue")
-		if err == nil {
-			t.Fatal("expected error for bare option, got nil")
-		}
-		for _, want := range []string{"novalue", "key=value"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error should contain %q, got: %v", want, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pt, err := parseTag(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				for _, want := range tc.wantErrHas {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error should contain %q, got: %v", want, err)
+					}
+				}
+				return
 			}
-		}
-	})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if pt.Kind != tc.wantKind {
+				t.Errorf("Kind: got %v, want %v", pt.Kind, tc.wantKind)
+			}
+			if tc.wantNilOpts && pt.Options != nil {
+				t.Errorf("Options: got %v, want nil", pt.Options)
+			}
+			for k, want := range tc.wantOpts {
+				got, ok := pt.Options[k]
+				if !ok {
+					t.Errorf("Options[%q]: key absent, want %q", k, want)
+				} else if got != want {
+					t.Errorf("Options[%q]: got %q, want %q", k, got, want)
+				}
+			}
+			if tc.wantOptsLen > 0 && len(pt.Options) != tc.wantOptsLen {
+				t.Errorf("len(Options): got %d, want %d", len(pt.Options), tc.wantOptsLen)
+			}
+		})
+	}
+}
 
-	t.Run("T14_Clearable", func(t *testing.T) {
-		// delta.clearable is deferred to Phase 7 (CL-03); the baseline
-		// parser returns an error for it.
-		_, err := parseTag("delta.clearable")
-		if err == nil {
-			t.Fatal("expected error for delta.clearable in baseline, got nil")
-		}
-		if !strings.Contains(err.Error(), "delta.clearable") {
-			t.Errorf("error should mention %q, got: %v", "delta.clearable", err)
-		}
-	})
+// TestValidateTagShape exercises the harmonised granularity-axis gate.
+// Covers: R-17 (E-14)
+func TestValidateTagShape(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    TagKind
+		shape   FieldShape
+		wantErr bool
+	}{
+		{"T2.01_NestedOnStruct", TagKindNested, ShapeStructValue, false},
+		{"T2.02_NestedOnSlice", TagKindNested, ShapeSlice, false},
+		{"T2.03_NestedOnMap", TagKindNested, ShapeMap, false},
+		{"T2.04_NestedOnScalar", TagKindNested, ShapeScalar, true},
+		{"T2.05_NestedOnPointer", TagKindNested, ShapePointer, true},
+		{"T2.06_OmitOnScalar", TagKindOmit, ShapeScalar, false},
+		{"T2.07_OmitOnMap", TagKindOmit, ShapeMap, false},
+		{"T2.08_RetiredOnSlice", TagKindRetired, ShapeSlice, false},
+		{"T2.09_CommutativeOnPointer", TagKindCommutative, ShapePointer, false},
+		{"T2.10_EntityKeyOnStruct", TagKindEntityKey, ShapeStructValue, false},
+		{"T2.11_NoneOnScalar", TagKindNone, ShapeScalar, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTagShape(ParsedTag{Kind: tc.kind}, tc.shape)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateTagShape(%v, %v): err = %v, wantErr = %v",
+					tc.kind, tc.shape, err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "composite") {
+				t.Errorf("error should mention 'composite', got: %v", err)
+			}
+		})
+	}
+}
 
-	t.Run("T15_Unknown", func(t *testing.T) {
-		_, err := parseTag("delta.bogus")
-		if err == nil {
-			t.Fatal("expected error for unrecognised tag value, got nil")
+// TestValidateTagCombination smoke-tests the harmonised combination stub.
+// Covers: R-16 (E-14)
+func TestValidateTagCombination(t *testing.T) {
+	// In the baseline, every TagKind is a no-op: parseTag yields one
+	// kind per field, and the single forbidden combination
+	// (delta.omit + delta.clearable) is not expressible via single-tag
+	// Go struct syntax. CL-04 (Phase 7) extends this function.
+	for _, k := range []TagKind{
+		TagKindNone, TagKindEntityKey, TagKindNested,
+		TagKindOmit, TagKindRetired, TagKindCommutative,
+	} {
+		if err := validateTagCombination(ParsedTag{Kind: k}); err != nil {
+			t.Errorf("kind %v: got error %v, want nil (baseline no-op)", k, err)
 		}
-		if !strings.Contains(err.Error(), "delta.bogus") {
-			t.Errorf("error should mention %q, got: %v", "delta.bogus", err)
-		}
-	})
+	}
 }

@@ -119,6 +119,49 @@ func parseTag(raw string) (ParsedTag, error) {
 	return ParsedTag{Kind: kind, Options: opts}, nil
 }
 
+// validateTagShape returns an error if a tag is incompatible with a field
+// shape under the harmonised three-axis model (refinements §1.6.3; Errata
+// E-14, E-17, E-18).
+//
+// Baseline rules (this function in Phase 3):
+//   - TagKindNested: requires a composite shape (struct value, slice, map).
+//     Rejected on scalar and pointer — there is no decomposition axis to
+//     flip on a non-composite shape.
+//   - TagKindOmit / TagKindRetired / TagKindCommutative: admitted on any
+//     shape (presence axis is shape-agnostic).
+//   - TagKindEntityKey: shape validation lives in parseKeyField, not
+//     this gate — value-typed-comparable enforcement is the key-field
+//     responsibility, not the tag-shape gate's.
+//   - TagKindNone: no tag, no constraint.
+//
+// CL-04 (Phase 7) extends this function to gate TagKindClearable (admitted
+// on every shape per E-18) and the nested + clearable combination (E-17).
+func validateTagShape(tag ParsedTag, shape FieldShape) error {
+	switch tag.Kind {
+	case TagKindNested:
+		switch shape {
+		case ShapeScalar, ShapePointer:
+			return fmt.Errorf(
+				"eddt:\"delta.nested\" requires a composite field shape "+
+					"(struct value, slice, map); got %v", shape)
+		}
+	}
+	return nil
+}
+
+// validateTagCombination returns an error if a parsed tag exhibits a
+// disallowed combination under the harmonised three-axis model
+// (refinements §1.6.3; Errata E-14). The single forbidden combination
+// is delta.omit + delta.clearable.
+//
+// In the baseline, multi-tag syntax for that combination is not defined,
+// and parseTag yields a single TagKind per field, so this function is a
+// no-op. CL-04 (Phase 7) extends it once the nested + clearable syntax
+// lands.
+func validateTagCombination(tag ParsedTag) error {
+	return nil
+}
+
 // tagKindFor maps a tag value string to its TagKind.
 func tagKindFor(tagVal string) (TagKind, error) {
 	switch tagVal {
