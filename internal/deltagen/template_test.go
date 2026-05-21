@@ -1,23 +1,33 @@
 package deltagen
 
-// template_test.go exercises the EM-01 / EM-02 code-emission pipeline:
+// template_test.go exercises the EM-01 / EM-02 / EM-03 code-emission pipeline:
 //
 //   - TestBuildSnapshotView: table-driven view-construction unit tests covering
-//     the §1.6.3 atomic-row emission matrix row by row (V01-V10); also checks
-//     Suppressed flag for delta.omit / delta.retired (EM-02) and KeyName.
+//     the §1.6.3 atomic-row emission matrix row by row (V01-V09); also checks
+//     Suppressed and UseReflectEq flags (EM-02, EM-03) and KeyName.
 //   - TestBuildSnapshotView_KeyName: asserts sv.KeyName == "Key" for atomic_all.
+//   - TestBuildSnapshotView_NeedsReflect: asserts NeedsReflect aggregate flag.
 //   - TestEmitTemplate_AtomicAll: end-to-end pipeline test against the
 //     atomic_all fixture; asserts TDelta AST shape, Apply function and method
-//     wrapper presence, per-field Apply contributions (EM-02).
+//     wrapper presence, per-field Apply contributions (EM-02), Diff function
+//     and method wrapper presence, per-field Diff contributions (EM-03).
+//   - TestEmitTemplate_AtomicDiff_CrossPackage: asserts Diff in cross-package
+//     mode: qualified signature, no method wrapper (E-12, EM-03).
+//   - TestEmitTemplate_NoReflectImport_AllScalar: asserts that the "reflect"
+//     import is absent when the Snapshot has only scalar fields.
+//   - TestEmitTemplate_ReflectImport_WhenNeeded: asserts that the "reflect"
+//     import is present when non-scalar fields exist.
 //   - TestEmitTemplate_AtomicApply_CrossPackage: asserts Apply in cross-package
 //     mode: qualified signature, no method wrapper (E-12, EM-02).
 //   - TestEmitTemplate_NestedNotYet: asserts that delta.nested triggers the
 //     Phase-5 sentinel error.
 //   - TestEmitTemplate_CrossPackageQualifier: asserts type-string qualification
 //     in cross-package mode.
-//   - TestEmitTemplate_CompileCheck: runs go test in an isolated temp module
-//     with a replace directive; exercises Apply round-trip and
-//     HeaderAfterApply error propagation (EM-02).
+//   - compileCheckEmit: runs go test in an isolated temp module with a replace
+//     directive; exercises Apply round-trip and HeaderAfterApply error
+//     propagation (EM-02); also exercises Diff round-trip, identity-diff
+//     minimality, partial-diff minimality, and HeaderForDiff error propagation
+//     (EM-03).
 
 import (
 	"bytes"
@@ -40,7 +50,7 @@ func TestBuildSnapshotView(t *testing.T) {
 	// Load and parse the atomic_all fixture; use same-package qualifier.
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 	opts := emitOpts{crossPackage: false, aliases: nil}
-	qualifier, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
 	sv, err := buildSnapshotView(ps, qualifier)
 	if err != nil {
@@ -59,28 +69,29 @@ func TestBuildSnapshotView(t *testing.T) {
 	}
 
 	cases := []struct {
-		// V-number label, field name, expected DeltaName, DeltaType, Suppressed flag.
-		label      string
-		fieldName  string
-		deltaName  string
-		deltaType  string
-		suppressed bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
+		// V-number label, field name, expected DeltaName, DeltaType, flags.
+		label        string
+		fieldName    string
+		deltaName    string
+		deltaType    string
+		suppressed   bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
+		useReflectEq bool // true for non-scalar shapes: UseReflectEq: true (EM-03)
 	}{
-		// V01 — ShapeScalar: emits *T
+		// V01 — ShapeScalar: emits *T; no reflect comparison needed.
 		{label: "V01_Scalar", fieldName: "Scalar", deltaName: "SetScalar", deltaType: "*int32"},
-		// V02 — ShapePointer: emits **T (double-pointer wrap)
-		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string"},
-		// V03 — ShapeStructValue (local, same-pkg): no qualifier, emits *Inner
-		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner"},
-		// V05 — ShapeSlice (atomic per E-15): []byte rendered as []byte (not normalised)
-		{label: "V05_Slice", fieldName: "Slice", deltaName: "SetSlice", deltaType: "*[]byte"},
-		// V06 — ShapeMap (atomic per E-16): emits *map[string]int32
-		{label: "V06_Map", fieldName: "Map", deltaName: "SetMap", deltaType: "*map[string]int32"},
-		// V07 — delta.omit: present in view with Suppressed: true (EM-02)
+		// V02 — ShapePointer: emits **T; reflect.DeepEqual needed (pointer identity != value equality).
+		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string", useReflectEq: true},
+		// V03 — ShapeStructValue (local, same-pkg): no qualifier, emits *Inner; reflect needed.
+		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner", useReflectEq: true},
+		// V05 — ShapeSlice (atomic per E-15): []byte rendered as []byte; reflect needed.
+		{label: "V05_Slice", fieldName: "Slice", deltaName: "SetSlice", deltaType: "*[]byte", useReflectEq: true},
+		// V06 — ShapeMap (atomic per E-16): emits *map[string]int32; reflect needed.
+		{label: "V06_Map", fieldName: "Map", deltaName: "SetMap", deltaType: "*map[string]int32", useReflectEq: true},
+		// V07 — delta.omit: present in view with Suppressed: true; UseReflectEq irrelevant.
 		{label: "V07_Omitted", fieldName: "Omitted", suppressed: true},
-		// V08 — delta.retired: present in view with Suppressed: true (EM-02)
+		// V08 — delta.retired: present in view with Suppressed: true; UseReflectEq irrelevant.
 		{label: "V08_Retired", fieldName: "Retired", suppressed: true},
-		// V09 — delta.commutative: emits as if untagged (§9.5)
+		// V09 — delta.commutative: emits as if untagged (§9.5); ShapeScalar, no reflect.
 		{label: "V09_Commute", fieldName: "Commute", deltaName: "SetCommute", deltaType: "*int32"},
 	}
 
@@ -100,7 +111,7 @@ func TestBuildSnapshotView(t *testing.T) {
 				}
 				return
 			}
-			// Non-suppressed: Suppressed must be false; check Set name and type.
+			// Non-suppressed: Suppressed must be false; check Set name, type, and reflect flag.
 			if fv.Suppressed {
 				t.Errorf("field %q: want Suppressed=false, got true", tc.fieldName)
 			}
@@ -110,7 +121,26 @@ func TestBuildSnapshotView(t *testing.T) {
 			if fv.DeltaType != tc.deltaType {
 				t.Errorf("DeltaType: got %q, want %q", fv.DeltaType, tc.deltaType)
 			}
+			if fv.UseReflectEq != tc.useReflectEq {
+				t.Errorf("UseReflectEq: got %v, want %v", fv.UseReflectEq, tc.useReflectEq)
+			}
 		})
+	}
+
+	// Non-suppressed fields must appear in DiffFields; suppressed must not.
+	diffByName := make(map[string]fieldView, len(sv.DiffFields))
+	for _, f := range sv.DiffFields {
+		diffByName[f.Name] = f
+	}
+	for _, name := range []string{"Scalar", "Pointer", "Struct", "Slice", "Map", "Commute"} {
+		if _, ok := diffByName[name]; !ok {
+			t.Errorf("non-suppressed field %q missing from DiffFields", name)
+		}
+	}
+	for _, name := range []string{"Omitted", "Retired"} {
+		if _, ok := diffByName[name]; ok {
+			t.Errorf("suppressed field %q must not appear in DiffFields", name)
+		}
 	}
 
 	// The entity-key field (Key) must never appear in Fields — it is extracted
@@ -126,7 +156,7 @@ func TestBuildSnapshotView(t *testing.T) {
 func TestBuildSnapshotView_NestedError(t *testing.T) {
 	ps := loadEmitFixture(t, "nested_nyi", "NestedNYISnapshot")
 	opts := emitOpts{crossPackage: false}
-	qualifier, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
 	_, err := buildSnapshotView(ps, qualifier)
 	if err == nil {
@@ -146,7 +176,7 @@ func TestBuildSnapshotView_NestedError(t *testing.T) {
 func TestBuildSnapshotView_KeyName(t *testing.T) {
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 	opts := emitOpts{crossPackage: false}
-	qualifier, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
 	sv, err := buildSnapshotView(ps, qualifier)
 	if err != nil {
@@ -155,6 +185,40 @@ func TestBuildSnapshotView_KeyName(t *testing.T) {
 	if sv.KeyName != "Key" {
 		t.Errorf("KeyName: got %q, want %q", sv.KeyName, "Key")
 	}
+}
+
+// TestBuildSnapshotView_NeedsReflect verifies that sv.NeedsReflect is true when
+// the fixture has non-scalar fields and false when only scalar / suppressed
+// fields are present.
+// Covers: R-21, E-20
+func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
+	// atomic_all has pointer, struct-value, slice, and map fields → NeedsReflect.
+	t.Run("HasNonScalar", func(t *testing.T) {
+		ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
+		opts := emitOpts{crossPackage: false}
+		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+		sv, err := buildSnapshotView(ps, qualifier)
+		if err != nil {
+			t.Fatalf("buildSnapshotView: %v", err)
+		}
+		if !sv.NeedsReflect {
+			t.Errorf("NeedsReflect: got false, want true for fixture with non-scalar fields")
+		}
+	})
+
+	// scalar_only has only scalar + suppressed fields → no reflect needed.
+	t.Run("AllScalar", func(t *testing.T) {
+		ps := loadEmitFixture(t, "scalar_only", "ScalarOnlySnapshot")
+		opts := emitOpts{crossPackage: false}
+		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+		sv, err := buildSnapshotView(ps, qualifier)
+		if err != nil {
+			t.Fatalf("buildSnapshotView: %v", err)
+		}
+		if sv.NeedsReflect {
+			t.Errorf("NeedsReflect: got true, want false for all-scalar fixture")
+		}
+	})
 }
 
 // ── Group EM: end-to-end template tests ──────────────────────────────────────
@@ -272,6 +336,61 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Apply method wrapper not found (expected in same-package mode)")
 	}
 
+	// ── Diff function shape (EM-03) ───────────────────────────────────────────
+
+	diffFn := findFuncDecl(f, "Diff")
+	if diffFn == nil {
+		t.Fatalf("Diff function not found in generated file")
+	}
+
+	// Signature: func Diff(a, b AtomicAllSnapshot) (AtomicAllSnapshotDelta, error)
+	if diffFn.Type.Params.NumFields() != 2 {
+		t.Errorf("Diff: want 2 params, got %d", diffFn.Type.Params.NumFields())
+	}
+	if diffFn.Type.Results.NumFields() != 2 {
+		t.Errorf("Diff: want 2 results, got %d", diffFn.Type.Results.NumFields())
+	}
+
+	// Body must contain the HeaderForDiff call.
+	if !strings.Contains(srcStr, "runtime.HeaderForDiff(a.Header, b.Header)") {
+		t.Errorf("Diff body missing runtime.HeaderForDiff(a.Header, b.Header)")
+	}
+
+	// Scalar field uses !=; non-scalar fields use reflect.DeepEqual.
+	if !strings.Contains(srcStr, "a.Scalar != b.Scalar") {
+		t.Errorf("Diff body missing scalar comparison: a.Scalar != b.Scalar")
+	}
+	for _, name := range []string{"Pointer", "Struct", "Slice", "Map", "Commute"} {
+		// Commute is ShapeScalar (int32), so it uses !=; the others use DeepEqual.
+		if name == "Commute" {
+			if !strings.Contains(srcStr, "a.Commute != b.Commute") {
+				t.Errorf("Diff body missing scalar comparison for commutative field: a.Commute != b.Commute")
+			}
+			continue
+		}
+		if !strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
+			t.Errorf("Diff body missing reflect.DeepEqual for %s", name)
+		}
+	}
+
+	// Suppressed and entity-key fields must NOT appear in the Diff body.
+	for _, name := range []string{"Omitted", "Retired", "Key"} {
+		if strings.Contains(srcStr, "a."+name) || strings.Contains(srcStr, "b."+name) {
+			t.Errorf("Diff body must not reference suppressed/key field %q", name)
+		}
+	}
+
+	// "reflect" import must be present (non-scalar fields trigger it).
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("generated file missing \"reflect\" import")
+	}
+
+	// ── Diff method wrapper present (same-package mode, E-12) ────────────────
+
+	if findMethodDecl(f, "AtomicAllSnapshot", "Diff") == nil {
+		t.Errorf("Diff method wrapper not found (expected in same-package mode)")
+	}
+
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmit(t, src)
 	})
@@ -386,6 +505,135 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 	}
 }
 
+// TestEmitTemplate_AtomicDiff_CrossPackage verifies Diff emission in
+// cross-package mode: source-package types are qualified in the function
+// signature, and no Diff method wrapper is emitted (E-12).
+// Covers: R-21, E-12, E-20
+func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/cross_pkg/model"},
+		TargetStructs:      []string{"CrossPkgSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Diff must be present as a package-level function.
+	if findFuncDecl(f, "Diff") == nil {
+		t.Fatalf("Diff function not found in generated file")
+	}
+
+	// Signature must qualify source-package types (E-12).
+	if !strings.Contains(srcStr, "model.CrossPkgSnapshot") {
+		t.Errorf("expected 'model.CrossPkgSnapshot' in Diff signature, got:\n%s", srcStr)
+	}
+	// Diff(a, b T) (TDelta, error) — both params use the qualified type.
+	if !strings.Contains(srcStr, "func Diff(a, b model.CrossPkgSnapshot)") {
+		t.Errorf("expected 'func Diff(a, b model.CrossPkgSnapshot)' in generated file, got:\n%s", srcStr)
+	}
+
+	// No Diff method wrapper in cross-package mode (E-12).
+	if findMethodDecl(f, "CrossPkgSnapshot", "Diff") != nil {
+		t.Errorf("Diff method wrapper must not be emitted in cross-package mode")
+	}
+
+	// CrossPkgSnapshot has Location Address (ShapeStructValue) → reflect needed.
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("expected \"reflect\" import for non-scalar field, got:\n%s", srcStr)
+	}
+}
+
+// TestEmitTemplate_NoReflectImport_AllScalar verifies that the "reflect" import
+// is absent when the Snapshot contains only scalar and suppressed fields.
+// Covers: R-21, E-20
+func TestEmitTemplate_NoReflectImport_AllScalar(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "scalar_only_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/scalar_only"},
+		TargetStructs: []string{"ScalarOnlySnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	// No "reflect" import must be present for an all-scalar Snapshot.
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("unexpected \"reflect\" import for all-scalar Snapshot:\n%s", srcStr)
+	}
+	// No reflect.DeepEqual call anywhere in the Diff body.
+	if strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Errorf("unexpected reflect.DeepEqual call for all-scalar Snapshot:\n%s", srcStr)
+	}
+	// Scalar comparisons use !=.
+	if !strings.Contains(srcStr, "a.Count != b.Count") {
+		t.Errorf("expected '!= ' comparison for scalar Count field:\n%s", srcStr)
+	}
+}
+
+// TestEmitTemplate_ReflectImport_WhenNeeded verifies that the "reflect" import
+// is present when the Snapshot contains non-scalar fields.
+// Covers: R-21, E-20
+func TestEmitTemplate_ReflectImport_WhenNeeded(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "atomic_all_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/atomic_all"},
+		TargetStructs: []string{"AtomicAllSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	// "reflect" import must be present.
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("expected \"reflect\" import for Snapshot with non-scalar fields:\n%s", srcStr)
+	}
+	// At least one reflect.DeepEqual call must be in the Diff body.
+	if !strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Errorf("expected reflect.DeepEqual in Diff body for non-scalar fields:\n%s", srcStr)
+	}
+}
+
 // ── Compile-check helper ──────────────────────────────────────────────────────
 
 // compileCheckEmit writes the generated source (plus a matching source
@@ -393,7 +641,10 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 // for go.resystems.io/eddt, then:
 //   - asserts the generated delta.go is gofmt-clean (R-11),
 //   - runs go test ./... to type-check and exercise Apply round-trip behaviour
-//     (R-20) and HeaderAfterApply error propagation (E-19).
+//     (R-20) and HeaderAfterApply error propagation (E-19),
+//   - exercises Diff round-trip Apply(a, Diff(a, b)) == b across all five
+//     atomic shapes (R-28), identity-diff Set* nilness (R-29 / E-06),
+//     partial-diff minimality, and HeaderForDiff error propagation (E-20).
 //
 // The temp module reuses the eddt module's go.sum so that transitive
 // dependencies (e.g. golang.org/x/crypto) resolve without network access.
@@ -521,6 +772,251 @@ func TestApplyHeaderValidationError(t *testing.T) {
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "apply_test.go"), []byte(testCode), 0644); err != nil {
 		t.Fatalf("write apply_test.go: %v", err)
+	}
+
+	// Write a behaviour test exercising Diff round-trip (R-28), identity-diff
+	// minimality (R-29 / E-06), partial-diff minimality, and HeaderForDiff
+	// error propagation (E-20).
+	diffTestCode := `package atomic_all_test
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"atomic_all"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// makeSnap constructs an AtomicAllSnapshot with a unique filler value per
+// field so that two snapshots with different fillers differ in every payload
+// field. seq and t set the chain position; id is the EntityID.
+func makeSnap(id eddt.EntityID, seq uint64, t time.Time, filler int) atomic_all.AtomicAllSnapshot {
+	ptr := "hello" + string(rune('A'+filler))
+	inner := atomic_all.Inner{A: int32(filler), B: int32(filler + 1)}
+	sl := []byte{byte(filler), byte(filler + 1), byte(filler + 2)}
+	m := map[string]int32{"k": int32(filler)}
+	var s atomic_all.AtomicAllSnapshot
+	s.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: seq, EffectiveAt: t}
+	s.Key = "key"
+	s.Scalar = int32(filler * 10)
+	s.Pointer = &ptr
+	s.Struct = inner
+	s.Slice = sl
+	s.Map = m
+	s.Commute = int32(filler * 3)
+	s.Omitted = "omitted"
+	s.Retired = "retired"
+	return s
+}
+
+// TestDiffApplyRoundTrip verifies Apply(a, Diff(a, b)) payload-equals b across
+// all five atomic shapes plus delta.commutative (R-28).
+// Suppressed fields must equal a (propagated by Apply; Diff emits nothing for them).
+// Header equality is not asserted — it advances by construction (E-06).
+// Covers: R-28, R-21, E-20
+func TestDiffApplyRoundTrip(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+	a := makeSnap(id, 1, t1, 1)
+	b := makeSnap(id, 2, t2, 2)
+
+	delta, err := atomic_all.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	result, err := atomic_all.Apply(a, delta)
+	if err != nil {
+		t.Fatalf("Apply(a, Diff(a,b)): %v", err)
+	}
+
+	// Payload equality with b for all atomic + commutative fields.
+	if result.Scalar != b.Scalar {
+		t.Errorf("Scalar: got %d, want %d", result.Scalar, b.Scalar)
+	}
+	if !reflect.DeepEqual(result.Pointer, b.Pointer) {
+		t.Errorf("Pointer: got %v, want %v", result.Pointer, b.Pointer)
+	}
+	if result.Struct != b.Struct {
+		t.Errorf("Struct: got %v, want %v", result.Struct, b.Struct)
+	}
+	if !reflect.DeepEqual(result.Slice, b.Slice) {
+		t.Errorf("Slice: got %v, want %v", result.Slice, b.Slice)
+	}
+	if !reflect.DeepEqual(result.Map, b.Map) {
+		t.Errorf("Map: got %v, want %v", result.Map, b.Map)
+	}
+	if result.Commute != b.Commute {
+		t.Errorf("Commute: got %d, want %d", result.Commute, b.Commute)
+	}
+	// Entity-key propagated from a (== b.Key by HeaderForDiff EntityID contract).
+	if result.Key != a.Key {
+		t.Errorf("Key: got %q, want %q", result.Key, a.Key)
+	}
+	// Suppressed fields propagate from a (Diff emits nothing for them).
+	if result.Omitted != a.Omitted {
+		t.Errorf("Omitted (suppressed): got %q, want %q", result.Omitted, a.Omitted)
+	}
+	if result.Retired != a.Retired {
+		t.Errorf("Retired (suppressed): got %q, want %q", result.Retired, a.Retired)
+	}
+}
+
+// TestDiffIdentity verifies Diff(a, a) produces a TDelta with all Set* fields
+// nil (minimality of the identity diff, R-29). Apply(a, Diff(a, a)) is NOT
+// called — that would violate HeaderAfterApply's strict Sequence monotonicity
+// precondition (E-06: identity diff Sequence == a.Sequence).
+// Covers: R-29, E-06
+func TestDiffIdentity(t *testing.T) {
+	id := eddt.EntityID{1}
+	now := time.Now()
+	a := makeSnap(id, 1, now, 5)
+
+	delta, err := atomic_all.Diff(a, a)
+	if err != nil {
+		t.Fatalf("Diff(a, a): %v", err)
+	}
+
+	// Every Set* field must be nil — no change between identical snapshots.
+	if delta.SetScalar != nil {
+		t.Errorf("SetScalar: want nil for identity diff, got %v", delta.SetScalar)
+	}
+	if delta.SetPointer != nil {
+		t.Errorf("SetPointer: want nil for identity diff, got %v", delta.SetPointer)
+	}
+	if delta.SetStruct != nil {
+		t.Errorf("SetStruct: want nil for identity diff, got %v", delta.SetStruct)
+	}
+	if delta.SetSlice != nil {
+		t.Errorf("SetSlice: want nil for identity diff, got %v", delta.SetSlice)
+	}
+	if delta.SetMap != nil {
+		t.Errorf("SetMap: want nil for identity diff, got %v", delta.SetMap)
+	}
+	if delta.SetCommute != nil {
+		t.Errorf("SetCommute: want nil for identity diff, got %v", delta.SetCommute)
+	}
+	// Note: Apply(a, delta) is intentionally not called here.
+	// delta.Header.Sequence == a.Header.Sequence, violating HeaderAfterApply's
+	// strict monotonicity precondition (E-06).
+}
+
+// TestDiffPartial verifies that Diff produces a minimal delta: only the one
+// field that differs between a and c has a non-nil Set* value.
+// Covers: R-28, R-21
+func TestDiffPartial(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+	a := makeSnap(id, 1, t1, 1)
+	// c copies a exactly, then changes only Scalar.
+	c := a
+	c.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: t2}
+	c.Scalar = a.Scalar + 100
+
+	delta, err := atomic_all.Diff(a, c)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	// Only SetScalar must be non-nil.
+	if delta.SetScalar == nil || *delta.SetScalar != c.Scalar {
+		t.Errorf("SetScalar: want &%d, got %v", c.Scalar, delta.SetScalar)
+	}
+	// All other Set* fields must be nil.
+	if delta.SetPointer != nil {
+		t.Errorf("SetPointer: want nil (unchanged), got non-nil")
+	}
+	if delta.SetStruct != nil {
+		t.Errorf("SetStruct: want nil (unchanged), got non-nil")
+	}
+	if delta.SetSlice != nil {
+		t.Errorf("SetSlice: want nil (unchanged), got non-nil")
+	}
+	if delta.SetMap != nil {
+		t.Errorf("SetMap: want nil (unchanged), got non-nil")
+	}
+	if delta.SetCommute != nil {
+		t.Errorf("SetCommute: want nil (unchanged), got non-nil")
+	}
+}
+
+// TestDiffHeaderForDiffError verifies that Diff returns a non-nil error when
+// HeaderForDiff rejects the inputs (e.g. mismatched EntityID).
+// This pins the (TDelta, error) signature behaviour under E-20.
+// Covers: R-21, E-20
+func TestDiffHeaderForDiffError(t *testing.T) {
+	id1 := eddt.EntityID{1}
+	id2 := eddt.EntityID{2}
+	now := time.Now()
+	a := makeSnap(id1, 1, now, 1)
+	b := makeSnap(id2, 2, now.Add(time.Second), 2) // different EntityID
+
+	_, err := atomic_all.Diff(a, b)
+	if err == nil {
+		t.Fatal("Diff: want error for mismatched EntityID, got nil")
+	}
+	if !strings.Contains(err.Error(), "EntityID") {
+		t.Errorf("error should mention EntityID, got: %v", err)
+	}
+}
+
+// TestDiffApplyRoundTrip_FromZero verifies Apply(zero, Diff(zero, x)) == x,
+// where zero has valid Header metadata but all payload fields at their Go zero
+// values (Scalar=0, Pointer=nil, Struct=Inner{}, Slice=nil, Map=nil,
+// Commute=0). This exercises the nil-pointer, nil-slice, and nil-map branches
+// of reflect.DeepEqual in the Diff body — cases not covered by
+// TestDiffApplyRoundTrip, which uses non-zero payload on both sides.
+// Covers: R-28
+func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+
+	// zero: valid header, all payload fields at Go zero values.
+	var zero atomic_all.AtomicAllSnapshot
+	zero.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: t1}
+	zero.Key = "key"
+	// Scalar=0, Pointer=nil, Struct=Inner{}, Slice=nil, Map=nil, Commute=0
+
+	x := makeSnap(id, 2, t2, 3)
+
+	delta, err := atomic_all.Diff(zero, x)
+	if err != nil {
+		t.Fatalf("Diff(zero, x): %v", err)
+	}
+
+	result, err := atomic_all.Apply(zero, delta)
+	if err != nil {
+		t.Fatalf("Apply(zero, Diff(zero, x)): %v", err)
+	}
+
+	// All payload fields must equal x.
+	if result.Scalar != x.Scalar {
+		t.Errorf("Scalar: got %d, want %d", result.Scalar, x.Scalar)
+	}
+	if !reflect.DeepEqual(result.Pointer, x.Pointer) {
+		t.Errorf("Pointer: got %v, want %v", result.Pointer, x.Pointer)
+	}
+	if result.Struct != x.Struct {
+		t.Errorf("Struct: got %v, want %v", result.Struct, x.Struct)
+	}
+	if !reflect.DeepEqual(result.Slice, x.Slice) {
+		t.Errorf("Slice: got %v, want %v", result.Slice, x.Slice)
+	}
+	if !reflect.DeepEqual(result.Map, x.Map) {
+		t.Errorf("Map: got %v, want %v", result.Map, x.Map)
+	}
+	if result.Commute != x.Commute {
+		t.Errorf("Commute: got %d, want %d", result.Commute, x.Commute)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "diff_test.go"), []byte(diffTestCode), 0644); err != nil {
+		t.Fatalf("write diff_test.go: %v", err)
 	}
 
 	// Write go.mod with a replace directive pointing at the local module root.

@@ -13,11 +13,14 @@ package deltagen
 //     types shared by all Phase-4 items.
 //   - buildImports constructs the import set and a types.Qualifier closure;
 //     the qualifier side-effects the import set as types.TypeString encounters
-//     foreign-package references during view construction.
+//     foreign-package references during view construction. The returned
+//     recordExtra closure allows callers to inject additional imports (e.g.
+//     "reflect") after view construction is complete.
 //   - buildSnapshotView translates one ParsedSnapshot into a snapshotView;
 //     it applies suppression (omit/retired) and the Phase-5 sentinel
 //     (delta.nested) before rendering each field's Delta-side type via
-//     types.TypeString.
+//     types.TypeString. Sets UseReflectEq per field and NeedsReflect per
+//     snapshot for the conditional reflect-import logic (EM-03).
 //   - executeEmit orchestrates build → execute → go/format → WriteFile,
 //     called by generator.go's emitStage.
 //
@@ -90,15 +93,25 @@ type snapshotView struct {
 	KeyName string
 
 	// EmitMethod is true when the output package matches the source package
-	// (E-12). When true, the template emits a same-package method wrapper that
-	// delegates to the package-level Apply function (EM-02).
+	// (E-12). When true, the template emits same-package method wrappers that
+	// delegate to the package-level Apply and Diff functions (EM-02, EM-03).
 	EmitMethod bool
+
+	// NeedsReflect is true when at least one DiffFields entry uses
+	// reflect.DeepEqual for its comparison (EM-03). executeEmit uses this to
+	// inject a "reflect" import only when needed.
+	NeedsReflect bool
 
 	// Fields is the ordered list of payload fields in source declaration order
 	// (excluding the entity-key field extracted into KeyName). Suppressed fields
 	// (delta.omit / delta.retired) are included with Suppressed: true so the
 	// Apply template can emit result.F = s.F propagation assignments (EM-02).
 	Fields []fieldView
+
+	// DiffFields is the subset of Fields that have a Delta-side representation
+	// (i.e. non-suppressed fields). The Diff template iterates DiffFields so
+	// that suppressed fields produce no body line (EM-03).
+	DiffFields []fieldView
 }
 
 // fieldView is the template's per-field view of one payload field in TDelta.
@@ -116,20 +129,31 @@ type fieldView struct {
 
 	// Suppressed is true for delta.omit and delta.retired fields. The
 	// Delta-side field is absent from TDelta but Apply still propagates the
-	// source value via result.F = s.F (EM-02).
+	// source value via result.F = s.F (EM-02). Suppressed fields are excluded
+	// from DiffFields and therefore produce no Diff body line (EM-03).
 	Suppressed bool
+
+	// UseReflectEq is true when the Diff template must use reflect.DeepEqual
+	// rather than != to compare this field's values (EM-03). Set for all
+	// non-scalar shapes: pointer, struct value, slice, map.
+	UseReflectEq bool
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
 
 // deltaTemplateStr is the text/template source for the generated Delta file.
 // EM-02 scope: type declarations (EM-01) + Apply function and method wrapper.
-// Named sub-templates for Diff, Coalesce, and EntityID are added by EM-03..EM-05.
+// EM-03 scope: Diff function and method wrapper.
+// Named sub-templates for Coalesce and EntityID are added by EM-04..EM-05.
 //
 // Sub-template inventory:
-//   - applyFunc:  package-level Apply function (always emitted).
-//   - applyField: per-field Apply contribution (atomic or suppressed).
+//   - applyFunc:   package-level Apply function (always emitted).
+//   - applyField:  per-field Apply contribution (atomic or suppressed).
 //   - applyMethod: same-package method wrapper delegating to Apply (E-12).
+//   - diffFunc:    package-level Diff function (always emitted).
+//   - diffField:   per-field Diff contribution (non-suppressed fields only,
+//     using != for scalars and reflect.DeepEqual for others).
+//   - diffMethod:  same-package method wrapper delegating to Diff (E-12).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -154,6 +178,8 @@ type {{.DeltaName}} struct {
 }
 {{template "applyFunc" .}}
 {{if .EmitMethod}}{{template "applyMethod" .}}
+{{end}}{{template "diffFunc" .}}
+{{if .EmitMethod}}{{template "diffMethod" .}}
 {{end}}{{end -}}
 
 {{define "applyFunc"}}
@@ -181,6 +207,32 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 // package-level Apply function (E-12).
 func (s {{.Name}}) Apply(d {{.DeltaName}}) ({{.Name}}, error) {
 	return Apply(s, d)
+}
+{{end -}}
+
+{{define "diffFunc"}}
+// Diff produces the minimal Delta d such that Apply(a, d) payload-equals b.
+// It is a pure function; chain-envelope validations live in
+// runtime.HeaderForDiff and are propagated to the caller as a non-nil error.
+// See delta-gen-spec.md §6.5 / §7.2 (Errata E-20).
+func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
+	hdr, err := runtime.HeaderForDiff(a.Header, b.Header)
+	if err != nil {
+		return {{.DeltaName}}{}, err
+	}
+	d := {{.DeltaName}}{Header: hdr}
+{{range .DiffFields}}	{{template "diffField" .}}
+{{end}}	return d, nil
+}
+{{end -}}
+
+{{define "diffField"}}{{if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+
+{{define "diffMethod"}}
+// Diff is an ergonomic same-package wrapper that delegates to the
+// package-level Diff function (E-12).
+func (a {{.Name}}) Diff(b {{.Name}}) ({{.DeltaName}}, error) {
+	return Diff(a, b)
 }
 {{end}}`
 
@@ -238,7 +290,9 @@ func parsePkgAliases(raw []string) map[string]string {
 
 // ── Import / qualifier construction ──────────────────────────────────────────
 
-// buildImports returns a types.Qualifier closure and a lazy import-list getter.
+// buildImports returns a types.Qualifier closure, a lazy import-list getter,
+// and a recordExtra closure for injecting additional imports after view
+// construction is complete (e.g. "reflect" when Diff needs reflect.DeepEqual).
 //
 // The qualifier is a side-effecting function: every foreign *types.Package that
 // types.TypeString encounters while rendering a field type is recorded in an
@@ -251,7 +305,7 @@ func parsePkgAliases(raw []string) map[string]string {
 func buildImports(
 	snapshots []*ParsedSnapshot,
 	opts emitOpts,
-) (qualifier types.Qualifier, getImports func() []importSpec) {
+) (qualifier types.Qualifier, getImports func() []importSpec, recordExtra func(string)) {
 	// recorded maps import-path → importSpec; populated eagerly for runtime and
 	// cross-pkg sources, and lazily by the qualifier closure for foreign types.
 	recorded := map[string]importSpec{
@@ -316,7 +370,13 @@ func buildImports(
 		return list
 	}
 
-	return qual, getImports
+	recordExtra = func(path string) {
+		if _, exists := recorded[path]; !exists {
+			recorded[path] = importSpec{Path: path}
+		}
+	}
+
+	return qual, getImports, recordExtra
 }
 
 // ── View construction ─────────────────────────────────────────────────────────
@@ -368,11 +428,21 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotV
 		// Render the Delta-side type as *<GoType>; one pointer wrap covers all shapes.
 		deltaType := types.TypeString(types.NewPointer(f.GoType), qualifier)
 
-		sv.Fields = append(sv.Fields, fieldView{
+		fv := fieldView{
 			Name:      f.Name,
 			DeltaName: "Set" + f.Name,
 			DeltaType: deltaType,
-		})
+		}
+		// Non-scalar shapes require reflect.DeepEqual for Diff comparisons (EM-03):
+		// pointer identity != value equality, and slice/map have no == operator.
+		if f.Shape != ShapeScalar {
+			fv.UseReflectEq = true
+			sv.NeedsReflect = true
+		}
+		sv.Fields = append(sv.Fields, fv)
+		// DiffFields excludes suppressed fields so the Diff template emits no body
+		// line for them (EM-03).
+		sv.DiffFields = append(sv.DiffFields, fv)
 	}
 
 	return sv, nil
@@ -383,10 +453,12 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotV
 // executeEmit runs the full Phase-4 emit pipeline:
 //
 //  1. Parse --pkg-alias entries and derive emitOpts.
-//  2. Build the qualifier / import-recorder via buildImports.
+//  2. Build the qualifier, import-recorder, and extra-import injector via
+//     buildImports.
 //  3. Translate each ParsedSnapshot to a snapshotView via buildSnapshotView
 //     (this side-effects the qualifier to record foreign packages).
-//  4. Materialise the import list via getImports().
+//  4. Inject the "reflect" import if any view has NeedsReflect set (EM-03),
+//     then materialise the import list via getImports().
 //  5. Execute deltaTemplate into a buffer.
 //  6. Format the buffer with go/format.Source (syntax errors include the raw
 //     source for debuggability, mirroring the arrow-writer-gen pattern).
@@ -397,8 +469,8 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		aliases:      parsePkgAliases(g.PkgAliases),
 	}
 
-	// Step 2: build the qualifier and import-recorder.
-	qualifier, getImports := buildImports(snapshots, opts)
+	// Step 2: build the qualifier, import-recorder, and extra-import injector.
+	qualifier, getImports, recordExtra := buildImports(snapshots, opts)
 
 	// Step 3: translate each snapshot into a template view.
 	views := make([]snapshotView, 0, len(snapshots))
@@ -422,7 +494,16 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		views = append(views, sv)
 	}
 
-	// Step 4: materialise imports after all type strings have been rendered.
+	// Step 4: inject the "reflect" import if any Diff field uses reflect.DeepEqual,
+	// then materialise the import list. The check must run after all views are
+	// built so that NeedsReflect is fully populated across all target structs.
+	for _, sv := range views {
+		if sv.NeedsReflect {
+			recordExtra("reflect")
+			break
+		}
+	}
+
 	data := templateData{
 		Version:     g.Version,
 		PackageName: g.OutPkgName,
