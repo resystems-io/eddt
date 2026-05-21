@@ -85,8 +85,19 @@ type snapshotView struct {
 	// Empty for same-package output.
 	Qualifier string
 
-	// Fields is the ordered list of payload fields to declare on TDelta.
-	// Suppressed fields (delta.omit / delta.retired) are already excluded.
+	// KeyName is the source field name of the entity-key field (ps.KeyVar.Name()).
+	// Used in Apply to emit "result.<KeyName> = s.<KeyName>" (EM-02).
+	KeyName string
+
+	// EmitMethod is true when the output package matches the source package
+	// (E-12). When true, the template emits a same-package method wrapper that
+	// delegates to the package-level Apply function (EM-02).
+	EmitMethod bool
+
+	// Fields is the ordered list of payload fields in source declaration order
+	// (excluding the entity-key field extracted into KeyName). Suppressed fields
+	// (delta.omit / delta.retired) are included with Suppressed: true so the
+	// Apply template can emit result.F = s.F propagation assignments (EM-02).
 	Fields []fieldView
 }
 
@@ -95,18 +106,30 @@ type fieldView struct {
 	// Name is the source field name (e.g. "Address").
 	Name string
 
-	// DeltaName is the emitted Delta field name (e.g. "SetAddress").
+	// DeltaName is the emitted Delta-side field name (e.g. "SetAddress").
+	// Empty when Suppressed is true.
 	DeltaName string
 
 	// DeltaType is the rendered Go type string (e.g. "*string", "**int32").
+	// Empty when Suppressed is true.
 	DeltaType string
+
+	// Suppressed is true for delta.omit and delta.retired fields. The
+	// Delta-side field is absent from TDelta but Apply still propagates the
+	// source value via result.F = s.F (EM-02).
+	Suppressed bool
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
 
 // deltaTemplateStr is the text/template source for the generated Delta file.
-// EM-01 scope: type declarations only.  Named sub-templates for Apply, Diff,
-// Coalesce, and EntityID are added by EM-02..EM-05.
+// EM-02 scope: type declarations (EM-01) + Apply function and method wrapper.
+// Named sub-templates for Diff, Coalesce, and EntityID are added by EM-03..EM-05.
+//
+// Sub-template inventory:
+//   - applyFunc:  package-level Apply function (always emitted).
+//   - applyField: per-field Apply contribution (atomic or suppressed).
+//   - applyMethod: same-package method wrapper delegating to Apply (E-12).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -125,9 +148,39 @@ import (
 // "no change" for that field when Apply is called.
 type {{.DeltaName}} struct {
 	runtime.Header
-{{- range .Fields}}
+{{- range .Fields}}{{if not .Suppressed}}
 	{{.DeltaName}} {{.DeltaType}}
-{{- end}}
+{{- end}}{{end}}
+}
+{{template "applyFunc" .}}
+{{if .EmitMethod}}{{template "applyMethod" .}}
+{{end}}{{end -}}
+
+{{define "applyFunc"}}
+// Apply produces the Snapshot that results from applying d to s.
+// It is a pure function; chain-envelope validations live in
+// runtime.HeaderAfterApply and are propagated to the caller as a
+// non-nil error. See delta-gen-spec.md §6.4 / §7.1 (Errata E-19).
+func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
+	var result {{.Qualifier}}{{.Name}}
+	hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)
+	if err != nil {
+		return result, err
+	}
+	result.Header = hdr
+	result.{{.KeyName}} = s.{{.KeyName}}
+{{range .Fields}}	{{template "applyField" .}}
+{{end}}	return result, nil
+}
+{{end -}}
+
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+
+{{define "applyMethod"}}
+// Apply is an ergonomic same-package wrapper that delegates to the
+// package-level Apply function (E-12).
+func (s {{.Name}}) Apply(d {{.DeltaName}}) ({{.Name}}, error) {
+	return Apply(s, d)
 }
 {{end}}`
 
@@ -270,12 +323,13 @@ func buildImports(
 
 // buildSnapshotView constructs the template view for one ParsedSnapshot.
 //
-// Suppression (delta.omit / delta.retired) is applied at view-construction
-// time so the template never sees suppressed fields.
+// delta.nested on any shape returns an explicit error directing the caller
+// to Phase 5. (delta.clearable is already rejected upstream by T-01.)
 //
-// EM-01 scope: only the atomic rows of §1.6.3 are emitted.  delta.nested
-// on any shape returns an explicit error directing the caller to Phase 5.
-// (delta.clearable is already rejected upstream by the tag parser in T-01.)
+// Suppressed fields (delta.omit / delta.retired) are included in sv.Fields
+// with Suppressed: true so the Apply template can emit result.F = s.F
+// propagation assignments (EM-02). The Delta-side type declaration template
+// gates on {{not .Suppressed}} to keep them out of TDelta.
 //
 // Each admitted field's DeltaType is rendered via types.TypeString on a
 // single pointer-wrap of the source GoType:
@@ -292,19 +346,22 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotV
 	sv := snapshotView{
 		Name:      ps.Name,
 		DeltaName: ps.Name + "Delta",
+		KeyName:   ps.KeyVar.Name(),
 	}
 
 	for _, f := range ps.Fields {
-		// Presence-axis: suppress omit/retired fields entirely.
-		if f.Tag.Kind == TagKindOmit || f.Tag.Kind == TagKindRetired {
-			continue
-		}
-
 		// Phase-5 sentinel: delta.nested requires compositional emission (N-01/N-03/N-04).
 		if f.Tag.Kind == TagKindNested {
 			return snapshotView{}, fmt.Errorf(
 				"field %s.%s: delta.nested emission is not yet implemented (Phase 5)",
 				ps.Name, f.Name)
+		}
+
+		// Presence-axis: omit/retired fields are suppressed on the Delta side
+		// but still appear in Fields so the Apply template emits result.F = s.F.
+		if f.Tag.Kind == TagKindOmit || f.Tag.Kind == TagKindRetired {
+			sv.Fields = append(sv.Fields, fieldView{Name: f.Name, Suppressed: true})
+			continue
 		}
 
 		// TagKindNone and TagKindCommutative both emit as atomic (§9.5).
@@ -358,6 +415,9 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 				sv.Qualifier = alias + "."
 			}
 		}
+
+		// EmitMethod gates the same-package method wrapper (E-12, EM-02).
+		sv.EmitMethod = !g.CrossPackage
 
 		views = append(views, sv)
 	}

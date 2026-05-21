@@ -1,18 +1,23 @@
 package deltagen
 
-// template_test.go exercises the EM-01 code-emission pipeline:
+// template_test.go exercises the EM-01 / EM-02 code-emission pipeline:
 //
 //   - TestBuildSnapshotView: table-driven view-construction unit tests covering
-//     the §1.6.3 atomic-row emission matrix row by row (V01-V10).
+//     the §1.6.3 atomic-row emission matrix row by row (V01-V10); also checks
+//     Suppressed flag for delta.omit / delta.retired (EM-02) and KeyName.
+//   - TestBuildSnapshotView_KeyName: asserts sv.KeyName == "Key" for atomic_all.
 //   - TestEmitTemplate_AtomicAll: end-to-end pipeline test against the
-//     atomic_all fixture; asserts AST shape via go/parser.
+//     atomic_all fixture; asserts TDelta AST shape, Apply function and method
+//     wrapper presence, per-field Apply contributions (EM-02).
+//   - TestEmitTemplate_AtomicApply_CrossPackage: asserts Apply in cross-package
+//     mode: qualified signature, no method wrapper (E-12, EM-02).
 //   - TestEmitTemplate_NestedNotYet: asserts that delta.nested triggers the
 //     Phase-5 sentinel error.
 //   - TestEmitTemplate_CrossPackageQualifier: asserts type-string qualification
 //     in cross-package mode.
-//   - TestEmitTemplate_CompileCheck: runs go build in an isolated temp module
-//     with a replace directive to prove the generated TDelta type-checks against
-//     the local runtime package.
+//   - TestEmitTemplate_CompileCheck: runs go test in an isolated temp module
+//     with a replace directive; exercises Apply round-trip and
+//     HeaderAfterApply error propagation (EM-02).
 
 import (
 	"bytes"
@@ -54,12 +59,12 @@ func TestBuildSnapshotView(t *testing.T) {
 	}
 
 	cases := []struct {
-		// V-number label, field name, expected DeltaName, expected DeltaType
-		label     string
-		fieldName string
-		deltaName string
-		deltaType string
-		absent    bool // true when the field must NOT be in the view
+		// V-number label, field name, expected DeltaName, DeltaType, Suppressed flag.
+		label      string
+		fieldName  string
+		deltaName  string
+		deltaType  string
+		suppressed bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
 	}{
 		// V01 — ShapeScalar: emits *T
 		{label: "V01_Scalar", fieldName: "Scalar", deltaName: "SetScalar", deltaType: "*int32"},
@@ -71,10 +76,10 @@ func TestBuildSnapshotView(t *testing.T) {
 		{label: "V05_Slice", fieldName: "Slice", deltaName: "SetSlice", deltaType: "*[]byte"},
 		// V06 — ShapeMap (atomic per E-16): emits *map[string]int32
 		{label: "V06_Map", fieldName: "Map", deltaName: "SetMap", deltaType: "*map[string]int32"},
-		// V07 — delta.omit: suppressed, absent from view
-		{label: "V07_Omitted", fieldName: "Omitted", absent: true},
-		// V08 — delta.retired: suppressed, absent from view
-		{label: "V08_Retired", fieldName: "Retired", absent: true},
+		// V07 — delta.omit: present in view with Suppressed: true (EM-02)
+		{label: "V07_Omitted", fieldName: "Omitted", suppressed: true},
+		// V08 — delta.retired: present in view with Suppressed: true (EM-02)
+		{label: "V08_Retired", fieldName: "Retired", suppressed: true},
 		// V09 — delta.commutative: emits as if untagged (§9.5)
 		{label: "V09_Commute", fieldName: "Commute", deltaName: "SetCommute", deltaType: "*int32"},
 	}
@@ -82,15 +87,22 @@ func TestBuildSnapshotView(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
 			fv, ok := byName[tc.fieldName]
-			if tc.absent {
-				if ok {
-					t.Errorf("field %q should be suppressed but appears in view", tc.fieldName)
+			if !ok {
+				t.Fatalf("field %q missing from view; view has: %v", tc.fieldName, viewNames(sv))
+			}
+			if tc.suppressed {
+				// Suppressed fields must carry Suppressed: true and empty Set name/type.
+				if !fv.Suppressed {
+					t.Errorf("field %q: want Suppressed=true, got false", tc.fieldName)
+				}
+				if fv.DeltaName != "" {
+					t.Errorf("field %q: suppressed should have empty DeltaName, got %q", tc.fieldName, fv.DeltaName)
 				}
 				return
 			}
-			if !ok {
-				t.Fatalf("field %q missing from view; view has: %v", tc.fieldName, viewNames(sv))
-				return
+			// Non-suppressed: Suppressed must be false; check Set name and type.
+			if fv.Suppressed {
+				t.Errorf("field %q: want Suppressed=false, got true", tc.fieldName)
 			}
 			if fv.DeltaName != tc.deltaName {
 				t.Errorf("DeltaName: got %q, want %q", fv.DeltaName, tc.deltaName)
@@ -101,8 +113,8 @@ func TestBuildSnapshotView(t *testing.T) {
 		})
 	}
 
-	// The entity-key field (Key) must never appear in the Delta view — it is
-	// extracted by the parse stage into KeyVar, not included in Fields.
+	// The entity-key field (Key) must never appear in Fields — it is extracted
+	// by the parse stage into KeyVar, not included in the field list.
 	if _, ok := byName["Key"]; ok {
 		t.Errorf("entity-key field Key should not appear in the snapshot view")
 	}
@@ -128,12 +140,33 @@ func TestBuildSnapshotView_NestedError(t *testing.T) {
 	}
 }
 
+// TestBuildSnapshotView_KeyName verifies that buildSnapshotView populates
+// sv.KeyName from ps.KeyVar.Name() (EM-02 contract).
+// Covers: R-20
+func TestBuildSnapshotView_KeyName(t *testing.T) {
+	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
+	opts := emitOpts{crossPackage: false}
+	qualifier, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+
+	sv, err := buildSnapshotView(ps, qualifier)
+	if err != nil {
+		t.Fatalf("buildSnapshotView: %v", err)
+	}
+	if sv.KeyName != "Key" {
+		t.Errorf("KeyName: got %q, want %q", sv.KeyName, "Key")
+	}
+}
+
 // ── Group EM: end-to-end template tests ──────────────────────────────────────
 
 // TestEmitTemplate_AtomicAll runs the full emit pipeline against the atomic_all
-// fixture, parses the generated file with go/parser, and asserts AST structure:
-// embedded Header, expected Set* fields, suppressed fields absent.
-// Covers: R-19, R-25, E-14, E-15, E-16
+// fixture, parses the generated file with go/parser, and asserts:
+//   - TDelta struct shape: Header embed, Set* fields, suppressed fields absent.
+//   - Apply function signature and body structure (EM-02).
+//   - Apply method wrapper present (same-package mode, E-12, EM-02).
+//   - Generated file is gofmt-clean (R-11).
+//
+// Covers: R-19, R-20, R-25, E-12, E-14, E-15, E-16
 func TestEmitTemplate_AtomicAll(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "atomic_all_delta.go")
 
@@ -145,6 +178,9 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	if err := New(cfg).Run(); err != nil {
 		t.Fatalf("Run() failed: %v", err)
 	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
 	if err != nil {
@@ -158,13 +194,13 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
 	}
 
-	// Locate the TDelta type declaration.
+	// ── TDelta struct shape ───────────────────────────────────────────────────
+
 	deltaDecl := findStructDecl(f, "AtomicAllSnapshotDelta")
 	if deltaDecl == nil {
 		t.Fatalf("AtomicAllSnapshotDelta type not found in generated file")
 	}
 
-	// Collect field names from the struct.
 	fields := structFieldNames(deltaDecl)
 
 	// Header embed must be present (first field).
@@ -179,7 +215,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		}
 	}
 
-	// Suppressed fields must be absent.
+	// Suppressed fields must be absent from TDelta.
 	for _, absent := range []string{"SetOmitted", "SetRetired", "Omitted", "Retired"} {
 		if contains(fields, absent) {
 			t.Errorf("suppressed field %q should not appear in AtomicAllSnapshotDelta; fields: %v", absent, fields)
@@ -189,6 +225,51 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	// entity.key field must be absent (extracted by parse stage).
 	if contains(fields, "Key") || contains(fields, "SetKey") {
 		t.Errorf("entity-key field should not appear in TDelta; fields: %v", fields)
+	}
+
+	// ── Apply function shape (EM-02) ──────────────────────────────────────────
+
+	applyFn := findFuncDecl(f, "Apply")
+	if applyFn == nil {
+		t.Fatalf("Apply function not found in generated file")
+	}
+
+	// Signature: func Apply(s AtomicAllSnapshot, d AtomicAllSnapshotDelta) (AtomicAllSnapshot, error)
+	if applyFn.Type.Params.NumFields() != 2 {
+		t.Errorf("Apply: want 2 params, got %d", applyFn.Type.Params.NumFields())
+	}
+	if applyFn.Type.Results.NumFields() != 2 {
+		t.Errorf("Apply: want 2 results, got %d", applyFn.Type.Results.NumFields())
+	}
+
+	// Body must contain the HeaderAfterApply call and entity-key propagation.
+	srcStr := string(src)
+	if !strings.Contains(srcStr, "runtime.HeaderAfterApply(s.Header, d.Header)") {
+		t.Errorf("Apply body missing runtime.HeaderAfterApply(s.Header, d.Header)")
+	}
+	if !strings.Contains(srcStr, "result.Key = s.Key") {
+		t.Errorf("Apply body missing entity-key propagation: result.Key = s.Key")
+	}
+
+	// Each atomic field must have an if/else contribution.
+	for _, name := range []string{"SetScalar", "SetPointer", "SetStruct", "SetSlice", "SetMap", "SetCommute"} {
+		if !strings.Contains(srcStr, "d."+name+" != nil") {
+			t.Errorf("Apply body missing nil-check for d.%s", name)
+		}
+	}
+
+	// Suppressed fields must have propagation-only lines.
+	if !strings.Contains(srcStr, "result.Omitted = s.Omitted") {
+		t.Errorf("Apply body missing suppressed-field propagation: result.Omitted = s.Omitted")
+	}
+	if !strings.Contains(srcStr, "result.Retired = s.Retired") {
+		t.Errorf("Apply body missing suppressed-field propagation: result.Retired = s.Retired")
+	}
+
+	// ── Method wrapper present (same-package mode, E-12) ─────────────────────
+
+	if findMethodDecl(f, "AtomicAllSnapshot", "Apply") == nil {
+		t.Errorf("Apply method wrapper not found (expected in same-package mode)")
 	}
 
 	t.Run("CompileCheck", func(t *testing.T) {
@@ -233,6 +314,9 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
 	src, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("reading output file: %v", err)
@@ -254,12 +338,62 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 	}
 }
 
+// TestEmitTemplate_AtomicApply_CrossPackage verifies Apply emission in
+// cross-package mode: source-package types are qualified in the function
+// signature, and no method wrapper is emitted (E-12).
+// Covers: R-20, E-12
+func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/cross_pkg/model"},
+		TargetStructs:      []string{"CrossPkgSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Apply must be present as a package-level function.
+	if findFuncDecl(f, "Apply") == nil {
+		t.Fatalf("Apply function not found in generated file")
+	}
+
+	// Signature must qualify source-package types.
+	if !strings.Contains(srcStr, "model.CrossPkgSnapshot") {
+		t.Errorf("expected 'model.CrossPkgSnapshot' in Apply signature, got:\n%s", srcStr)
+	}
+
+	// No method wrapper in cross-package mode (E-12).
+	if findMethodDecl(f, "CrossPkgSnapshot", "Apply") != nil {
+		t.Errorf("Apply method wrapper must not be emitted in cross-package mode")
+	}
+}
+
 // ── Compile-check helper ──────────────────────────────────────────────────────
 
 // compileCheckEmit writes the generated source (plus a matching source
 // Snapshot package) into an isolated temp module with a replace directive
-// for go.resystems.io/eddt, runs go build ./..., and fatals on failure.
-// Mirrors the arrow-writer-gen setupIntegrationTest + runCmd pattern.
+// for go.resystems.io/eddt, then:
+//   - asserts the generated delta.go is gofmt-clean (R-11),
+//   - runs go test ./... to type-check and exercise Apply round-trip behaviour
+//     (R-20) and HeaderAfterApply error propagation (E-19).
 //
 // The temp module reuses the eddt module's go.sum so that transitive
 // dependencies (e.g. golang.org/x/crypto) resolve without network access.
@@ -306,8 +440,87 @@ type AtomicAllSnapshot struct {
 	}
 
 	// Write the generated Delta file.
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+	deltaPath := filepath.Join(tmpDir, "delta.go")
+	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
 		t.Fatalf("write delta.go: %v", err)
+	}
+
+	// R-11: the generated delta.go must be gofmt-clean as written.
+	assertGofmtClean(t, deltaPath)
+
+	// Write a behaviour test exercising Apply round-trip (R-20) and
+	// HeaderAfterApply error propagation (E-19). The test is placed in the
+	// atomic_all_test package (external test package) to prove the generated
+	// package-level Apply function is callable from outside the package.
+	testCode := `package atomic_all_test
+
+import (
+	"testing"
+	"time"
+
+	"atomic_all"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func TestApplyRoundTrip(t *testing.T) {
+	id := eddt.EntityID{1}
+	now := time.Now()
+
+	var s atomic_all.AtomicAllSnapshot
+	s.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: now}
+	s.Key = "k1"
+	s.Scalar = 10
+	s.Omitted = "omit-val"
+	s.Retired = "retire-val"
+
+	newScalar := int32(99)
+	var d atomic_all.AtomicAllSnapshotDelta
+	d.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: now}
+	d.SetScalar = &newScalar
+
+	result, err := atomic_all.Apply(s, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Header.Sequence != 2 {
+		t.Errorf("Sequence: got %d, want 2", result.Header.Sequence)
+	}
+	if result.Header.EntityID != id {
+		t.Errorf("EntityID not propagated")
+	}
+	if result.Key != s.Key {
+		t.Errorf("Key not propagated: got %q", result.Key)
+	}
+	if result.Scalar != 99 {
+		t.Errorf("Scalar (set): got %d, want 99", result.Scalar)
+	}
+	if result.Omitted != s.Omitted {
+		t.Errorf("Omitted (suppressed): got %q, want %q", result.Omitted, s.Omitted)
+	}
+	if result.Retired != s.Retired {
+		t.Errorf("Retired (suppressed): got %q, want %q", result.Retired, s.Retired)
+	}
+}
+
+// TestApplyHeaderValidationError verifies that a non-monotone Sequence causes
+// Apply to return a non-nil error (E-19: Apply returns (T, error)).
+// Covers: R-20
+func TestApplyHeaderValidationError(t *testing.T) {
+	id := eddt.EntityID{1}
+	now := time.Now()
+	var s atomic_all.AtomicAllSnapshot
+	s.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: now}
+	var d atomic_all.AtomicAllSnapshotDelta
+	// d.Sequence == s.Sequence violates strict monotonicity.
+	d.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: now}
+	_, err := atomic_all.Apply(s, d)
+	if err == nil {
+		t.Fatal("Apply: want error for non-monotone Sequence, got nil")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "apply_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write apply_test.go: %v", err)
 	}
 
 	// Write go.mod with a replace directive pointing at the local module root.
@@ -327,10 +540,11 @@ type AtomicAllSnapshot struct {
 		t.Fatalf("write go.sum: %v", err)
 	}
 
-	// go build ./... must succeed.  -mod=mod lets the toolchain auto-populate
-	// the transitive-require entries that Go 1.17+ strict mode demands without
-	// requiring network access — the module cache already has all eddt deps.
-	runBuildCmd(t, tmpDir, "go", "build", "-mod=mod", "./...")
+	// go test ./... exercises Apply round-trip and HeaderAfterApply error
+	// propagation. -mod=mod lets the toolchain auto-populate transitive require
+	// entries without network access (the module cache has all eddt deps).
+	// -count=1 disables test caching so the behaviour test always runs.
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
 }
 
 // runBuildCmd runs a command in dir and fatals with combined output on failure.
@@ -428,4 +642,50 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// assertGofmtClean fails if running gofmt -l on path produces any output
+// (i.e. the file is not gofmt-clean as written). When the file is dirty the
+// helper also runs gofmt -d and includes the diff in the failure message so
+// the template defect is immediately diagnosable.
+// Covers: R-11
+func assertGofmtClean(t *testing.T, path string) {
+	t.Helper()
+	out, err := exec.Command("gofmt", "-l", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gofmt -l %s: %v\n%s", path, err, out)
+	}
+	if len(bytes.TrimSpace(out)) != 0 {
+		diff, _ := exec.Command("gofmt", "-d", path).CombinedOutput()
+		t.Errorf("generated file %s is not gofmt-clean:\n%s", path, diff)
+	}
+}
+
+// findFuncDecl locates a top-level function declaration by name in the file.
+// Returns nil if not found.
+func findFuncDecl(f *ast.File, name string) *ast.FuncDecl {
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if ok && fd.Recv == nil && fd.Name.Name == name {
+			return fd
+		}
+	}
+	return nil
+}
+
+// findMethodDecl locates a method declaration with the given receiver type name
+// and method name. Returns nil if not found.
+func findMethodDecl(f *ast.File, recvType, methodName string) *ast.FuncDecl {
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Recv == nil || fd.Name.Name != methodName {
+			continue
+		}
+		if fd.Recv.NumFields() == 1 {
+			if exprName(fd.Recv.List[0].Type) == recvType {
+				return fd
+			}
+		}
+	}
+	return nil
 }
