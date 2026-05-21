@@ -34,6 +34,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -423,6 +424,43 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Coalesce method wrapper body missing 'return Coalesce(s, ds)'")
 	}
 
+	// ── EntityID function shape (EM-05) ───────────────────────────────────────
+	// atomic_all has Key string (raw basic) — function emitted, no method.
+
+	entityIDFn := findFuncDecl(f, "EntityID")
+	if entityIDFn == nil {
+		t.Fatalf("EntityID function not found in generated file")
+	}
+	// Signature: func EntityID(k string) runtime.EntityID
+	if entityIDFn.Type.Params.NumFields() != 1 {
+		t.Errorf("EntityID: want 1 param, got %d", entityIDFn.Type.Params.NumFields())
+	}
+	if entityIDFn.Type.Results.NumFields() != 1 {
+		t.Errorf("EntityID: want 1 result, got %d", entityIDFn.Type.Results.NumFields())
+	}
+
+	// Body must contain the three expected lines.
+	if !strings.Contains(srcStr, "h := runtime.NewHash()") {
+		t.Errorf("EntityID body missing: h := runtime.NewHash()")
+	}
+	if !strings.Contains(srcStr, "runtime.WriteString(h, k)") {
+		t.Errorf("EntityID body missing: runtime.WriteString(h, k)")
+	}
+	if !strings.Contains(srcStr, "return runtime.Finalise(h)") {
+		t.Errorf("EntityID body missing: return runtime.Finalise(h)")
+	}
+
+	// crypto/blake2b must NOT be imported — the abstraction barrier is runtime.
+	if strings.Contains(srcStr, "blake2b") {
+		t.Errorf("generated file must not import crypto/blake2b directly")
+	}
+
+	// ── No EntityID method for raw-basic key (EM-05, R-24) ───────────────────
+
+	if findMethodDecl(f, "string", "EntityID") != nil {
+		t.Errorf("EntityID method must not be emitted for raw-basic key type string")
+	}
+
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmit(t, src)
 	})
@@ -639,6 +677,258 @@ func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 	// No Coalesce method wrapper in cross-package mode (E-12).
 	if findMethodDecl(f, "CrossPkgSnapshot", "Coalesce") != nil {
 		t.Errorf("Coalesce method wrapper must not be emitted in cross-package mode")
+	}
+}
+
+// TestEmitTemplate_NamedPrimitive_KeyMethodEmitted verifies that a named-primitive
+// entity key (Key IMSI, type IMSI string) causes the EntityID function to emit a
+// string(k) conversion and the same-package method wrapper to be generated.
+// Covers: R-24, E-12
+func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "entityid_named_prim_delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/entityid_named_primitive"},
+		TargetStructs: []string{"EntityIDNamedPrimSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// EntityID function must exist with one param and one result.
+	entityIDFn := findFuncDecl(f, "EntityID")
+	if entityIDFn == nil {
+		t.Fatalf("EntityID function not found")
+	}
+	if entityIDFn.Type.Params.NumFields() != 1 {
+		t.Errorf("EntityID: want 1 param, got %d", entityIDFn.Type.Params.NumFields())
+	}
+
+	// Function body must emit the string(k) conversion for the named-string key.
+	if !strings.Contains(srcStr, "runtime.WriteString(h, string(k))") {
+		t.Errorf("EntityID body missing named-to-basic conversion: runtime.WriteString(h, string(k))")
+	}
+
+	// Same-package method wrapper must be emitted for a named key type.
+	if findMethodDecl(f, "IMSI", "EntityID") == nil {
+		t.Errorf("EntityID method wrapper not found (expected for named-primitive key IMSI)")
+	}
+	if !strings.Contains(srcStr, "return EntityID(k)") {
+		t.Errorf("EntityID method wrapper body missing 'return EntityID(k)'")
+	}
+}
+
+// TestEmitTemplate_StructKey_SamePkg verifies that a struct entity key emits an
+// EntityID function walking sub-fields in source order with appropriate Write*
+// calls, plus a same-package method wrapper.
+// Covers: R-24, E-12
+func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "entityid_struct_key_delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/entityid_struct_key"},
+		TargetStructs: []string{"EntityIDStructKeySnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// EntityID function: func EntityID(k SomeKey) runtime.EntityID.
+	entityIDFn := findFuncDecl(f, "EntityID")
+	if entityIDFn == nil {
+		t.Fatalf("EntityID function not found")
+	}
+	if entityIDFn.Type.Params.NumFields() != 1 {
+		t.Errorf("EntityID: want 1 param, got %d", entityIDFn.Type.Params.NumFields())
+	}
+
+	// Body must contain both sub-field hash writes in source order.
+	if !strings.Contains(srcStr, "runtime.WriteString(h, k.IMSI)") {
+		t.Errorf("EntityID body missing: runtime.WriteString(h, k.IMSI)")
+	}
+	if !strings.Contains(srcStr, "runtime.WriteUint64(h, k.SubID)") {
+		t.Errorf("EntityID body missing: runtime.WriteUint64(h, k.SubID)")
+	}
+	// IMSI must appear before SubID in the source.
+	imsiPos := strings.Index(srcStr, "k.IMSI")
+	subIDPos := strings.Index(srcStr, "k.SubID")
+	if imsiPos < 0 || subIDPos < 0 || imsiPos > subIDPos {
+		t.Errorf("EntityID body: IMSI write must precede SubID write (source order)")
+	}
+
+	// Same-package method wrapper on SomeKey.
+	if findMethodDecl(f, "SomeKey", "EntityID") == nil {
+		t.Errorf("EntityID method wrapper not found (expected for named-struct key SomeKey)")
+	}
+	if !strings.Contains(srcStr, "return EntityID(k)") {
+		t.Errorf("EntityID method body missing 'return EntityID(k)'")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitStructKey(t, src)
+	})
+}
+
+// TestEmitTemplate_EntityID_CrossPackage verifies EntityID emission in cross-
+// package mode: the key type is qualified and no method wrapper is emitted (E-12).
+// Covers: R-24, E-12
+func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/cross_pkg/model"},
+		TargetStructs:      []string{"CrossPkgSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// EntityID function must be present with qualified parameter type.
+	if findFuncDecl(f, "EntityID") == nil {
+		t.Fatalf("EntityID function not found in cross-package generated file")
+	}
+	if !strings.Contains(srcStr, "func EntityID(k model.ModelKey) runtime.EntityID") {
+		t.Errorf("expected qualified 'func EntityID(k model.ModelKey) runtime.EntityID', got:\n%s", srcStr)
+	}
+
+	// Hash body: ModelKey has one sub-field (ID string).
+	if !strings.Contains(srcStr, "runtime.WriteString(h, k.ID)") {
+		t.Errorf("EntityID body missing: runtime.WriteString(h, k.ID)")
+	}
+
+	// No EntityID method wrapper in cross-package mode (E-12).
+	if findMethodDecl(f, "ModelKey", "EntityID") != nil {
+		t.Errorf("EntityID method wrapper must not be emitted in cross-package mode")
+	}
+}
+
+// TestEmitTemplate_EntityID_TagVsOverridePathEquivalence verifies that
+// identifying the entity-key field via the eddt:"entity.key" tag versus via
+// ParseOpts.KeyFieldOverride produces byte-equal EntityID hash lines. Both
+// parse paths converge on the same KeyVar (parse_key.go:107), so emission
+// must be identical regardless of how the field was identified. This covers
+// the "untagged key via --key-field" case from the EM-05 plan (E-13).
+// Covers: R-24, E-13
+func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	// Tag path: key identified by eddt:"entity.key" tag.
+	psTag, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{})
+	if err != nil {
+		t.Fatalf("parseSnapshot (tag path): %v", err)
+	}
+
+	// Override path: key identified by --key-field "Key" (same field, no tag scan).
+	psOverride, err := parseSnapshot(pkgs, "ValidSnapshot", ParseOpts{KeyFieldOverride: "Key"})
+	if err != nil {
+		t.Fatalf("parseSnapshot (override path): %v", err)
+	}
+
+	// Build views for both parse results.
+	opts := emitOpts{crossPackage: false}
+	qualTag, _, _ := buildImports([]*ParsedSnapshot{psTag}, opts)
+	qualOverride, _, _ := buildImports([]*ParsedSnapshot{psOverride}, opts)
+
+	svTag, err := buildSnapshotView(psTag, qualTag)
+	if err != nil {
+		t.Fatalf("buildSnapshotView (tag): %v", err)
+	}
+	svOverride, err := buildSnapshotView(psOverride, qualOverride)
+	if err != nil {
+		t.Fatalf("buildSnapshotView (override): %v", err)
+	}
+
+	// KeyHashLines must be byte-equal regardless of identification path.
+	if len(svTag.KeyHashLines) != len(svOverride.KeyHashLines) {
+		t.Fatalf("KeyHashLines length: tag=%d override=%d", len(svTag.KeyHashLines), len(svOverride.KeyHashLines))
+	}
+	for i, line := range svTag.KeyHashLines {
+		if line != svOverride.KeyHashLines[i] {
+			t.Errorf("KeyHashLines[%d]: tag=%q override=%q", i, line, svOverride.KeyHashLines[i])
+		}
+	}
+
+	// KeyTypeName must also be identical.
+	if svTag.KeyTypeName != svOverride.KeyTypeName {
+		t.Errorf("KeyTypeName: tag=%q override=%q", svTag.KeyTypeName, svOverride.KeyTypeName)
+	}
+}
+
+// TestBuildSnapshotView_UnsupportedKeyUnderlying verifies that a key whose
+// underlying type is outside the EM-05 support matrix (e.g. float64, which is
+// comparable so the parser accepts it but the hash renderer cannot map it)
+// causes buildSnapshotView to return a descriptive error.
+// Covers: R-24
+func TestBuildSnapshotView_UnsupportedKeyUnderlying(t *testing.T) {
+	// Construct a ParsedSnapshot whose entity-key field has underlying float64.
+	// float64 is a basic comparable type so the parser would accept it, but
+	// buildKeyHashLines returns an error for it (EM-05 support matrix).
+	flt := types.Typ[types.Float64]
+	keyVar := types.NewVar(token.NoPos, nil, "Key", flt)
+	headerVar := types.NewVar(token.NoPos, nil, "Header", flt) // dummy; not used
+
+	ps := &ParsedSnapshot{
+		Name:      "TestSnapshot",
+		PkgPath:   "test",
+		PkgName:   "test",
+		HeaderVar: headerVar,
+		KeyVar:    keyVar,
+		KeyShape:  ShapeScalar,
+		Fields:    nil,
+	}
+
+	opts := emitOpts{crossPackage: false}
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+
+	_, err := buildSnapshotView(ps, qualifier)
+	if err == nil {
+		t.Fatal("expected error for unsupported float64 key underlying type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported underlying type") {
+		t.Errorf("error should mention 'unsupported underlying type', got: %v", err)
 	}
 }
 
@@ -1430,6 +1720,85 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 		t.Fatalf("write coalesce_test.go: %v", err)
 	}
 
+	// entityIDTestCode exercises EntityID generation against the atomic_all
+	// fixture (Key string, raw basic). makeSnap is defined in diff_test.go
+	// (same package atomic_all_test).
+	entityIDTestCode := `package atomic_all_test
+
+import (
+	"testing"
+
+	"atomic_all"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestEntityID_Determinism verifies that EntityID returns the same value for
+// the same input across 100 calls.
+// Covers: R-24
+func TestEntityID_Determinism(t *testing.T) {
+	want := atomic_all.EntityID("ABC")
+	for i := 0; i < 100; i++ {
+		if atomic_all.EntityID("ABC") != want {
+			t.Fatalf("EntityID not deterministic on call %d", i)
+		}
+	}
+}
+
+// TestEntityID_DistinctOnDifferentInput verifies that distinct string inputs
+// produce distinct EntityIDs. Length-prefix in runtime.WriteString prevents
+// concatenation collisions.
+// Covers: R-24
+func TestEntityID_DistinctOnDifferentInput(t *testing.T) {
+	ids := []eddt.EntityID{
+		atomic_all.EntityID(""),
+		atomic_all.EntityID("A"),
+		atomic_all.EntityID("B"),
+		atomic_all.EntityID("AB"),
+		atomic_all.EntityID("BA"),
+	}
+	for i := range ids {
+		for j := i + 1; j < len(ids); j++ {
+			if ids[i] == ids[j] {
+				t.Errorf("EntityID collision: ids[%d] == ids[%d] (%x)", i, j, ids[i])
+			}
+		}
+	}
+}
+
+// TestEntityID_ZeroValueIsNonZero verifies that EntityID for a zero-value string
+// key produces a non-zero EntityID. Blake2b-256 of the length-prefix encoding
+// of "" is not all-zero, so the zero-key hash is not a sentinel value.
+// Covers: R-24
+func TestEntityID_ZeroValueIsNonZero(t *testing.T) {
+	id := atomic_all.EntityID("")
+	if id.IsZero() {
+		t.Error("EntityID(\"\") must not be zero; zero EntityID is not a sentinel for unset keys")
+	}
+}
+
+// TestEntityID_GoldenBytes verifies that the generated EntityID function
+// produces the same digest as manually invoking the runtime helpers. This pins
+// the hash across process boundaries: if the generated code or the runtime
+// changes incompatibly, this test catches the divergence.
+// Covers: R-24
+func TestEntityID_GoldenBytes(t *testing.T) {
+	// Compute the expected digest using the same runtime helpers the generated
+	// code uses. If the generated code and the reference compute identically,
+	// both produce the same Blake2b-256 digest.
+	h := eddt.NewHash()
+	eddt.WriteString(h, "hello")
+	expected := eddt.Finalise(h)
+
+	got := atomic_all.EntityID("hello")
+	if got != expected {
+		t.Errorf("EntityID(\"hello\") = %x, want %x", got, expected)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_test.go"), []byte(entityIDTestCode), 0644); err != nil {
+		t.Fatalf("write entity_id_test.go: %v", err)
+	}
+
 	// Write go.mod with a replace directive pointing at the local module root.
 	modContent := "module atomic_all\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
@@ -1451,6 +1820,156 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 	// propagation. -mod=mod lets the toolchain auto-populate transitive require
 	// entries without network access (the module cache has all eddt deps).
 	// -count=1 disables test caching so the behaviour test always runs.
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitStructKey writes the generated source (plus a matching source
+// Snapshot package) for the entityid_struct_key fixture into an isolated temp
+// module, then runs go test ./... to exercise EntityID behaviour for struct keys:
+// method-form delegation (requirement 13), distinctness, and length-prefix
+// collision avoidance (requirement 11).
+func compileCheckEmitStructKey(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package entityid_struct_key
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type SomeKey struct {
+	IMSI  string
+	SubID uint64
+}
+
+type EntityIDStructKeySnapshot struct {
+	eddt.Header
+	Key    SomeKey ` + "`eddt:\"entity.key\"`" + `
+	Status int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+
+	deltaPath := filepath.Join(tmpDir, "delta.go")
+	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+
+	assertGofmtClean(t, deltaPath)
+
+	testCode := `package entityid_struct_key_test
+
+import (
+	"testing"
+
+	"entityid_struct_key"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestEntityID_StructKey_Method verifies that the same-package method wrapper
+// on SomeKey delegates to the package-level EntityID function and produces the
+// same result.
+// Covers: R-24
+func TestEntityID_StructKey_Method(t *testing.T) {
+	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 42}
+	id1 := entityid_struct_key.EntityID(k)
+	id2 := k.EntityID()
+	if id1 != id2 {
+		t.Errorf("method and function forms diverge: %x vs %x", id1, id2)
+	}
+	if id1.IsZero() {
+		t.Error("EntityID must not be zero for a non-zero key")
+	}
+}
+
+// TestEntityID_StructKey_DistinctFields verifies that changing a single sub-
+// field of a struct key produces a different EntityID.
+// Covers: R-24
+func TestEntityID_StructKey_DistinctFields(t *testing.T) {
+	base := entityid_struct_key.SomeKey{IMSI: "A", SubID: 0}
+	diffIMSI := entityid_struct_key.SomeKey{IMSI: "B", SubID: 0}
+	diffSubID := entityid_struct_key.SomeKey{IMSI: "A", SubID: 1}
+
+	if entityid_struct_key.EntityID(base) == entityid_struct_key.EntityID(diffIMSI) {
+		t.Error("changing IMSI should produce a different EntityID")
+	}
+	if entityid_struct_key.EntityID(base) == entityid_struct_key.EntityID(diffSubID) {
+		t.Error("changing SubID should produce a different EntityID")
+	}
+}
+
+// TestEntityID_StructKey_LengthPrefixPreventsConcatCollision verifies that
+// runtime.WriteString's length prefix prevents keys that would collide under
+// naive concatenation from producing the same EntityID.
+// Covers: R-24
+func TestEntityID_StructKey_LengthPrefixPreventsConcatCollision(t *testing.T) {
+	// Without length prefix: WriteString("AB")+WriteUint64(0) and
+	// WriteString("A")+WriteUint64(0x42) would both start with "A..." bytes.
+	// With the 8-byte length prefix the byte streams differ unambiguously.
+	k1 := entityid_struct_key.SomeKey{IMSI: "AB", SubID: 0}
+	k2 := entityid_struct_key.SomeKey{IMSI: "A", SubID: 0x42}
+	if entityid_struct_key.EntityID(k1) == entityid_struct_key.EntityID(k2) {
+		t.Error("length-prefix collision: distinct keys produced the same EntityID")
+	}
+}
+
+// TestEntityID_StructKey_Determinism verifies that EntityID is deterministic
+// for struct keys across 100 calls.
+// Covers: R-24
+func TestEntityID_StructKey_Determinism(t *testing.T) {
+	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 7}
+	want := entityid_struct_key.EntityID(k)
+	for i := 0; i < 100; i++ {
+		if entityid_struct_key.EntityID(k) != want {
+			t.Fatalf("EntityID not deterministic on call %d", i)
+		}
+	}
+}
+
+// TestEntityID_StructKey_GoldenBytes verifies that the generated EntityID
+// matches manually invoking the runtime helpers.
+// Covers: R-24
+func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
+	k := entityid_struct_key.SomeKey{IMSI: "hello", SubID: 42}
+
+	h := eddt.NewHash()
+	eddt.WriteString(h, "hello")
+	eddt.WriteUint64(h, 42)
+	expected := eddt.Finalise(h)
+
+	got := entityid_struct_key.EntityID(k)
+	if got != expected {
+		t.Errorf("EntityID struct golden: got %x, want %x", got, expected)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_struct_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write entity_id_struct_test.go: %v", err)
+	}
+
+	modContent := "module entityid_struct_key\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
 	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
 }
 

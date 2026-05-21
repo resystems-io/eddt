@@ -92,9 +92,31 @@ type snapshotView struct {
 	// Used in Apply to emit "result.<KeyName> = s.<KeyName>" (EM-02).
 	KeyName string
 
+	// KeyTypeName is the bare (unqualified) type name of the entity-key field,
+	// e.g. "UEKey", "IMSI", or "string" for a raw-basic key (EM-05).
+	KeyTypeName string
+
+	// KeyQualifier is the package-qualifier prefix for the key type in cross-
+	// package mode (e.g. "model."). Empty in same-package mode or when the key
+	// type is an unnamed basic (e.g. raw string). Set alongside Qualifier in
+	// executeEmit (EM-05, E-12).
+	KeyQualifier string
+
+	// KeyHashLines is the ordered list of runtime.Write* call strings for the
+	// EntityID function body (EM-05). One line for a scalar key; one line per
+	// exported sub-field in source order for a struct key.
+	KeyHashLines []string
+
+	// EmitEntityIDMethod is true when the EntityID method wrapper should be
+	// emitted on the key type: same-package mode AND the key type is a named
+	// type (Go forbids methods on unnamed basic types). When false, only the
+	// package-level EntityID function is emitted (EM-05, R-24, E-12).
+	EmitEntityIDMethod bool
+
 	// EmitMethod is true when the output package matches the source package
 	// (E-12). When true, the template emits same-package method wrappers that
-	// delegate to the package-level Apply and Diff functions (EM-02, EM-03).
+	// delegate to the package-level Apply, Diff, and Coalesce functions
+	// (EM-02, EM-03, EM-04).
 	EmitMethod bool
 
 	// NeedsReflect is true when at least one DiffFields entry uses
@@ -145,18 +167,21 @@ type fieldView struct {
 // EM-02 scope: type declarations (EM-01) + Apply function and method wrapper.
 // EM-03 scope: Diff function and method wrapper.
 // EM-04 scope: Coalesce function and method wrapper.
-// Named sub-templates for EntityID are added by EM-05.
+// EM-05 scope: EntityID function and method wrapper on the key type.
 //
 // Sub-template inventory:
-//   - applyFunc:     package-level Apply function (always emitted).
-//   - applyField:    per-field Apply contribution (atomic or suppressed).
-//   - applyMethod:   same-package method wrapper delegating to Apply (E-12).
-//   - diffFunc:      package-level Diff function (always emitted).
-//   - diffField:     per-field Diff contribution (non-suppressed fields only,
+//   - applyFunc:      package-level Apply function (always emitted).
+//   - applyField:     per-field Apply contribution (atomic or suppressed).
+//   - applyMethod:    same-package method wrapper delegating to Apply (E-12).
+//   - diffFunc:       package-level Diff function (always emitted).
+//   - diffField:      per-field Diff contribution (non-suppressed fields only,
 //     using != for scalars and reflect.DeepEqual for others).
-//   - diffMethod:    same-package method wrapper delegating to Diff (E-12).
-//   - coalesceFunc:  package-level Coalesce function (always emitted).
+//   - diffMethod:     same-package method wrapper delegating to Diff (E-12).
+//   - coalesceFunc:   package-level Coalesce function (always emitted).
 //   - coalesceMethod: same-package method wrapper delegating to Coalesce (E-12).
+//   - entityIDFunc:   package-level EntityID function (always emitted, EM-05).
+//   - entityIDMethod: same-package method wrapper on the key type (E-12, EM-05);
+//     emitted only when the key type is a named type (EmitEntityIDMethod).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -185,6 +210,8 @@ type {{.DeltaName}} struct {
 {{if .EmitMethod}}{{template "diffMethod" .}}
 {{end}}{{template "coalesceFunc" .}}
 {{if .EmitMethod}}{{template "coalesceMethod" .}}
+{{end}}{{template "entityIDFunc" .}}
+{{if .EmitEntityIDMethod}}{{template "entityIDMethod" .}}
 {{end}}{{end -}}
 
 {{define "applyFunc"}}
@@ -264,6 +291,27 @@ func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.
 // package-level Coalesce function (E-12).
 func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
 	return Coalesce(s, ds)
+}
+{{end -}}
+
+{{define "entityIDFunc"}}
+// EntityID returns the deterministic content-hash EntityID of k. The hash is
+// Blake2b-256 over the canonical encoding of k's fields (E-10, RT-02). It is
+// a pure function: same input → same output forever.
+func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
+	h := runtime.NewHash()
+{{- range .KeyHashLines}}
+	{{.}}
+{{- end}}
+	return runtime.Finalise(h)
+}
+{{end -}}
+
+{{define "entityIDMethod"}}
+// EntityID is an ergonomic same-package wrapper that delegates to the
+// package-level EntityID function (E-12).
+func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
+	return EntityID(k)
 }
 {{end}}`
 
@@ -440,6 +488,19 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotV
 		KeyName:   ps.KeyVar.Name(),
 	}
 
+	// Resolve the key type name and hash lines (EM-05).
+	switch kt := ps.KeyVar.Type().(type) {
+	case *types.Named:
+		sv.KeyTypeName = kt.Obj().Name()
+	default:
+		sv.KeyTypeName = types.TypeString(ps.KeyVar.Type(), nil)
+	}
+	hashLines, err := buildKeyHashLines(ps.KeyVar.Type(), ps.KeyShape)
+	if err != nil {
+		return snapshotView{}, err
+	}
+	sv.KeyHashLines = hashLines
+
 	for _, f := range ps.Fields {
 		// Phase-5 sentinel: delta.nested requires compositional emission (N-01/N-03/N-04).
 		if f.Tag.Kind == TagKindNested {
@@ -517,10 +578,19 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 			if alias := opts.aliases[ps.PkgPath]; alias != "" {
 				sv.Qualifier = alias + "."
 			}
+			// Key type also lives in the source package → same qualifier prefix.
+			if _, isNamed := ps.KeyVar.Type().(*types.Named); isNamed {
+				sv.KeyQualifier = sv.Qualifier
+			}
 		}
 
-		// EmitMethod gates the same-package method wrapper (E-12, EM-02).
+		// EmitMethod gates the same-package method wrappers (E-12, EM-02..EM-04).
 		sv.EmitMethod = !g.CrossPackage
+
+		// EmitEntityIDMethod additionally requires the key type to be a named
+		// type: Go forbids defining methods on unnamed basic types (EM-05, R-24).
+		_, isNamed := ps.KeyVar.Type().(*types.Named)
+		sv.EmitEntityIDMethod = sv.EmitMethod && isNamed
 
 		views = append(views, sv)
 	}

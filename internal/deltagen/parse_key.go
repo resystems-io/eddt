@@ -29,7 +29,7 @@ import (
 //
 // Returned payload fields are the candidates with the key removed. structName
 // is used only to scope error messages.
-func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) (keyVar *types.Var, payloadFields []ParsedField, err error) {
+func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) (keyVar *types.Var, keyShape FieldShape, payloadFields []ParsedField, err error) {
 	keyIdx := -1
 	if opts.KeyFieldOverride != "" {
 		for i := range candidates {
@@ -39,7 +39,7 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 			}
 		}
 		if keyIdx == -1 {
-			return nil, nil, fmt.Errorf(
+			return nil, 0, nil, fmt.Errorf(
 				"struct %q: --key-field override names field %q which is not present in the struct",
 				structName, opts.KeyFieldOverride)
 		}
@@ -49,14 +49,14 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 				continue
 			}
 			if keyIdx != -1 {
-				return nil, nil, fmt.Errorf(
+				return nil, 0, nil, fmt.Errorf(
 					"struct %q has multiple fields tagged eddt:%q (at least %q and %q); exactly one entity-key field is required",
 					structName, "entity.key", candidates[keyIdx].Name, candidates[i].Name)
 			}
 			keyIdx = i
 		}
 		if keyIdx == -1 {
-			return nil, nil, fmt.Errorf(
+			return nil, 0, nil, fmt.Errorf(
 				"struct %q has no field tagged eddt:%q; a conforming Snapshot must mark exactly one entity-key field "+
 					"(or supply --key-field on the command line)",
 				structName, "entity.key")
@@ -75,31 +75,31 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 				for i := 0; i < st.NumFields(); i++ {
 					f := st.Field(i)
 					if !types.Comparable(f.Type()) {
-						return nil, nil, fmt.Errorf(
+						return nil, 0, nil, fmt.Errorf(
 							"struct %q: entity-key field %q has non-comparable sub-field %q of type %s; "+
 								"all fields of a key struct must be comparable",
 							structName, keyField.Name, f.Name(), f.Type())
 					}
 				}
 			}
-			return nil, nil, fmt.Errorf(
+			return nil, 0, nil, fmt.Errorf(
 				"struct %q: entity-key field %q has non-comparable type %s",
 				structName, keyField.Name, keyField.GoType)
 		}
 
 	case ShapePointer:
-		return nil, nil, fmt.Errorf(
+		return nil, 0, nil, fmt.Errorf(
 			"struct %q: entity-key field %q has pointer type %s; key fields must be value types "+
 				"(pointer equality is identity, not value equality)",
 			structName, keyField.Name, keyField.GoType)
 
 	case ShapeSlice:
-		return nil, nil, fmt.Errorf(
+		return nil, 0, nil, fmt.Errorf(
 			"struct %q: entity-key field %q has slice type %s; slices are not comparable and cannot be entity keys",
 			structName, keyField.Name, keyField.GoType)
 
 	case ShapeMap:
-		return nil, nil, fmt.Errorf(
+		return nil, 0, nil, fmt.Errorf(
 			"struct %q: entity-key field %q has map type %s; maps are not comparable and cannot be entity keys",
 			structName, keyField.Name, keyField.GoType)
 	}
@@ -108,5 +108,5 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 	payloadFields = make([]ParsedField, 0, len(candidates)-1)
 	payloadFields = append(payloadFields, candidates[:keyIdx]...)
 	payloadFields = append(payloadFields, candidates[keyIdx+1:]...)
-	return keyVar, payloadFields, nil
+	return keyVar, keyField.Shape, payloadFields, nil
 }

@@ -137,6 +137,12 @@ type ParsedSnapshot struct {
 	// uses it to render the EntityID() method and EntityID hash invocations.
 	KeyVar *types.Var
 
+	// KeyShape is the structural shape of the entity-key field (ShapeScalar or
+	// ShapeStructValue). Used by the emit stage to select the hash strategy for
+	// EntityID generation (EM-05): one Write* call for scalar keys, one per
+	// exported sub-field for struct keys.
+	KeyShape FieldShape
+
 	// Fields is the list of payload fields in source declaration order,
 	// with the embedded Header, the entity.key field, and (in cross-package
 	// mode) unexported fields already removed. The emit stage iterates these
@@ -215,8 +221,8 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 	}
 
 	// Step 4: identify and validate the entity.key field, partitioning the
-	// candidate list into (keyVar, payload fields).
-	keyVar, fields, err := parseKeyField(candidates, structName, opts)
+	// candidate list into (keyVar, keyShape, payload fields).
+	keyVar, keyShape, fields, err := parseKeyField(candidates, structName, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +234,7 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 		PkgName:   pkg.Name,
 		HeaderVar: headerVar,
 		KeyVar:    keyVar,
+		KeyShape:  keyShape,
 		Fields:    fields,
 	}, nil
 }

@@ -265,7 +265,7 @@ func TestCLI_KeyField_PerStructAccepted(t *testing.T) {
 
 // TestCLI_KeyField_PerStructWinsOverBare verifies end-to-end that a per-struct
 // --key-field overrides a bare --key-field for the same struct. The bare value
-// "NoSuchField" is superseded by "ValidSnapshot=Location", so parse succeeds
+// "NoSuchField" is superseded by "ValidSnapshot=Bearer", so parse succeeds
 // and EM-01 emits ValidSnapshotDelta.
 // Covers: R-09, E-13
 func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
@@ -275,7 +275,7 @@ func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
 		"--key-field", "NoSuchField",
-		"--key-field", "ValidSnapshot=Location",
+		"--key-field", "ValidSnapshot=Bearer",
 		"--out", outPath,
 	})
 
@@ -312,7 +312,7 @@ func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 // emits a slog Warn entry to stderr identifying the override and the tagged
 // field. After G-08 the warning fires unconditionally (at Warn level) without
 // requiring --verbose. The valid fixture has Key tagged entity.key; overriding
-// to Location triggers the conflict.
+// to Bearer triggers the conflict.
 // Covers: R-09, E-13
 func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	// Redirect os.Stderr to capture the slog Warn output. The slog handler is
@@ -330,7 +330,7 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
-		"--key-field", "ValidSnapshot=Location",
+		"--key-field", "ValidSnapshot=Bearer",
 		"--out", outPath,
 	})
 	runErr := cmd.Execute()
@@ -356,8 +356,8 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	if !strings.Contains(out, "struct=ValidSnapshot") {
 		t.Errorf("expected struct=ValidSnapshot in slog output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "override=Location") {
-		t.Errorf("expected override=Location in slog output, got:\n%s", out)
+	if !strings.Contains(out, "override=Bearer") {
+		t.Errorf("expected override=Bearer in slog output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "tag_field=Key") {
 		t.Errorf("expected tag_field=Key in slog output, got:\n%s", out)
