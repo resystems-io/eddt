@@ -16,11 +16,11 @@
 //     ParsedSnapshot.KeyVar and excluded from Fields. Per-struct key-field
 //     overrides are supplied via Generator.KeyFields (G-06).
 //   - Tag    (Phase 3): parse and validate eddt: tag values on payload fields.
-//   - Emit    (Phase 4): render the Delta type and function bodies via text/template.
+//   - Emit    (Phase 4): render the TDelta type (EM-01) and, in later items,
+//     Apply, Diff, Coalesce, EntityID bodies via text/template (template.go).
 package deltagen
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -138,8 +138,8 @@ func (g *Generator) log() *slog.Logger {
 //     and excluded from Fields. Per-struct key-field overrides are carried via
 //     KeyFields.
 //   - Tag    (tag.go):      parse and validate eddt: tag values.
-//   - Emit    (template.go): render the Delta type and function bodies via
-//     text/template; emit method wrappers when CrossPackage is false.
+//   - Emit    (template.go): render the TDelta struct (EM-01) and, in later
+//     Phase-4 items, Apply/Diff/Coalesce/EntityID bodies.
 func (g *Generator) Run() error {
 	pkgs, err := g.loadStage()
 	if err != nil {
@@ -216,7 +216,9 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 }
 
 // emitStage renders the Delta type and associated functions for each snapshot.
-// Tag handling (Phase 3) and code emission (Phase 4) are not yet implemented.
-func (g *Generator) emitStage(_ []*ParsedSnapshot) error {
-	return fmt.Errorf("delta-gen: tag parser not yet implemented")
+// EM-01 emits the TDelta struct (embedded runtime.Header + per-field atomic
+// Set<Name> declarations) via the text/template pipeline in template.go.
+// Apply, Diff, Coalesce, and EntityID bodies land in EM-02..EM-05.
+func (g *Generator) emitStage(snapshots []*ParsedSnapshot) error {
+	return executeEmit(snapshots, g)
 }

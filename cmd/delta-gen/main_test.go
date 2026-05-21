@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,29 +31,24 @@ func TestCLI_MissingStructs(t *testing.T) {
 	}
 }
 
-// TestCLI_NotYetImplemented verifies that a valid invocation propagates the
-// generator's "not yet implemented" error back through the CLI layer. With
-// G-03 / G-07 / G-04 implemented the parse stage now runs to completion
-// (Header resolved, entity.key identified, payload fields classified). The
-// first not-yet-implemented stage is Phase 3 tag handling. The fixture at
-// ../../internal/deltagen/testdata/parse/valid provides a conforming Snapshot
-// (including an eddt:"entity.key" field) so parse succeeds end-to-end.
+// TestCLI_EmitsDeltaType verifies that a valid invocation runs the full
+// pipeline end-to-end and writes a generated file containing the TDelta struct
+// declaration. The valid fixture provides a conforming Snapshot with an
+// eddt:"entity.key" field so parse succeeds and EM-01 emits ValidSnapshotDelta.
 // Covers: R-09
-func TestCLI_NotYetImplemented(t *testing.T) {
+func TestCLI_EmitsDeltaType(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
-		"--out", "dummy.go",
+		"--out", outPath,
 	})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error from stub generator, got nil")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected successful run, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' error, got: %v", err)
-	}
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
 }
 
 // TestCLI_Help verifies that --help exits 0 and the output mentions every
@@ -228,70 +226,63 @@ func TestParseKeyFields_UnrecognisedStruct(t *testing.T) {
 // TestCLI_KeyField_BareAccepted verifies that a bare --key-field value is
 // accepted by the CLI and wired through to the generator: the no_key fixture
 // has no entity.key tag, so without the override parse would fail; with the
-// override parse succeeds and the generator reaches its Phase 3 sentinel.
+// override parse succeeds and EM-01 emits NoKeySnapshotDelta.
 // Covers: R-09, E-13
 func TestCLI_KeyField_BareAccepted(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "no_key_delta.go")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/no_key",
 		"--structs", "NoKeySnapshot",
 		"--key-field", "Peer",
-		"--out", "dummy.go",
+		"--out", outPath,
 	})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected sentinel error from stub generator, got nil")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected successful run (key-field should wire through to emit), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' (parse should succeed), got: %v", err)
-	}
+	assertDeltaFile(t, outPath, "NoKeySnapshotDelta")
 }
 
 // TestCLI_KeyField_PerStructAccepted verifies that the StructName=FieldName form
 // is accepted and behaves identically to the bare form when there is one struct.
 // Covers: R-09, E-13
 func TestCLI_KeyField_PerStructAccepted(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "no_key_delta.go")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/no_key",
 		"--structs", "NoKeySnapshot",
 		"--key-field", "NoKeySnapshot=Peer",
-		"--out", "dummy.go",
+		"--out", outPath,
 	})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected sentinel error from stub generator, got nil")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected successful run (per-struct key-field should wire through), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' (parse should succeed), got: %v", err)
-	}
+	assertDeltaFile(t, outPath, "NoKeySnapshotDelta")
 }
 
 // TestCLI_KeyField_PerStructWinsOverBare verifies end-to-end that a per-struct
 // --key-field overrides a bare --key-field for the same struct. The bare value
-// "NoSuchField" would cause parseKeyField to error; the per-struct override
-// "ValidSnapshot=Location" selects the comparable Location field instead, so
-// parse succeeds and the generator reaches its sentinel.
+// "NoSuchField" is superseded by "ValidSnapshot=Location", so parse succeeds
+// and EM-01 emits ValidSnapshotDelta.
 // Covers: R-09, E-13
 func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
 		"--key-field", "NoSuchField",
 		"--key-field", "ValidSnapshot=Location",
-		"--out", "dummy.go",
+		"--out", outPath,
 	})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected sentinel error from stub generator, got nil")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected successful run (per-struct override should win), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' (per-struct override should win), got: %v", err)
-	}
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
 }
 
 // TestCLI_KeyField_UnrecognisedStructError verifies that --key-field with a
@@ -334,12 +325,13 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	}
 	os.Stderr = w
 
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
 		"--structs", "ValidSnapshot",
 		"--key-field", "ValidSnapshot=Location",
-		"--out", "dummy.go",
+		"--out", outPath,
 	})
 	runErr := cmd.Execute()
 
@@ -351,9 +343,9 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 		t.Fatalf("io.Copy: %v", copyErr)
 	}
 
-	// The generator always returns the Phase 3 sentinel after a successful parse.
-	if runErr == nil || !strings.Contains(runErr.Error(), "not yet implemented") {
-		t.Errorf("expected 'not yet implemented' sentinel, got: %v", runErr)
+	// EM-01 lands: the generator now succeeds; the conflict warning still fires.
+	if runErr != nil {
+		t.Errorf("expected successful run after conflict warning, got: %v", runErr)
 	}
 
 	out := buf.String()
@@ -370,4 +362,35 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	if !strings.Contains(out, "tag_field=Key") {
 		t.Errorf("expected tag_field=Key in slog output, got:\n%s", out)
 	}
+}
+
+// assertDeltaFile parses the file at path and verifies it contains a type
+// declaration for a struct named deltaName.  Fatals if the file is missing or
+// not valid Go; errors if the struct declaration is absent.
+func assertDeltaFile(t *testing.T, path, deltaName string) {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("output file not found at %s: %v", path, err)
+	}
+	fset := token.NewFileSet()
+	f, parseErr := parser.ParseFile(fset, path, src, 0)
+	if parseErr != nil {
+		t.Fatalf("output file is not valid Go: %v\n--- source ---\n%s", parseErr, src)
+	}
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if ok && ts.Name.Name == deltaName {
+				if _, isStruct := ts.Type.(*ast.StructType); isStruct {
+					return
+				}
+			}
+		}
+	}
+	t.Errorf("output file does not contain 'type %s struct'", deltaName)
 }
