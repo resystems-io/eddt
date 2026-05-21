@@ -732,8 +732,8 @@ func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
 }
 
 // TestEmitTemplate_StructKey_SamePkg verifies that a struct entity key emits an
-// EntityID function walking sub-fields in source order with appropriate Write*
-// calls, plus a same-package method wrapper.
+// EntityID function walking sub-fields in lexicographic field-name order with
+// appropriate Write* calls, plus a same-package method wrapper.
 // Covers: R-24, E-12
 func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "entityid_struct_key_delta.go")
@@ -768,18 +768,18 @@ func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 		t.Errorf("EntityID: want 1 param, got %d", entityIDFn.Type.Params.NumFields())
 	}
 
-	// Body must contain both sub-field hash writes in source order.
+	// Body must contain both sub-field hash writes in lexicographic field-name order.
 	if !strings.Contains(srcStr, "runtime.WriteString(h, k.IMSI)") {
 		t.Errorf("EntityID body missing: runtime.WriteString(h, k.IMSI)")
 	}
 	if !strings.Contains(srcStr, "runtime.WriteUint64(h, k.SubID)") {
 		t.Errorf("EntityID body missing: runtime.WriteUint64(h, k.SubID)")
 	}
-	// IMSI must appear before SubID in the source.
+	// IMSI < SubID lexicographically, so IMSI must be hashed first.
 	imsiPos := strings.Index(srcStr, "k.IMSI")
 	subIDPos := strings.Index(srcStr, "k.SubID")
 	if imsiPos < 0 || subIDPos < 0 || imsiPos > subIDPos {
-		t.Errorf("EntityID body: IMSI write must precede SubID write (source order)")
+		t.Errorf("EntityID body: IMSI write must precede SubID write (lexicographic field-name order)")
 	}
 
 	// Same-package method wrapper on SomeKey.
@@ -792,6 +792,102 @@ func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmitStructKey(t, src)
+	})
+}
+
+// TestEmitTemplate_StructKey_FieldOrderStability verifies that the emitter
+// produces identical KeyHashLines for a struct key regardless of the sub-field
+// source declaration order. entityid_struct_key declares IMSI before SubID;
+// entityid_struct_key_reversed declares SubID before IMSI. Both must emit
+// IMSI first (lexicographic order), so the hash lines must be byte-equal.
+// Covers: R-24
+func TestEmitTemplate_StructKey_FieldOrderStability(t *testing.T) {
+	emitAndGetEntityIDBody := func(t *testing.T, inputPkg, structName string) string {
+		t.Helper()
+		outPath := filepath.Join(t.TempDir(), "delta.go")
+		cfg := Config{
+			InputPkgs:     []string{inputPkg},
+			TargetStructs: []string{structName},
+			OutPath:       outPath,
+		}
+		if err := New(cfg).Run(); err != nil {
+			t.Fatalf("Run() failed for %s: %v", structName, err)
+		}
+		src, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("reading output: %v", err)
+		}
+		// Extract the EntityID function body (between the opening and closing braces).
+		srcStr := string(src)
+		start := strings.Index(srcStr, "func EntityID(")
+		if start < 0 {
+			t.Fatalf("EntityID function not found in output for %s", structName)
+		}
+		// Advance to opening brace.
+		braceOpen := strings.Index(srcStr[start:], "{")
+		if braceOpen < 0 {
+			t.Fatalf("no opening brace found after EntityID for %s", structName)
+		}
+		body := srcStr[start+braceOpen:]
+		// Find matching closing brace.
+		depth := 0
+		for i, ch := range body {
+			switch ch {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return body[:i+1]
+				}
+			}
+		}
+		t.Fatalf("no matching closing brace for EntityID in %s", structName)
+		return ""
+	}
+
+	normalBody := emitAndGetEntityIDBody(t,
+		"./testdata/emit/entityid_struct_key",
+		"EntityIDStructKeySnapshot",
+	)
+	reversedBody := emitAndGetEntityIDBody(t,
+		"./testdata/emit/entityid_struct_key_reversed",
+		"EntityIDReversedKeySnapshot",
+	)
+
+	// Strip the parameter type name (SomeKey vs ReversedKey) before comparing,
+	// since the key types have different names even though the hash logic is identical.
+	normalNorm := strings.ReplaceAll(normalBody, "SomeKey", "KEY")
+	reversedNorm := strings.ReplaceAll(reversedBody, "ReversedKey", "KEY")
+
+	if normalNorm != reversedNorm {
+		t.Errorf("EntityID body differs between normal and reversed field order:\n--- normal ---\n%s\n--- reversed ---\n%s",
+			normalBody, reversedBody)
+	}
+
+	// Additionally confirm reversed fixture emits IMSI before SubID (lexicographic).
+	imsiPos := strings.Index(reversedBody, "k.IMSI")
+	subIDPos := strings.Index(reversedBody, "k.SubID")
+	if imsiPos < 0 || subIDPos < 0 || imsiPos > subIDPos {
+		t.Errorf("reversed fixture: IMSI write must still precede SubID write (lexicographic order); body:\n%s", reversedBody)
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		outPath := filepath.Join(t.TempDir(), "delta.go")
+		cfg := Config{
+			InputPkgs:     []string{"./testdata/emit/entityid_struct_key_reversed"},
+			TargetStructs: []string{"EntityIDReversedKeySnapshot"},
+			OutPath:       outPath,
+		}
+		if err := New(cfg).Run(); err != nil {
+			t.Fatalf("Run() for reversed fixture failed: %v", err)
+		}
+		assertGofmtClean(t, outPath)
+		src, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("reading output: %v", err)
+		}
+		compileCheckEmitStructKeyReversed(t, src)
 	})
 }
 
@@ -1958,6 +2054,114 @@ func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
 	}
 
 	modContent := "module entityid_struct_key\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitStructKeyReversed generates EntityID code for a struct key
+// whose sub-fields are declared in reverse-alphabetical order (SubID before
+// IMSI) and verifies runtime behaviour. The golden-bytes test asserts the same
+// expected digest as TestEntityID_StructKey_GoldenBytes in the non-reversed
+// fixture — proving that field declaration order does not affect the hash.
+func compileCheckEmitStructKeyReversed(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	// SubID is declared before IMSI — the opposite of alphabetical order.
+	srcCode := `package entityid_struct_key_reversed
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type ReversedKey struct {
+	SubID uint64
+	IMSI  string
+}
+
+type EntityIDReversedKeySnapshot struct {
+	eddt.Header
+	Key    ReversedKey ` + "`eddt:\"entity.key\"`" + `
+	Status int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+
+	deltaPath := filepath.Join(tmpDir, "delta.go")
+	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+
+	assertGofmtClean(t, deltaPath)
+
+	testCode := `package entityid_struct_key_reversed_test
+
+import (
+	"testing"
+
+	"entityid_struct_key_reversed"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestEntityID_ReversedKey_Method verifies the same-package method wrapper on
+// ReversedKey delegates to the package-level EntityID function.
+// Covers: R-24
+func TestEntityID_ReversedKey_Method(t *testing.T) {
+	k := entityid_struct_key_reversed.ReversedKey{IMSI: "310260000000001", SubID: 42}
+	id1 := entityid_struct_key_reversed.EntityID(k)
+	id2 := k.EntityID()
+	if id1 != id2 {
+		t.Errorf("method and function forms diverge: %x vs %x", id1, id2)
+	}
+}
+
+// TestEntityID_FieldOrderStabilityGolden is the key field-order-stability
+// proof: the golden hash for {IMSI:"hello", SubID:42} must be identical
+// whether the struct declares IMSI first (entityid_struct_key) or SubID first
+// (this package). Both must hash IMSI before SubID (lexicographic order).
+// The expected hash is computed inline using the same runtime helpers in
+// alphabetical field-name order, matching TestEntityID_StructKey_GoldenBytes.
+// Covers: R-24
+func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
+	k := entityid_struct_key_reversed.ReversedKey{IMSI: "hello", SubID: 42}
+
+	// Compute expected hash: IMSI (alphabetically first) then SubID.
+	h := eddt.NewHash()
+	eddt.WriteString(h, "hello") // IMSI
+	eddt.WriteUint64(h, 42)      // SubID
+	expected := eddt.Finalise(h)
+
+	got := entityid_struct_key_reversed.EntityID(k)
+	if got != expected {
+		t.Errorf("field-order stability: got %x, want %x", got, expected)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_reversed_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write entity_id_reversed_test.go: %v", err)
+	}
+
+	modContent := "module entityid_struct_key_reversed\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}

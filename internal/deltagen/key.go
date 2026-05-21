@@ -2,18 +2,23 @@ package deltagen
 
 // key.go implements the hash-line renderer used by the EntityID emission stage
 // (EM-05). It maps a key type (primitive or struct) to a slice of
-// runtime.Write* call strings, one per field, in source declaration order.
+// runtime.Write* call strings, one per field, in lexicographic field-name
+// order (not source declaration order — reordering sub-fields in the source
+// struct is therefore not a breaking change to existing EntityIDs).
 
 import (
 	"fmt"
 	"go/types"
+	"sort"
 )
 
 // buildKeyHashLines returns an ordered slice of runtime.Write* call strings for
 // hashing a key of the given type and shape:
 //   - ShapeScalar: one Write* line for the primitive key value itself (expr "k").
-//   - ShapeStructValue: one Write* line per exported field in source order
-//     (expr "k.<FieldName>").
+//   - ShapeStructValue: one Write* line per exported field in lexicographic
+//     field-name order (expr "k.<FieldName>"). Source declaration order is
+//     intentionally ignored so that reordering sub-fields in the upstream
+//     struct definition is not a breaking change to existing EntityIDs.
 //
 // Used by buildSnapshotView to populate snapshotView.KeyHashLines (EM-05).
 func buildKeyHashLines(keyType types.Type, keyShape FieldShape) ([]string, error) {
@@ -32,15 +37,26 @@ func buildKeyHashLines(keyType types.Type, keyShape FieldShape) ([]string, error
 				"EM-05: key type %s has ShapeStructValue but non-struct underlying",
 				keyType)
 		}
-		var lines []string
+
+		type fieldEntry struct {
+			name string
+			typ  types.Type
+		}
+		var fields []fieldEntry
 		for i := 0; i < st.NumFields(); i++ {
 			f := st.Field(i)
 			if !f.Exported() {
 				continue
 			}
-			line, err := keyHashLine(f.Type(), "k."+f.Name())
+			fields = append(fields, fieldEntry{f.Name(), f.Type()})
+		}
+		sort.Slice(fields, func(i, j int) bool { return fields[i].name < fields[j].name })
+
+		var lines []string
+		for _, fe := range fields {
+			line, err := keyHashLine(fe.typ, "k."+fe.name)
 			if err != nil {
-				return nil, fmt.Errorf("EM-05: key field %q: %w", f.Name(), err)
+				return nil, fmt.Errorf("EM-05: key field %q: %w", fe.name, err)
 			}
 			lines = append(lines, line)
 		}
