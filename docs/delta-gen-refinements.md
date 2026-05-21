@@ -379,15 +379,15 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 
 ### 2.5 Generator: Code Emission
 
-| ID   | Requirement           | Spec reference                                | Description                                                                                                                                                                                                                                         |
-|:-----|:----------------------|:----------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| R-19 | Delta type emission   | delta-gen §4.1; §3.4                          | Emit `TDelta` struct embedding `runtime.Header`; payload fields shaped per §5.1.                                                                                                                                                                    |
-| R-20 | `Apply` emission      | delta-gen §7.1; §5.1; Errata E-12, E-19       | Emit `func Apply(s T, d TDelta) (T, error)`; calls `HeaderAfterApply` once; propagates error verbatim (E-19); applies per-field rules. When same-package, MAY also emit `func (s T) Apply(d TDelta) (T, error)` wrapper delegating to the function. |
-| R-21 | `Diff` emission       | delta-gen §7.2; §5.1; Errata E-05, E-12, E-20 | Emit `func Diff(a, b T) (TDelta, error)` (E-20); calls `HeaderForDiff` once; computes per-field diff contributions. When same-package, also emit `func (a T) Diff(b T) (TDelta, error)` wrapper (E-05, E-12).                                       |
-| R-22 | `Coalesce` emission   | delta-gen §7.3; Errata E-12                   | Emit `func Coalesce(s T, ds []TDelta) T`; literal fold of `Apply` over the delta slice. When same-package, MAY also emit `func (s T) Coalesce(ds []TDelta) T` wrapper.                                                                              |
-| R-23 | Nested type recursion | delta-gen §4.3; §9.2                          | Emit companion `<T>Delta` + `Apply` + `Diff` for `delta.nested` fields. No `Coalesce` for nested types.                                                                                                                                             |
-| R-24 | `EntityID` emission   | Errata E-10, E-12                             | Emit `func EntityID(k KeyStruct) runtime.EntityID` using runtime hash helpers. When same-package, MAY also emit `func (k KeyStruct) EntityID() runtime.EntityID` wrapper delegating to the function.                                                |
-| R-25 | Deterministic output  | delta-gen §10.1                               | Identical input produces byte-equal output (modulo line-ending normalisation).                                                                                                                                                                      |
+| ID   | Requirement           | Spec reference                                | Description                                                                                                                                                                                                                                                                      |
+|:-----|:----------------------|:----------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| R-19 | Delta type emission   | delta-gen §4.1; §3.4                          | Emit `TDelta` struct embedding `runtime.Header`; payload fields shaped per §5.1.                                                                                                                                                                                                 |
+| R-20 | `Apply` emission      | delta-gen §7.1; §5.1; Errata E-12, E-19       | Emit `func Apply(s T, d TDelta) (T, error)`; calls `HeaderAfterApply` once; propagates error verbatim (E-19); applies per-field rules. When same-package, MAY also emit `func (s T) Apply(d TDelta) (T, error)` wrapper delegating to the function.                              |
+| R-21 | `Diff` emission       | delta-gen §7.2; §5.1; Errata E-05, E-12, E-20 | Emit `func Diff(a, b T) (TDelta, error)` (E-20); calls `HeaderForDiff` once; computes per-field diff contributions. When same-package, also emit `func (a T) Diff(b T) (TDelta, error)` wrapper (E-05, E-12).                                                                    |
+| R-22 | `Coalesce` emission   | delta-gen §7.3; Errata E-12, E-21             | Emit `func Coalesce(s T, ds []TDelta) (T, error)` (E-21); literal fold of `Apply` over the delta slice; error from the first failing step returned verbatim; empty slice returns `(s, nil)`. When same-package, also emit `func (s T) Coalesce(ds []TDelta) (T, error)` wrapper. |
+| R-23 | Nested type recursion | delta-gen §4.3; §9.2                          | Emit companion `<T>Delta` + `Apply` + `Diff` for `delta.nested` fields. No `Coalesce` for nested types.                                                                                                                                                                          |
+| R-24 | `EntityID` emission   | Errata E-10, E-12                             | Emit `func EntityID(k KeyStruct) runtime.EntityID` using runtime hash helpers. When same-package, MAY also emit `func (k KeyStruct) EntityID() runtime.EntityID` wrapper delegating to the function.                                                                             |
+| R-25 | Deterministic output  | delta-gen §10.1                               | Identical input produces byte-equal output (modulo line-ending normalisation).                                                                                                                                                                                                   |
 
 ### 2.6 Generator: Helper Functions
 
@@ -795,10 +795,14 @@ checks.
     minimality, partial-diff minimality, `HeaderForDiff` error
     propagation); gofmt-clean guard; conditional `reflect` import test.
 
-- [ ] **EM-04: `Coalesce` method emission.** Emit `Coalesce` as a
-  literal `for` loop fold over the delta slice.
-  - Files: `internal/deltagen/template.go`.
-  - Tests: `template_test.go` — assert structural fold shape.
+- [x] **EM-04: `Coalesce` method emission.** *(2026-05-21)* Emit `Coalesce` as a
+  literal `for` loop fold over the delta slice. `(T, error)` signature per E-21.
+  - Files: `internal/deltagen/template.go`, `internal/deltagen/template_test.go`.
+  - Tests: AST-shape tests (same-package and cross-package modes); compile-check
+    behaviour tests: empty-fold identity, single-delta = Apply, multi-step
+    progression of changes across all five atomic shapes plus commutative,
+    no-op-payload identity (reformulated for E-06), associativity / chunkability,
+    error propagation at first and mid-fold positions.
 
 - [ ] **EM-05: `EntityID()` method emission.** Emit a deterministic
   content-hash method on the key struct, driving the runtime
@@ -1684,6 +1688,36 @@ and are not separately listed.
     - §7.4's pure-function constraints continue to apply (no I/O, no
       clock, no global state — errors are pure return values).
 
+### E-21 — `Coalesce` returns `(T, error)`
+
+- **Spec location:** `eddt-delta-gen-spec.md` §7.3, §8.3; refinements R-22.
+- **Nature:** Spec amendment.
+- **Problem.** Spec §7.3 / R-22 / E-12 specify a single-return signature:
+  `func Coalesce(s T, ds []TDelta) T`. `Coalesce` is a literal fold of
+  `Apply`, which was amended to `(T, error)` per E-19 to propagate
+  `runtime.HeaderAfterApply` chain-envelope failures. A single-return
+  signature cannot honour the error-propagation contract; any failing
+  `Apply` step would silently discard the chain error.
+- **Source:** Own analysis during EM-04; mirrors E-19 (Apply) and E-20
+  (Diff) one-for-one.
+- **Working assumption:**
+    - Generated `Coalesce` emits as
+      `func Coalesce(s T, ds []TDelta) (T, error)`.
+    - The same-package method wrapper mirrors this signature:
+      `func (s T) Coalesce(ds []TDelta) (T, error)`.
+    - The error from the first failing `Apply` step is returned verbatim.
+      On the error path, the zero `T` is returned; subsequent deltas in
+      the slice are not applied.
+    - An empty slice returns `(s, nil)` without invoking any runtime
+      helper — Coalesce never validates `s` on its own.
+- **Implication for R-22.** R-22 is amended to read
+  `Emit func Coalesce(s T, ds []TDelta) (T, error)` and the same-package
+  method wrapper is updated correspondingly.
+- **Proposed spec amendment:**
+    - §7.3: `Coalesce` returns `(T, error)`.
+    - §8.3's pure-function and fold-property constraints continue to apply
+      (no I/O, no clock, no global state — errors are pure return values).
+
 ---
 
 ## 5. Change Log
@@ -1716,6 +1750,7 @@ git commit).
 | 2026-05-20 | T-02                     | Tag-shape gate landed: `parseTag` wired into `walkFields`; `ParsedField` gains `Tag ParsedTag` (`RawTag` kept for T-03 migration); `validateTagShape` enforces `delta.nested`-on-composite-only (E-14); `validateTagCombination` is a documented no-op stub (CL-04 extends in Phase 7). Two new fixtures (`nested_ok`, `nested_bad`) cover the five-shape admit/reject matrix. `TestParse_MapField` docstring updated to reflect E-16 admission. 11 Group T2 unit tests + 4 Group F2 integration tests; all module tests pass; clean rebuild idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 2026-05-20 | T-03                     | Tag-based key recognition migrated from `RawTag == "entity.key"` to `Tag.Kind == TagKindEntityKey` in `parseKeyField` and the generator conflict-warning loop. `ParsedField.RawTag` removed; verbatim source preserved in `ParsedTag.Raw` so diagnostics and downstream dumps retain access. Parse-error wrapping now includes the full raw tag string. `combined_tags` fixture + `TestParse_CombinedTags` verify all `eddt:` tag families coexist on one struct and flow through the unified parsed-tag path. `TestParseTag` gains T16 asserting `Raw` round-trip. Phase 3 complete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-05-20 | E-14 … E-18, plan rework | Harmonised three-axis tag model adopted (presence × granularity × envelope; §1.6.3). Five new errata: E-14 (axis model), E-15 (slice default flip to atomic; `delta.nested` opts into set-diff), E-16 (map admission with `UpdatedX map[K]V` + `RemovedX []K` for `delta.nested`; upsert semantics for changed values), E-17 (admit `delta.nested + delta.clearable`; `OpRetract` resets to zero composite), E-18 (admit `delta.clearable` on slice / map). Plan items updated: pre-existing "Phases 1-7 baseline" bug fixed (now 1-6); R-13 admits map; R-15/R-16/R-17 reference harmonised rules; T-02 covers harmonised combination + shape gating; EM-01..EM-03 split atomic from compositional; Phase 5 expanded with N-03 (compositional map) and N-04 (compositional slice); CL-04..CL-07 broadened across all shapes incl. compositional inner via E-17. No phase renumbering.                                                                                                                                                                                                                                 |
+| 2026-05-21 | EM-04, E-21              | `Coalesce` function and same-package method wrapper emitted as a literal `for-range` fold of `Apply` over the delta slice. No view-layer changes (reuses `Name`, `DeltaName`, `Qualifier`, `EmitMethod`); no new imports. New erratum E-21 documents `Coalesce` returning `(T, error)` to propagate errors from any failing `Apply` step; empty slice returns `(s, nil)` without runtime call. R-22 updated to reference E-21. Tests: Coalesce AST-shape assertions (same-package and cross-package modes) added to `TestEmitTemplate_AtomicAll` and new `TestEmitTemplate_AtomicCoalesce_CrossPackage`; compile-check behaviour suite extended with `coalesce_test.go`: empty-fold identity, single-delta equivalence to Apply, multi-step progression across all five atomic shapes plus commutative (suppressed-field seed propagation verified), no-op-payload identity (reformulated to honour E-06), associativity / chunkability, and error propagation at first and mid-fold positions.                                                                                                                        |
 | 2026-05-21 | EM-03, E-20              | `Diff` function and same-package method wrapper emitted for atomic rows across all five payload shapes. `fieldView` gains `UseReflectEq` flag (non-scalar shapes use `reflect.DeepEqual`; scalar uses `!=`); `snapshotView` gains `NeedsReflect` and `DiffFields` (suppressed fields excluded). `reflect` import injected only when at least one non-scalar non-suppressed field exists. New erratum E-20 documents `Diff` returning `(TDelta, error)` to propagate `runtime.HeaderForDiff` chain-envelope errors (spec §6.5 / §7.2 amended). R-21 updated to reference E-20. Tests: view-construction matrix updated for `UseReflectEq` / `NeedsReflect` / `DiffFields`; Diff AST-shape tests for same-package and cross-package modes; conditional reflect-import tests; compile-check behaviour tests: round-trip `Apply(a, Diff(a, b)) == b` across all five shapes, identity-diff Set\* nilness (E-06), partial-diff minimality, and `HeaderForDiff` error propagation.                                                                                                                                           |
 | 2026-05-21 | EM-01                    | `text/template`-driven emit stage wired in: `template.go` introduces `templateData`/`snapshotView`/`fieldView` view types, a side-effecting `types.Qualifier` closure for lazy import discovery, `buildImports`, `buildSnapshotView`, and `executeEmit` (template → `go/format.Source` → `os.WriteFile`). Per-field atomic Delta-side declarations across the five payload shapes via a uniform `types.NewPointer(f.GoType)` wrap: scalar `T` → `*T`, pointer `*T` → `**T`, struct value `T` → `*T`, slice `[]T` → `*[]T` (E-15), map `map[K]V` → `*map[K]V` (E-16). `delta.omit` and `delta.retired` suppress fields; `delta.commutative` emits as untagged (§9.5); `delta.nested` returns an explicit Phase-5 sentinel error. Tests: view-construction matrix (V01–V10), AST-shape assertions on the generated file, Phase-5 sentinel, cross-package qualifier, and a compile-check that builds the generated Delta type in an isolated module. CLI sentinel tests rolled forward: five sites that previously asserted "not yet implemented" now assert successful emission and a valid `TDelta` struct declaration. |
 | 2026-05-21 | EM-02, E-19              | `Apply` function and same-package method wrapper emitted for atomic rows across all five payload shapes. `fieldView` gains `Suppressed` flag so suppressed fields (`delta.omit` / `delta.retired`) appear in Apply body as `result.F = s.F`; `snapshotView` gains `KeyName` and `EmitMethod`. New erratum E-19 documents `Apply` returning `(T, error)` to propagate `runtime.HeaderAfterApply` chain-envelope errors (spec §6.4 / §7.1 amended). R-20 updated to reference E-19. Tests: view-construction matrix updated for suppressed-fields contract change; Apply AST-shape tests for same-package and cross-package modes; compile-check promoted to behaviour test (`go test`) exercising Apply round-trip and `HeaderAfterApply` error propagation; `assertGofmtClean` (`gofmt -l`) guard added across all emit tests.                                                                                                                                                                                                                                                                                         |

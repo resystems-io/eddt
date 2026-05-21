@@ -391,6 +391,38 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Diff method wrapper not found (expected in same-package mode)")
 	}
 
+	// ── Coalesce function shape (EM-04) ───────────────────────────────────────
+
+	coalesceFn := findFuncDecl(f, "Coalesce")
+	if coalesceFn == nil {
+		t.Fatalf("Coalesce function not found in generated file")
+	}
+
+	// Signature: func Coalesce(s AtomicAllSnapshot, ds []AtomicAllSnapshotDelta) (AtomicAllSnapshot, error)
+	if coalesceFn.Type.Params.NumFields() != 2 {
+		t.Errorf("Coalesce: want 2 params, got %d", coalesceFn.Type.Params.NumFields())
+	}
+	if coalesceFn.Type.Results.NumFields() != 2 {
+		t.Errorf("Coalesce: want 2 results, got %d", coalesceFn.Type.Results.NumFields())
+	}
+
+	// Body must contain a for-range loop over ds with an Apply call.
+	if !strings.Contains(srcStr, "for _, d := range ds") {
+		t.Errorf("Coalesce body missing for-range loop: for _, d := range ds")
+	}
+	if !strings.Contains(srcStr, "Apply(result, d)") {
+		t.Errorf("Coalesce body missing Apply(result, d)")
+	}
+
+	// ── Coalesce method wrapper present (same-package mode, E-12) ────────────
+
+	if findMethodDecl(f, "AtomicAllSnapshot", "Coalesce") == nil {
+		t.Errorf("Coalesce method wrapper not found (expected in same-package mode)")
+	}
+	if !strings.Contains(srcStr, "return Coalesce(s, ds)") {
+		t.Errorf("Coalesce method wrapper body missing 'return Coalesce(s, ds)'")
+	}
+
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmit(t, src)
 	})
@@ -559,6 +591,54 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 	// CrossPkgSnapshot has Location Address (ShapeStructValue) → reflect needed.
 	if !strings.Contains(srcStr, `"reflect"`) {
 		t.Errorf("expected \"reflect\" import for non-scalar field, got:\n%s", srcStr)
+	}
+}
+
+// TestEmitTemplate_AtomicCoalesce_CrossPackage verifies Coalesce emission in
+// cross-package mode: source-package types are qualified in the function
+// signature, and no Coalesce method wrapper is emitted (E-12).
+// Covers: R-22, E-12, E-21
+func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/cross_pkg/model"},
+		TargetStructs:      []string{"CrossPkgSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-11: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Coalesce must be present as a package-level function.
+	if findFuncDecl(f, "Coalesce") == nil {
+		t.Fatalf("Coalesce function not found in generated file")
+	}
+
+	// Signature must qualify source-package types for both parameter and return (E-12).
+	if !strings.Contains(srcStr, "func Coalesce(s model.CrossPkgSnapshot, ds []CrossPkgSnapshotDelta) (model.CrossPkgSnapshot, error)") {
+		t.Errorf("expected qualified Coalesce signature, got:\n%s", srcStr)
+	}
+
+	// No Coalesce method wrapper in cross-package mode (E-12).
+	if findMethodDecl(f, "CrossPkgSnapshot", "Coalesce") != nil {
+		t.Errorf("Coalesce method wrapper must not be emitted in cross-package mode")
 	}
 }
 
@@ -1017,6 +1097,337 @@ func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "diff_test.go"), []byte(diffTestCode), 0644); err != nil {
 		t.Fatalf("write diff_test.go: %v", err)
+	}
+
+	// coalesceTestCode exercises the generated Coalesce function against the
+	// atomic_all fixture. makeSnap and other helpers are defined in diff_test.go
+	// (same package atomic_all_test), so they are directly accessible here.
+	coalesceTestCode := `package atomic_all_test
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"atomic_all"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestCoalesceEmpty verifies that Coalesce with a nil or empty delta slice
+// returns (s, nil) without advancing the Header — the monoidal identity
+// element of the fold: Coalesce(x, []) == x (byte-equal).
+// Covers: R-22, R-30, E-21
+func TestCoalesceEmpty(t *testing.T) {
+	id := eddt.EntityID{1}
+	s := makeSnap(id, 1, time.Now(), 5)
+
+	// nil slice
+	got, err := atomic_all.Coalesce(s, nil)
+	if err != nil {
+		t.Fatalf("Coalesce(s, nil): unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(got, s) {
+		t.Errorf("Coalesce(s, nil): result differs from input")
+	}
+
+	// empty non-nil slice
+	got2, err2 := atomic_all.Coalesce(s, []atomic_all.AtomicAllSnapshotDelta{})
+	if err2 != nil {
+		t.Fatalf("Coalesce(s, []): unexpected error: %v", err2)
+	}
+	if !reflect.DeepEqual(got2, s) {
+		t.Errorf("Coalesce(s, []): result differs from input")
+	}
+}
+
+// TestCoalesceSingleDelta_EqualsApply verifies that Coalesce with a single
+// delta is equivalent to a direct Apply call: the one-step fold equals Apply.
+// Covers: R-22, R-30, E-21
+func TestCoalesceSingleDelta_EqualsApply(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+	a := makeSnap(id, 1, t1, 1)
+	b := makeSnap(id, 2, t2, 2)
+
+	d, err := atomic_all.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	viaCoalesce, err := atomic_all.Coalesce(a, []atomic_all.AtomicAllSnapshotDelta{d})
+	if err != nil {
+		t.Fatalf("Coalesce: %v", err)
+	}
+
+	viaApply, err := atomic_all.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if !reflect.DeepEqual(viaCoalesce, viaApply) {
+		t.Errorf("Coalesce(a,[d]) != Apply(a,d)")
+	}
+}
+
+// TestCoalesceMultiStep_ProgressionOfChanges verifies that a Coalesce fold
+// across six snapshots — where each transition mutates exactly one atomic
+// shape — produces the final snapshot's payload. This covers all five atomic
+// shapes (scalar, pointer, struct, slice, map) plus delta.commutative, and
+// verifies that suppressed fields propagate from the seed unchanged.
+// Covers: R-22, R-30, E-21
+func TestCoalesceMultiStep_ProgressionOfChanges(t *testing.T) {
+	id := eddt.EntityID{1}
+	t0 := time.Now()
+	tick := func(i int) time.Time { return t0.Add(time.Duration(i) * time.Second) }
+
+	// s1 is the seed; each subsequent snapshot changes exactly one payload field.
+	s1 := makeSnap(id, 1, tick(1), 1)
+
+	s2 := s1
+	s2.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: tick(2)}
+	s2.Scalar = 999
+
+	ptr3 := "new_ptr"
+	s3 := s2
+	s3.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 3, EffectiveAt: tick(3)}
+	s3.Pointer = &ptr3
+
+	s4 := s3
+	s4.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 4, EffectiveAt: tick(4)}
+	s4.Struct = atomic_all.Inner{A: 100, B: 200}
+
+	s5 := s4
+	s5.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: tick(5)}
+	s5.Slice = []byte{9, 8, 7}
+
+	s6 := s5
+	s6.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 6, EffectiveAt: tick(6)}
+	s6.Map = map[string]int32{"z": 42}
+	s6.Commute = 77
+
+	computeDiff := func(a, b atomic_all.AtomicAllSnapshot) atomic_all.AtomicAllSnapshotDelta {
+		t.Helper()
+		d, err := atomic_all.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		return d
+	}
+
+	ds := []atomic_all.AtomicAllSnapshotDelta{
+		computeDiff(s1, s2),
+		computeDiff(s2, s3),
+		computeDiff(s3, s4),
+		computeDiff(s4, s5),
+		computeDiff(s5, s6),
+	}
+
+	result, err := atomic_all.Coalesce(s1, ds)
+	if err != nil {
+		t.Fatalf("Coalesce: %v", err)
+	}
+
+	// Payload must equal s6.
+	if result.Scalar != s6.Scalar {
+		t.Errorf("Scalar: got %d, want %d", result.Scalar, s6.Scalar)
+	}
+	if !reflect.DeepEqual(result.Pointer, s6.Pointer) {
+		t.Errorf("Pointer: got %v, want %v", result.Pointer, s6.Pointer)
+	}
+	if result.Struct != s6.Struct {
+		t.Errorf("Struct: got %v, want %v", result.Struct, s6.Struct)
+	}
+	if !reflect.DeepEqual(result.Slice, s6.Slice) {
+		t.Errorf("Slice: got %v, want %v", result.Slice, s6.Slice)
+	}
+	if !reflect.DeepEqual(result.Map, s6.Map) {
+		t.Errorf("Map: got %v, want %v", result.Map, s6.Map)
+	}
+	if result.Commute != s6.Commute {
+		t.Errorf("Commute: got %d, want %d", result.Commute, s6.Commute)
+	}
+
+	// Suppressed fields propagate from the seed (Apply carries s.X at every step).
+	if result.Omitted != s1.Omitted {
+		t.Errorf("Omitted: got %q, want %q (seed value)", result.Omitted, s1.Omitted)
+	}
+	if result.Retired != s1.Retired {
+		t.Errorf("Retired: got %q, want %q (seed value)", result.Retired, s1.Retired)
+	}
+}
+
+// TestCoalesceNoOpPayload verifies the spirit of Coalesce(x, [Diff(y,y)]) ==
+// x (payload-wise). Taken literally, Diff(y,y) collides with E-06 when
+// y.Sequence == x.Sequence because HeaderAfterApply requires strict monotonicity.
+// We therefore construct y with y.Sequence > x.Sequence and identical payload:
+// Diff(y,y) has all Set* nil (identity-diff, R-29), and applying it to x leaves
+// the payload unchanged while advancing the Header.
+// Covers: R-22, R-30, E-21
+func TestCoalesceNoOpPayload(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+
+	x := makeSnap(id, 1, t1, 5)
+
+	// y: same EntityID/ChainID/payload, but Sequence advanced past x.Sequence.
+	y := x
+	y.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: t2}
+
+	noop, err := atomic_all.Diff(y, y)
+	if err != nil {
+		t.Fatalf("Diff(y,y): %v", err)
+	}
+	// Identity-diff: all Set* must be nil (R-29 / E-06 documents this).
+	if noop.SetScalar != nil || noop.SetPointer != nil || noop.SetStruct != nil ||
+		noop.SetSlice != nil || noop.SetMap != nil || noop.SetCommute != nil {
+		t.Error("Diff(y,y): expected all Set* nil (identity-diff)")
+	}
+
+	result, err := atomic_all.Coalesce(x, []atomic_all.AtomicAllSnapshotDelta{noop})
+	if err != nil {
+		t.Fatalf("Coalesce(x,[Diff(y,y)]): %v", err)
+	}
+
+	// Payload must equal x (no-op delta does not change any field).
+	if result.Scalar != x.Scalar {
+		t.Errorf("Scalar: got %d, want %d", result.Scalar, x.Scalar)
+	}
+	if !reflect.DeepEqual(result.Pointer, x.Pointer) {
+		t.Errorf("Pointer: got %v, want %v", result.Pointer, x.Pointer)
+	}
+	if result.Struct != x.Struct {
+		t.Errorf("Struct: got %v, want %v", result.Struct, x.Struct)
+	}
+	if !reflect.DeepEqual(result.Slice, x.Slice) {
+		t.Errorf("Slice: got %v, want %v", result.Slice, x.Slice)
+	}
+	if !reflect.DeepEqual(result.Map, x.Map) {
+		t.Errorf("Map: got %v, want %v", result.Map, x.Map)
+	}
+	if result.Commute != x.Commute {
+		t.Errorf("Commute: got %d, want %d", result.Commute, x.Commute)
+	}
+	// Header advances to y.Sequence (Apply always advances the Header).
+	if result.Header.Sequence != y.Header.Sequence {
+		t.Errorf("Sequence: got %d, want %d", result.Header.Sequence, y.Header.Sequence)
+	}
+}
+
+// TestCoalesceAssociativity verifies that Coalesce is associative (chunkable):
+// Coalesce(Coalesce(s, ds1), ds2) == Coalesce(s, append(ds1, ds2...)).
+// This confirms that the fold can be split at any point with identical results.
+// Covers: R-22, R-30, E-21
+func TestCoalesceAssociativity(t *testing.T) {
+	id := eddt.EntityID{1}
+	t0 := time.Now()
+	tick := func(i int) time.Time { return t0.Add(time.Duration(i) * time.Second) }
+
+	snaps := make([]atomic_all.AtomicAllSnapshot, 6)
+	for i := range snaps {
+		snaps[i] = makeSnap(id, uint64(i+1), tick(i+1), i+1)
+	}
+
+	ds := make([]atomic_all.AtomicAllSnapshotDelta, 5)
+	for i := range ds {
+		d, err := atomic_all.Diff(snaps[i], snaps[i+1])
+		if err != nil {
+			t.Fatalf("Diff(snaps[%d], snaps[%d]): %v", i, i+1, err)
+		}
+		ds[i] = d
+	}
+
+	// Full fold: Coalesce(snaps[0], ds[0..4]).
+	full, err := atomic_all.Coalesce(snaps[0], ds)
+	if err != nil {
+		t.Fatalf("Coalesce(full): %v", err)
+	}
+
+	// Chunked fold: first two deltas, then last three.
+	mid, err := atomic_all.Coalesce(snaps[0], ds[:2])
+	if err != nil {
+		t.Fatalf("Coalesce(first 2): %v", err)
+	}
+	full2, err := atomic_all.Coalesce(mid, ds[2:])
+	if err != nil {
+		t.Fatalf("Coalesce(last 3): %v", err)
+	}
+
+	// Both folds must produce the same result (Header and payload).
+	if !reflect.DeepEqual(full, full2) {
+		t.Errorf("associativity violated: full fold != chunked fold")
+	}
+}
+
+// TestCoalesceErrorAtFirst verifies that a delta with a mismatched EntityID as
+// the first element causes Coalesce to return (zero T, non-nil error). No
+// subsequent deltas are applied. Pins the E-21 zero-return-on-error contract.
+// Covers: R-22, E-21
+func TestCoalesceErrorAtFirst(t *testing.T) {
+	id := eddt.EntityID{1}
+	otherId := eddt.EntityID{2}
+	t1 := time.Now()
+	s := makeSnap(id, 1, t1, 1)
+
+	var bad atomic_all.AtomicAllSnapshotDelta
+	bad.Header = eddt.Header{EntityID: otherId, ChainID: "c", Sequence: 2, EffectiveAt: t1.Add(time.Second)}
+
+	result, err := atomic_all.Coalesce(s, []atomic_all.AtomicAllSnapshotDelta{bad})
+	if err == nil {
+		t.Fatal("expected error for mismatched EntityID, got nil")
+	}
+	if !strings.Contains(err.Error(), "EntityID") {
+		t.Errorf("expected error to mention EntityID, got: %v", err)
+	}
+
+	// E-21: zero T returned on error, not a partial result.
+	var zero atomic_all.AtomicAllSnapshot
+	if !reflect.DeepEqual(result, zero) {
+		t.Errorf("expected zero AtomicAllSnapshot on error")
+	}
+}
+
+// TestCoalesceErrorMidFold verifies that a sequence regression in the second
+// delta stops the fold and returns (zero T, non-nil error). The first delta is
+// valid and has already been applied. Coalesce returns the zero value rather
+// than the partial intermediate state — pins the E-21 contract.
+// Covers: R-22, E-21
+func TestCoalesceErrorMidFold(t *testing.T) {
+	id := eddt.EntityID{1}
+	t0 := time.Now()
+	tick := func(i int) time.Time { return t0.Add(time.Duration(i) * time.Second) }
+
+	s1 := makeSnap(id, 1, tick(1), 1)
+	s2 := makeSnap(id, 2, tick(2), 2)
+	d1, err := atomic_all.Diff(s1, s2)
+	if err != nil {
+		t.Fatalf("Diff(s1,s2): %v", err)
+	}
+
+	// bad: regression — Sequence 1 is <= the current state Sequence of 2.
+	var bad atomic_all.AtomicAllSnapshotDelta
+	bad.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: tick(1)}
+
+	// d3 would be applied after bad, but is never reached.
+	var d3 atomic_all.AtomicAllSnapshotDelta
+	d3.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: tick(5)}
+
+	result, err := atomic_all.Coalesce(s1, []atomic_all.AtomicAllSnapshotDelta{d1, bad, d3})
+	if err == nil {
+		t.Fatal("expected error for sequence regression, got nil")
+	}
+
+	// E-21: zero T returned on error, not the partial intermediate state.
+	var zero atomic_all.AtomicAllSnapshot
+	if !reflect.DeepEqual(result, zero) {
+		t.Errorf("expected zero AtomicAllSnapshot on error, got non-zero result")
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "coalesce_test.go"), []byte(coalesceTestCode), 0644); err != nil {
+		t.Fatalf("write coalesce_test.go: %v", err)
 	}
 
 	// Write go.mod with a replace directive pointing at the local module root.

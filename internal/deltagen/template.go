@@ -144,16 +144,19 @@ type fieldView struct {
 // deltaTemplateStr is the text/template source for the generated Delta file.
 // EM-02 scope: type declarations (EM-01) + Apply function and method wrapper.
 // EM-03 scope: Diff function and method wrapper.
-// Named sub-templates for Coalesce and EntityID are added by EM-04..EM-05.
+// EM-04 scope: Coalesce function and method wrapper.
+// Named sub-templates for EntityID are added by EM-05.
 //
 // Sub-template inventory:
-//   - applyFunc:   package-level Apply function (always emitted).
-//   - applyField:  per-field Apply contribution (atomic or suppressed).
-//   - applyMethod: same-package method wrapper delegating to Apply (E-12).
-//   - diffFunc:    package-level Diff function (always emitted).
-//   - diffField:   per-field Diff contribution (non-suppressed fields only,
+//   - applyFunc:     package-level Apply function (always emitted).
+//   - applyField:    per-field Apply contribution (atomic or suppressed).
+//   - applyMethod:   same-package method wrapper delegating to Apply (E-12).
+//   - diffFunc:      package-level Diff function (always emitted).
+//   - diffField:     per-field Diff contribution (non-suppressed fields only,
 //     using != for scalars and reflect.DeepEqual for others).
-//   - diffMethod:  same-package method wrapper delegating to Diff (E-12).
+//   - diffMethod:    same-package method wrapper delegating to Diff (E-12).
+//   - coalesceFunc:  package-level Coalesce function (always emitted).
+//   - coalesceMethod: same-package method wrapper delegating to Coalesce (E-12).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -180,6 +183,8 @@ type {{.DeltaName}} struct {
 {{if .EmitMethod}}{{template "applyMethod" .}}
 {{end}}{{template "diffFunc" .}}
 {{if .EmitMethod}}{{template "diffMethod" .}}
+{{end}}{{template "coalesceFunc" .}}
+{{if .EmitMethod}}{{template "coalesceMethod" .}}
 {{end}}{{end -}}
 
 {{define "applyFunc"}}
@@ -233,6 +238,32 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 // package-level Diff function (E-12).
 func (a {{.Name}}) Diff(b {{.Name}}) ({{.DeltaName}}, error) {
 	return Diff(a, b)
+}
+{{end -}}
+
+{{define "coalesceFunc"}}
+// Coalesce folds a slice of TDeltas into s by iterated Apply. It is a pure
+// function; chain-envelope validations propagate from the first failing Apply
+// step. An empty slice returns (s, nil) without any runtime call. See
+// delta-gen-spec.md §7.3 / §8.3 (Errata E-21, E-19).
+func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
+	result := s
+	for _, d := range ds {
+		var err error
+		result, err = Apply(result, d)
+		if err != nil {
+			return {{.Qualifier}}{{.Name}}{}, err
+		}
+	}
+	return result, nil
+}
+{{end -}}
+
+{{define "coalesceMethod"}}
+// Coalesce is an ergonomic same-package wrapper that delegates to the
+// package-level Coalesce function (E-12).
+func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
+	return Coalesce(s, ds)
 }
 {{end}}`
 
