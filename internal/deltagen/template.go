@@ -19,8 +19,10 @@ package deltagen
 //   - buildSnapshotView translates one ParsedSnapshot into a snapshotView;
 //     it applies suppression (omit/retired) and the Phase-5 sentinel
 //     (delta.nested) before rendering each field's Delta-side type via
-//     types.TypeString. Sets UseReflectEq per field and NeedsReflect per
-//     snapshot for the conditional reflect-import logic (EM-03).
+//     types.TypeString. Sets UseReflectEq via types.Comparable per field
+//     and NeedsReflect per snapshot for the conditional reflect-import
+//     logic (EM-03). Only non-comparable types (slice, map, complex structs)
+//     trigger reflect; comparable types including pointers use !=.
 //   - executeEmit orchestrates build → execute → go/format → WriteFile,
 //     called by generator.go's emitStage.
 //
@@ -191,6 +193,9 @@ type fieldView struct {
 	Suppressed bool
 
 	// UseReflectEq is true when the Diff template must use reflect.DeepEqual
+	// because the field's Go type is not comparable (e.g. slice, map, or a struct
+	// containing a slice/map). Comparable types — including pointers and all-scalar
+	// structs — use != directly. Set by !types.Comparable(GoType).
 	// rather than != to compare this field's values (EM-03). Set for all
 	// non-scalar shapes: pointer, struct value, slice, map.
 	UseReflectEq bool
@@ -222,8 +227,9 @@ type fieldView struct {
 	// (e.g. "string"). Used to declare the RemovedX []K field. Only when IsMapNested.
 	MapKeyType string
 
-	// MapValueUseReflectEq is true when the map value type V is non-scalar and
-	// Diff must use reflect.DeepEqual for value comparison. Only when IsMapNested.
+	// MapValueUseReflectEq is true when the map value type V is not comparable
+	// (e.g. a struct containing a slice/map) and Diff must use reflect.DeepEqual
+	// for value comparison. Set by !types.Comparable(mapT.Elem()). Only when IsMapNested.
 	MapValueUseReflectEq bool
 }
 
@@ -692,7 +698,6 @@ func buildNestedTypeView(
 				mapT := field.Type().Underlying().(*types.Map)
 				keyStr := types.TypeString(mapT.Key(), qualifier)
 				mapStr := types.TypeString(field.Type(), qualifier)
-				valShape, _ := classifyShape(mapT.Elem())
 				fv := fieldView{
 					Name:                 field.Name(),
 					DeltaName:            "Updated" + field.Name(),
@@ -700,7 +705,7 @@ func buildNestedTypeView(
 					IsMapNested:          true,
 					MapRemovedName:       "Removed" + field.Name(),
 					MapKeyType:           keyStr,
-					MapValueUseReflectEq: valShape != ShapeScalar,
+					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
 				}
 				nv.Fields = append(nv.Fields, fv)
 				nv.DiffFields = append(nv.DiffFields, fv)
@@ -761,7 +766,10 @@ func buildNestedTypeView(
 			DeltaName: "Set" + field.Name(),
 			DeltaType: deltaType,
 		}
-		if shape != ShapeScalar {
+		// Non-comparable types (slice, map, structs with slice/map fields) cannot use !=
+		// and require reflect.DeepEqual. Comparable types (scalars, pointers, simple structs,
+		// arrays) use != directly. types.Comparable is the authoritative Go answer.
+		if !types.Comparable(field.Type()) {
 			fv.UseReflectEq = true
 			nv.NeedsReflect = true
 		}
@@ -842,7 +850,6 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 				mapT := f.GoType.Underlying().(*types.Map)
 				keyStr := types.TypeString(mapT.Key(), qualifier)
 				mapStr := types.TypeString(f.GoType, qualifier)
-				valShape, _ := classifyShape(mapT.Elem())
 				fv := fieldView{
 					Name:                 f.Name,
 					DeltaName:            "Updated" + f.Name,
@@ -850,7 +857,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 					IsMapNested:          true,
 					MapRemovedName:       "Removed" + f.Name,
 					MapKeyType:           keyStr,
-					MapValueUseReflectEq: valShape != ShapeScalar,
+					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
 				}
 				sv.Fields = append(sv.Fields, fv)
 				sv.DiffFields = append(sv.DiffFields, fv)
@@ -914,9 +921,10 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			DeltaName: "Set" + f.Name,
 			DeltaType: deltaType,
 		}
-		// Non-scalar shapes require reflect.DeepEqual for Diff comparisons (EM-03):
-		// pointer identity != value equality, and slice/map have no == operator.
-		if f.Shape != ShapeScalar {
+		// Non-comparable types (slice, map, structs with slice/map fields) cannot use !=
+		// and require reflect.DeepEqual. Comparable types (scalars, pointers, simple structs,
+		// arrays) use != directly. types.Comparable is the authoritative Go answer.
+		if !types.Comparable(f.GoType) {
 			fv.UseReflectEq = true
 			sv.NeedsReflect = true
 		}

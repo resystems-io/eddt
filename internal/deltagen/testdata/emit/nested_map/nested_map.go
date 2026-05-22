@@ -1,10 +1,9 @@
 // Package nested_map is the N-03 emit fixture. NestedMapSnapshot exercises
 // two map fields:
 //
-//   - Tags uses a scalar value type (map[string]string), so generated Diff uses
-//     the != comparator for value-change detection.
-//   - Scores uses a struct value type (map[string]Entry), so generated Diff uses
-//     reflect.DeepEqual for value-change detection.
+//   - Tags uses a scalar value type (map[string]string); generated Diff uses !=.
+//   - Scores uses a struct value type (map[string]Entry); Entry is comparable
+//     (all-scalar fields), so generated Diff also uses != — no reflect required.
 //
 // The fixture is consumed by TestEmitTemplate_Nested_Map_SamePkg and
 // TestEmitTemplate_Nested_Map_CrossPkg in template_test.go.
@@ -12,9 +11,9 @@ package nested_map
 
 import eddt "go.resystems.io/eddt/runtime"
 
-// Entry is used as a map value type to exercise reflect.DeepEqual comparison
-// in the generated Diff function. Its non-scalar structure means the generator
-// sets MapValueUseReflectEq=true for the Scores field.
+// Entry is used as a map value type to exercise struct-value comparison in the
+// generated Diff function. Because all Entry fields are scalar, Entry is comparable
+// in Go: the generator uses != directly (MapValueUseReflectEq=false).
 type Entry struct {
 	// Score is the numeric score value stored per key.
 	Score int32
@@ -35,7 +34,7 @@ type NestedMapSnapshot struct {
 	// Tags is a string→string map encoded with element-wise delta (N-03).
 	Tags map[string]string `eddt:"delta.nested"`
 	// Scores is a string→Entry map encoded with element-wise delta (N-03).
-	// Entry values are compared with reflect.DeepEqual.
+	// Entry is comparable, so the generated Diff uses != for value comparison.
 	Scores map[string]Entry `eddt:"delta.nested"`
 	// Count is a plain atomic field; changes produce SetCount *int32 in TDelta.
 	Count int32

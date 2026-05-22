@@ -84,17 +84,17 @@ func TestBuildSnapshotView(t *testing.T) {
 		deltaName    string
 		deltaType    string
 		suppressed   bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
-		useReflectEq bool // true for non-scalar shapes: UseReflectEq: true (EM-03)
+		useReflectEq bool // true when !types.Comparable(GoType): UseReflectEq: true (EM-03, NR-01)
 	}{
-		// V01 — ShapeScalar: emits *T; no reflect comparison needed.
+		// V01 — ShapeScalar int32: comparable → !=, no reflect.
 		{label: "V01_Scalar", fieldName: "Scalar", deltaName: "SetScalar", deltaType: "*int32"},
-		// V02 — ShapePointer: emits **T; reflect.DeepEqual needed (pointer identity != value equality).
-		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string", useReflectEq: true},
-		// V03 — ShapeStructValue (local, same-pkg): no qualifier, emits *Inner; reflect needed.
-		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner", useReflectEq: true},
-		// V05 — ShapeSlice (atomic per E-15): []byte rendered as []byte; reflect needed.
+		// V02 — ShapePointer *string: pointer types are always comparable → !=, no reflect (NR-01).
+		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string"},
+		// V03 — ShapeStructValue Inner{A,B int32}: all-scalar struct, comparable → !=, no reflect (NR-01).
+		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner"},
+		// V05 — ShapeSlice []byte: slices are not comparable → reflect.DeepEqual.
 		{label: "V05_Slice", fieldName: "Slice", deltaName: "SetSlice", deltaType: "*[]byte", useReflectEq: true},
-		// V06 — ShapeMap (atomic per E-16): emits *map[string]int32; reflect needed.
+		// V06 — ShapeMap map[string]int32: maps are not comparable → reflect.DeepEqual.
 		{label: "V06_Map", fieldName: "Map", deltaName: "SetMap", deltaType: "*map[string]int32", useReflectEq: true},
 		// V07 — delta.omit: present in view with Suppressed: true; UseReflectEq irrelevant.
 		{label: "V07_Omitted", fieldName: "Omitted", suppressed: true},
@@ -198,7 +198,8 @@ func TestBuildSnapshotView_KeyName(t *testing.T) {
 // fields are present.
 // Covers: R-21, E-20
 func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
-	// atomic_all has pointer, struct-value, slice, and map fields → NeedsReflect.
+	// atomic_all has slice ([]byte) and map (map[string]int32) fields which are
+	// non-comparable and require reflect.DeepEqual → NeedsReflect.
 	t.Run("HasNonScalar", func(t *testing.T) {
 		ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 		opts := emitOpts{crossPackage: false}
@@ -362,20 +363,20 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Diff body missing runtime.HeaderForDiff(a.Header, b.Header)")
 	}
 
-	// Scalar field uses !=; non-scalar fields use reflect.DeepEqual.
-	if !strings.Contains(srcStr, "a.Scalar != b.Scalar") {
-		t.Errorf("Diff body missing scalar comparison: a.Scalar != b.Scalar")
-	}
-	for _, name := range []string{"Pointer", "Struct", "Slice", "Map", "Commute"} {
-		// Commute is ShapeScalar (int32), so it uses !=; the others use DeepEqual.
-		if name == "Commute" {
-			if !strings.Contains(srcStr, "a.Commute != b.Commute") {
-				t.Errorf("Diff body missing scalar comparison for commutative field: a.Commute != b.Commute")
-			}
-			continue
+	// Comparable fields use !=; non-comparable fields use reflect.DeepEqual (NR-01).
+	// Comparable: Scalar (int32), Pointer (*string), Struct (Inner{int32,int32}), Commute (int32).
+	// Non-comparable: Slice ([]byte), Map (map[string]int32).
+	for _, name := range []string{"Scalar", "Pointer", "Struct", "Commute"} {
+		if !strings.Contains(srcStr, "a."+name+" != b."+name) {
+			t.Errorf("Diff body missing != comparison for comparable field %s", name)
 		}
+		if strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
+			t.Errorf("Diff body must not use reflect.DeepEqual for comparable field %s (NR-01)", name)
+		}
+	}
+	for _, name := range []string{"Slice", "Map"} {
 		if !strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
-			t.Errorf("Diff body missing reflect.DeepEqual for %s", name)
+			t.Errorf("Diff body missing reflect.DeepEqual for non-comparable field %s", name)
 		}
 	}
 
@@ -497,10 +498,10 @@ func TestEmitTemplate_NestedNYI_SliceSentinel(t *testing.T) {
 //     UpdatedScores/RemovedScores (E-16 upsert encoding), plus SetCount *int32.
 //   - No companion type is emitted for the map value types (V is atomic).
 //   - Apply body references both the removed-keys slice and the updated-entries map.
-//   - Generated file is gofmt-clean and reflects import is present (Scores uses
-//     reflect.DeepEqual because Entry is a struct value).
+//   - Generated file is gofmt-clean and the reflect import is ABSENT: Entry is a
+//     comparable struct (all-scalar fields), so Diff uses != not reflect.DeepEqual.
 //
-// Covers: N-03, E-16
+// Covers: N-03, E-16, NR-01
 func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_map_delta.go")
 
@@ -557,9 +558,13 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 		}
 	}
 
-	// reflect import must be present (Scores field uses reflect.DeepEqual).
-	if !strings.Contains(srcStr, `"reflect"`) {
-		t.Errorf(`generated file missing "reflect" import (required for Scores struct-value comparison)`)
+	// reflect import must be ABSENT: Entry is a comparable struct (all-scalar fields),
+	// so the generated Diff uses != for Scores value comparison (NR-01).
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf(`unexpected "reflect" import: Entry is comparable, Diff must use != not reflect.DeepEqual`)
+	}
+	if strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Errorf("unexpected reflect.DeepEqual in generated code: Entry is comparable (NR-01)")
 	}
 
 	t.Run("CompileCheck", func(t *testing.T) {
@@ -762,9 +767,10 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 		t.Errorf("Diff method wrapper must not be emitted in cross-package mode")
 	}
 
-	// CrossPkgSnapshot has Location Address (ShapeStructValue) → reflect needed.
-	if !strings.Contains(srcStr, `"reflect"`) {
-		t.Errorf("expected \"reflect\" import for non-scalar field, got:\n%s", srcStr)
+	// CrossPkgSnapshot.Location Address is a comparable struct (Street, City string),
+	// so Diff uses != — no reflect import (NR-01).
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("unexpected \"reflect\" import: Address is comparable, Diff must use != (NR-01):\n%s", srcStr)
 	}
 }
 
