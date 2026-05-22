@@ -53,7 +53,7 @@ func TestBuildSnapshotView(t *testing.T) {
 	opts := emitOpts{crossPackage: false, aliases: nil}
 	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
-	sv, err := buildSnapshotView(ps, qualifier)
+	sv, err := buildSnapshotView(ps, qualifier, true)
 	if err != nil {
 		t.Fatalf("buildSnapshotView: unexpected error: %v", err)
 	}
@@ -151,23 +151,20 @@ func TestBuildSnapshotView(t *testing.T) {
 	}
 }
 
-// TestBuildSnapshotView_NestedError verifies that delta.nested triggers the
-// Phase-5 sentinel (V10 case).
+// TestBuildSnapshotView_NestedSliceError verifies that delta.nested on a slice
+// field returns the N-03 sentinel error at view-construction time.
 // Covers: R-19
-func TestBuildSnapshotView_NestedError(t *testing.T) {
-	ps := loadEmitFixture(t, "nested_nyi", "NestedNYISnapshot")
+func TestBuildSnapshotView_NestedSliceError(t *testing.T) {
+	ps := loadEmitFixture(t, "nested_nyi", "NestedSliceNYISnapshot")
 	opts := emitOpts{crossPackage: false}
 	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
-	_, err := buildSnapshotView(ps, qualifier)
+	_, err := buildSnapshotView(ps, qualifier, true)
 	if err == nil {
-		t.Fatal("expected Phase-5 error for delta.nested, got nil")
+		t.Fatal("expected N-03 sentinel error for delta.nested on slice, got nil")
 	}
-	if !strings.Contains(err.Error(), "Phase 5") {
-		t.Errorf("error should mention Phase 5, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "delta.nested") {
-		t.Errorf("error should mention delta.nested, got: %v", err)
+	if !strings.Contains(err.Error(), "N-03") {
+		t.Errorf("error should mention N-03, got: %v", err)
 	}
 }
 
@@ -179,7 +176,7 @@ func TestBuildSnapshotView_KeyName(t *testing.T) {
 	opts := emitOpts{crossPackage: false}
 	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
-	sv, err := buildSnapshotView(ps, qualifier)
+	sv, err := buildSnapshotView(ps, qualifier, true)
 	if err != nil {
 		t.Fatalf("buildSnapshotView: %v", err)
 	}
@@ -198,7 +195,7 @@ func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 		ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 		opts := emitOpts{crossPackage: false}
 		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
-		sv, err := buildSnapshotView(ps, qualifier)
+		sv, err := buildSnapshotView(ps, qualifier, true)
 		if err != nil {
 			t.Fatalf("buildSnapshotView: %v", err)
 		}
@@ -212,7 +209,7 @@ func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 		ps := loadEmitFixture(t, "scalar_only", "ScalarOnlySnapshot")
 		opts := emitOpts{crossPackage: false}
 		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
-		sv, err := buildSnapshotView(ps, qualifier)
+		sv, err := buildSnapshotView(ps, qualifier, true)
 		if err != nil {
 			t.Fatalf("buildSnapshotView: %v", err)
 		}
@@ -466,23 +463,43 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	})
 }
 
-// TestEmitTemplate_NestedNotYet verifies that the emit pipeline returns the
-// Phase-5 sentinel error when the Snapshot contains a delta.nested field.
+// TestEmitTemplate_NestedNYI_SliceSentinel verifies that the emit pipeline
+// returns the N-03 sentinel error for delta.nested on a slice field.
 // Covers: R-19
-func TestEmitTemplate_NestedNotYet(t *testing.T) {
+func TestEmitTemplate_NestedNYI_SliceSentinel(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_nyi_delta.go")
 
 	cfg := Config{
 		InputPkgs:     []string{"./testdata/emit/nested_nyi"},
-		TargetStructs: []string{"NestedNYISnapshot"},
+		TargetStructs: []string{"NestedSliceNYISnapshot"},
 		OutPath:       outPath,
 	}
 	err := New(cfg).Run()
 	if err == nil {
-		t.Fatal("expected Phase-5 sentinel error, got nil")
+		t.Fatal("expected N-03 sentinel error for delta.nested on slice, got nil")
 	}
-	if !strings.Contains(err.Error(), "Phase 5") {
-		t.Errorf("error should mention Phase 5, got: %v", err)
+	if !strings.Contains(err.Error(), "N-03") {
+		t.Errorf("error should mention N-03, got: %v", err)
+	}
+}
+
+// TestEmitTemplate_NestedNYI_MapSentinel verifies that the emit pipeline
+// returns the N-03/N-04 sentinel error for delta.nested on a map field.
+// Covers: R-19
+func TestEmitTemplate_NestedNYI_MapSentinel(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_nyi_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_nyi"},
+		TargetStructs: []string{"NestedMapNYISnapshot"},
+		OutPath:       outPath,
+	}
+	err := New(cfg).Run()
+	if err == nil {
+		t.Fatal("expected N-03/N-04 sentinel error for delta.nested on map, got nil")
+	}
+	if !strings.Contains(err.Error(), "N-03") {
+		t.Errorf("error should mention N-03, got: %v", err)
 	}
 }
 
@@ -968,11 +985,11 @@ func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
 	qualTag, _, _ := buildImports([]*ParsedSnapshot{psTag}, opts)
 	qualOverride, _, _ := buildImports([]*ParsedSnapshot{psOverride}, opts)
 
-	svTag, err := buildSnapshotView(psTag, qualTag)
+	svTag, err := buildSnapshotView(psTag, qualTag, true)
 	if err != nil {
 		t.Fatalf("buildSnapshotView (tag): %v", err)
 	}
-	svOverride, err := buildSnapshotView(psOverride, qualOverride)
+	svOverride, err := buildSnapshotView(psOverride, qualOverride, true)
 	if err != nil {
 		t.Fatalf("buildSnapshotView (override): %v", err)
 	}
@@ -1019,7 +1036,7 @@ func TestBuildSnapshotView_UnsupportedKeyUnderlying(t *testing.T) {
 	opts := emitOpts{crossPackage: false}
 	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
 
-	_, err := buildSnapshotView(ps, qualifier)
+	_, err := buildSnapshotView(ps, qualifier, true)
 	if err == nil {
 		t.Fatal("expected error for unsupported float64 key underlying type, got nil")
 	}
@@ -2162,6 +2179,618 @@ func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
 	}
 
 	modContent := "module entityid_struct_key_reversed\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// ── N-01: delta.nested struct-value tests ────────────────────────────────────
+
+// TestEmitTemplate_Nested_SamePkg verifies end-to-end N-01 emission for a
+// Snapshot with one delta.nested struct-value field in same-package mode.
+// Covers: R-19, N-01 reqs 01-05, 09, 11
+func TestEmitTemplate_Nested_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_struct_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_struct"},
+		TargetStructs: []string{"NestedStructSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// InnerDelta companion struct must exist (req 01).
+	innerDeltaDecl := findStructDecl(f, "InnerDelta")
+	if innerDeltaDecl == nil {
+		t.Fatalf("InnerDelta type not found in generated file")
+	}
+	innerFields := structFieldNames(innerDeltaDecl)
+	for _, want := range []string{"SetX", "SetY"} {
+		if !contains(innerFields, want) {
+			t.Errorf("InnerDelta missing field %q; fields: %v", want, innerFields)
+		}
+	}
+	// InnerDelta must NOT have runtime.Header (not a chain anchor).
+	if contains(innerFields, "Header") {
+		t.Errorf("InnerDelta must not embed runtime.Header; fields: %v", innerFields)
+	}
+
+	// Parent Delta must have Sub InnerDelta (not *InnerDelta, no Set prefix) (req 05).
+	parentDeltaDecl := findStructDecl(f, "NestedStructSnapshotDelta")
+	if parentDeltaDecl == nil {
+		t.Fatalf("NestedStructSnapshotDelta not found")
+	}
+	parentFields := structFieldNames(parentDeltaDecl)
+	if !contains(parentFields, "Sub") {
+		t.Errorf("NestedStructSnapshotDelta missing Sub field; fields: %v", parentFields)
+	}
+	if contains(parentFields, "SetSub") {
+		t.Errorf("nested field must be Sub not SetSub; fields: %v", parentFields)
+	}
+	if strings.Contains(srcStr, "*InnerDelta") {
+		t.Errorf("nested Delta field must not be pointer-wrapped (*InnerDelta)")
+	}
+
+	// Package-level ApplyInner function must exist (req 02).
+	if findFuncDecl(f, "ApplyInner") == nil {
+		t.Errorf("package-level ApplyInner function not found")
+	}
+	// Package-level DiffInner function must exist (req 03).
+	if findFuncDecl(f, "DiffInner") == nil {
+		t.Errorf("package-level DiffInner function not found")
+	}
+
+	// Same-package method wrappers must exist (req 02, 03).
+	if findMethodDecl(f, "Inner", "Apply") == nil {
+		t.Errorf("Apply method wrapper on Inner not found (expected in same-package mode)")
+	}
+	if findMethodDecl(f, "Inner", "Diff") == nil {
+		t.Errorf("Diff method wrapper on Inner not found (expected in same-package mode)")
+	}
+
+	// No Coalesce on Inner (req 04).
+	if findMethodDecl(f, "Inner", "Coalesce") != nil {
+		t.Errorf("Coalesce must not be emitted for nested type Inner")
+	}
+	if findFuncDecl(f, "CoalesceInner") != nil {
+		t.Errorf("CoalesceInner must not be emitted for nested type Inner")
+	}
+
+	// Parent Apply uses method call for same-pkg nested (req 05).
+	if !strings.Contains(srcStr, "s.Sub.Apply(d.Sub)") {
+		t.Errorf("parent Apply body missing s.Sub.Apply(d.Sub)")
+	}
+	// Parent Diff uses method call for same-pkg nested (req 05).
+	if !strings.Contains(srcStr, "a.Sub.Diff(b.Sub)") {
+		t.Errorf("parent Diff body missing a.Sub.Diff(b.Sub)")
+	}
+
+	// ApplyInner body: result := u, per-field nil-checks (req 02).
+	if !strings.Contains(srcStr, "result := u") {
+		t.Errorf("ApplyInner body missing 'result := u'")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNested(t, src)
+	})
+}
+
+// TestEmitTemplate_Nested_Dedup verifies that two delta.nested fields of the
+// same type emit a single companion Delta type, not two copies (req 09).
+// Covers: N-01 req 09
+func TestEmitTemplate_Nested_Dedup(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_multi_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_multi"},
+		TargetStructs: []string{"NestedMultiSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// AddressDelta must be declared exactly once.
+	count := strings.Count(srcStr, "type AddressDelta struct")
+	if count != 1 {
+		t.Errorf("AddressDelta declared %d times, want exactly 1", count)
+	}
+	// MetaDelta must also be declared.
+	if findStructDecl(f, "MetaDelta") == nil {
+		t.Errorf("MetaDelta not found")
+	}
+
+	// Parent Delta must have both Home and Work as AddressDelta.
+	parentDelta := findStructDecl(f, "NestedMultiSnapshotDelta")
+	if parentDelta == nil {
+		t.Fatalf("NestedMultiSnapshotDelta not found")
+	}
+	parentFields := structFieldNames(parentDelta)
+	for _, name := range []string{"Home", "Work", "Info"} {
+		if !contains(parentFields, name) {
+			t.Errorf("NestedMultiSnapshotDelta missing field %q; fields: %v", name, parentFields)
+		}
+	}
+}
+
+// TestEmitTemplate_Nested_Deep verifies two-level nested emission: Level2Delta
+// and Level1Delta are both emitted, Level1Delta contains Sub Level2Delta, and
+// the root Apply/Diff delegate transitively.
+// Covers: N-01 req 01 (multi-level)
+func TestEmitTemplate_Nested_Deep(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_deep_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_deep"},
+		TargetStructs: []string{"NestedDeepSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Both companion types must be emitted (req 01).
+	if findStructDecl(f, "Level2Delta") == nil {
+		t.Fatalf("Level2Delta not found")
+	}
+	if findStructDecl(f, "Level1Delta") == nil {
+		t.Fatalf("Level1Delta not found")
+	}
+
+	// Level1Delta must have Sub Level2Delta (not *Level2Delta).
+	level1Delta := findStructDecl(f, "Level1Delta")
+	l1Fields := structFieldNames(level1Delta)
+	if !contains(l1Fields, "Sub") {
+		t.Errorf("Level1Delta missing Sub field; fields: %v", l1Fields)
+	}
+	if strings.Contains(srcStr, "*Level2Delta") {
+		t.Errorf("Level2Delta must not be pointer-wrapped in Level1Delta")
+	}
+
+	// ApplyLevel1 body must delegate to u.Sub.Apply(d.Sub) (same-pkg, req 05).
+	if !strings.Contains(srcStr, "u.Sub.Apply(d.Sub)") {
+		t.Errorf("ApplyLevel1 body missing u.Sub.Apply(d.Sub)")
+	}
+	// Root Apply must delegate to s.Inner.Apply(d.Inner).
+	if !strings.Contains(srcStr, "s.Inner.Apply(d.Inner)") {
+		t.Errorf("root Apply body missing s.Inner.Apply(d.Inner)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNestedDeep(t, src)
+	})
+}
+
+// TestEmitTemplate_Nested_CrossPkg verifies that in cross-package mode nested
+// types emit only package-level functions (no method wrappers), and the parent
+// Apply/Diff use function call syntax (req 06).
+// Covers: N-01 req 06, E-12
+func TestEmitTemplate_Nested_CrossPkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_cross_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/nested_struct"},
+		TargetStructs:      []string{"NestedStructSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Package-level functions must exist (req 06).
+	if findFuncDecl(f, "ApplyInner") == nil {
+		t.Errorf("ApplyInner function not found in cross-pkg output")
+	}
+	if findFuncDecl(f, "DiffInner") == nil {
+		t.Errorf("DiffInner function not found in cross-pkg output")
+	}
+
+	// Method wrappers must NOT be emitted (req 06, E-12).
+	if findMethodDecl(f, "Inner", "Apply") != nil {
+		t.Errorf("Apply method wrapper on Inner must not be emitted in cross-pkg mode")
+	}
+	if findMethodDecl(f, "Inner", "Diff") != nil {
+		t.Errorf("Diff method wrapper on Inner must not be emitted in cross-pkg mode")
+	}
+
+	// Parent Apply must use function call, not method call (req 05, 06).
+	if !strings.Contains(srcStr, "ApplyInner(s.Sub, d.Sub)") {
+		t.Errorf("cross-pkg parent Apply body missing ApplyInner(s.Sub, d.Sub)")
+	}
+	if !strings.Contains(srcStr, "DiffInner(a.Sub, b.Sub)") {
+		t.Errorf("cross-pkg parent Diff body missing DiffInner(a.Sub, b.Sub)")
+	}
+}
+
+// TestEmitTemplate_Nested_AnonymousStruct_Error verifies that a delta.nested
+// field with an anonymous struct type returns an error requiring a named type
+// (req 08).
+// Covers: N-01 req 08
+func TestEmitTemplate_Nested_AnonymousStruct_Error(t *testing.T) {
+	// Build a ParsedSnapshot with a delta.nested field whose GoType is an
+	// anonymous struct (not *types.Named).
+	anonSt := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "X", types.Typ[types.Int32]),
+	}, nil)
+
+	flt := types.Typ[types.String]
+	keyVar := types.NewVar(0, nil, "Key", flt)
+	headerVar := types.NewVar(0, nil, "Header", flt) // dummy
+
+	ps := &ParsedSnapshot{
+		Name:      "AnonNestedSnapshot",
+		PkgPath:   "test",
+		PkgName:   "test",
+		HeaderVar: headerVar,
+		KeyVar:    keyVar,
+		KeyShape:  ShapeScalar,
+		Fields: []ParsedField{
+			{
+				Name:   "Sub",
+				Shape:  ShapeStructValue,
+				GoType: anonSt,
+				Tag:    ParsedTag{Kind: TagKindNested, Raw: "delta.nested"},
+			},
+		},
+	}
+
+	opts := emitOpts{crossPackage: false}
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+
+	_, err := buildSnapshotView(ps, qualifier, true)
+	if err == nil {
+		t.Fatal("expected error for anonymous nested struct type, got nil")
+	}
+	if !strings.Contains(err.Error(), "named type") {
+		t.Errorf("error should mention 'named type', got: %v", err)
+	}
+}
+
+// compileCheckEmitNested writes the generated nested_struct source into an
+// isolated temp module and runs go test to verify runtime correctness.
+// Covers: N-01 reqs 02, 03, 04, 05, 12
+func compileCheckEmitNested(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package nested_struct
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type Inner struct {
+	X int32
+	Y string
+}
+
+type NestedStructSnapshot struct {
+	eddt.Header
+	Key   string ` + "`eddt:\"entity.key\"`" + `
+	Sub   Inner  ` + "`eddt:\"delta.nested\"`" + `
+	Label string
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_struct_test
+
+import (
+	"testing"
+	"time"
+
+	"nested_struct"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func id1() eddt.EntityID { return eddt.EntityID{1} }
+
+func makeSnap(seq uint64, labelFill int) nested_struct.NestedStructSnapshot {
+	var s nested_struct.NestedStructSnapshot
+	s.Header = eddt.Header{EntityID: id1(), ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+	s.Key = "k"
+	s.Sub = nested_struct.Inner{X: int32(labelFill), Y: "v" + string(rune('A'+labelFill))}
+	s.Label = "lbl" + string(rune('A'+labelFill))
+	return s
+}
+
+// TestNested_Apply_ChangesNestedField covers req 02, 05.
+func TestNested_Apply_ChangesNestedField(t *testing.T) {
+	a := makeSnap(1, 0)
+	x := int32(99)
+	innerD := nested_struct.InnerDelta{SetX: &x}
+	var d nested_struct.NestedStructSnapshotDelta
+	d.Header = eddt.Header{EntityID: id1(), ChainID: "c", Sequence: 2, EffectiveAt: time.Now()}
+	d.Sub = innerD
+
+	result, err := nested_struct.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Sub.X != 99 {
+		t.Errorf("Sub.X: got %d, want 99", result.Sub.X)
+	}
+	if result.Sub.Y != a.Sub.Y {
+		t.Errorf("Sub.Y changed unexpectedly: got %q", result.Sub.Y)
+	}
+	if result.Label != a.Label {
+		t.Errorf("Label changed unexpectedly: got %q", result.Label)
+	}
+}
+
+// TestNested_Diff_RoundTrip covers req 02, 03, 05.
+func TestNested_Diff_RoundTrip(t *testing.T) {
+	a := makeSnap(1, 0)
+	b := makeSnap(2, 1)
+
+	delta, err := nested_struct.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	result, err := nested_struct.Apply(a, delta)
+	if err != nil {
+		t.Fatalf("Apply(a, Diff(a,b)): %v", err)
+	}
+	if result.Sub.X != b.Sub.X {
+		t.Errorf("Sub.X: got %d, want %d", result.Sub.X, b.Sub.X)
+	}
+	if result.Sub.Y != b.Sub.Y {
+		t.Errorf("Sub.Y: got %q, want %q", result.Sub.Y, b.Sub.Y)
+	}
+	if result.Label != b.Label {
+		t.Errorf("Label: got %q, want %q", result.Label, b.Label)
+	}
+}
+
+// TestNested_Diff_Minimal verifies that Diff only sets changed sub-fields.
+// Covers: req 03
+func TestNested_Diff_Minimal(t *testing.T) {
+	a := makeSnap(1, 0)
+	b := a
+	b.Header.Sequence = 2
+	b.Sub.X = 77 // only X changes
+
+	delta, err := nested_struct.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if delta.Sub.SetX == nil {
+		t.Errorf("SetX should be non-nil when X changes")
+	}
+	if *delta.Sub.SetX != 77 {
+		t.Errorf("SetX: got %d, want 77", *delta.Sub.SetX)
+	}
+	if delta.Sub.SetY != nil {
+		t.Errorf("SetY should be nil when Y is unchanged; got %v", delta.Sub.SetY)
+	}
+}
+
+// TestNested_Coalesce_Root_Works covers req 04, 12.
+func TestNested_Coalesce_Root_Works(t *testing.T) {
+	a := makeSnap(1, 0)
+
+	x1 := int32(10)
+	x2 := int32(20)
+	y := "updated"
+
+	mkDelta := func(seq uint64, ix *int32, iy *string) nested_struct.NestedStructSnapshotDelta {
+		var d nested_struct.NestedStructSnapshotDelta
+		d.Header = eddt.Header{EntityID: id1(), ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+		d.Sub = nested_struct.InnerDelta{SetX: ix, SetY: iy}
+		return d
+	}
+	ds := []nested_struct.NestedStructSnapshotDelta{
+		mkDelta(2, &x1, nil),
+		mkDelta(3, &x2, nil),
+		mkDelta(4, nil, &y),
+	}
+
+	result, err := nested_struct.Coalesce(a, ds)
+	if err != nil {
+		t.Fatalf("Coalesce: %v", err)
+	}
+	if result.Sub.X != 20 {
+		t.Errorf("Sub.X after coalesce: got %d, want 20", result.Sub.X)
+	}
+	if result.Sub.Y != "updated" {
+		t.Errorf("Sub.Y after coalesce: got %q, want updated", result.Sub.Y)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_test.go: %v", err)
+	}
+
+	modContent := "module nested_struct\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitNestedDeep verifies the two-level nesting fixture compiles
+// and a round-trip Apply(a, Diff(a,b)) == b works for changes at both levels.
+// Covers: N-01 req 01 (multi-level at runtime)
+func compileCheckEmitNestedDeep(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package nested_deep
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type Level2 struct{ Val int32 }
+
+type Level1 struct {
+	Count int32
+	Sub   Level2 ` + "`eddt:\"delta.nested\"`" + `
+}
+
+type NestedDeepSnapshot struct {
+	eddt.Header
+	Key   string ` + "`eddt:\"entity.key\"`" + `
+	Inner Level1 ` + "`eddt:\"delta.nested\"`" + `
+	Name  string
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_deep_test
+
+import (
+	"testing"
+	"time"
+
+	"nested_deep"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestDeep_RoundTrip exercises Apply(a, Diff(a,b))==b when both Level1.Count
+// and Level1.Sub.Val change.
+func TestDeep_RoundTrip(t *testing.T) {
+	var a nested_deep.NestedDeepSnapshot
+	a.Header = eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: 1, EffectiveAt: time.Now()}
+	a.Key = "k"
+	a.Inner = nested_deep.Level1{Count: 5, Sub: nested_deep.Level2{Val: 10}}
+	a.Name = "before"
+
+	var b nested_deep.NestedDeepSnapshot
+	b.Header = eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: 2, EffectiveAt: time.Now()}
+	b.Key = "k"
+	b.Inner = nested_deep.Level1{Count: 7, Sub: nested_deep.Level2{Val: 42}}
+	b.Name = "after"
+
+	delta, err := nested_deep.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	result, err := nested_deep.Apply(a, delta)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Inner.Count != b.Inner.Count {
+		t.Errorf("Inner.Count: got %d, want %d", result.Inner.Count, b.Inner.Count)
+	}
+	if result.Inner.Sub.Val != b.Inner.Sub.Val {
+		t.Errorf("Inner.Sub.Val: got %d, want %d", result.Inner.Sub.Val, b.Inner.Sub.Val)
+	}
+	if result.Name != b.Name {
+		t.Errorf("Name: got %q, want %q", result.Name, b.Name)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_deep_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_deep_test.go: %v", err)
+	}
+
+	modContent := "module nested_deep\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}

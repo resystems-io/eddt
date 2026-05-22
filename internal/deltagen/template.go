@@ -37,6 +37,7 @@ import (
 	"go/format"
 	"go/types"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"text/template"
@@ -73,6 +74,35 @@ type importSpec struct {
 
 	// Path is the full import path (e.g. "go.resystems.io/eddt/runtime").
 	Path string
+}
+
+// nestedTypeView is the template's view for one delta.nested companion type.
+// Emitted before the parent snapshotView's TDelta declaration.
+type nestedTypeView struct {
+	// Name is the source type name (e.g. "Inner").
+	Name string
+
+	// DeltaName is the companion type name (e.g. "InnerDelta").
+	DeltaName string
+
+	// ApplyFuncName is the package-level function name (e.g. "ApplyInner").
+	ApplyFuncName string
+
+	// DiffFuncName is the package-level function name (e.g. "DiffInner").
+	DiffFuncName string
+
+	// Fields is the ordered list of payload fields (suppressed included).
+	Fields []fieldView
+
+	// DiffFields is the subset of Fields with a Delta-side representation.
+	DiffFields []fieldView
+
+	// NeedsReflect is true when at least one DiffField uses reflect.DeepEqual.
+	// Propagated to snapshotView.NeedsReflect so the "reflect" import is injected.
+	NeedsReflect bool
+
+	// EmitMethod is true in same-package mode; gates method wrapper emission.
+	EmitMethod bool
 }
 
 // snapshotView is the template's per-Snapshot view.
@@ -134,6 +164,11 @@ type snapshotView struct {
 	// (i.e. non-suppressed fields). The Diff template iterates DiffFields so
 	// that suppressed fields produce no body line (EM-03).
 	DiffFields []fieldView
+
+	// NestedTypes holds companion views for delta.nested struct-value fields,
+	// in bottom-up order (deepest companion type first). Emitted before the
+	// parent TDelta declaration so forward references are avoided (N-01).
+	NestedTypes []nestedTypeView
 }
 
 // fieldView is the template's per-field view of one payload field in TDelta.
@@ -159,6 +194,20 @@ type fieldView struct {
 	// rather than != to compare this field's values (EM-03). Set for all
 	// non-scalar shapes: pointer, struct value, slice, map.
 	UseReflectEq bool
+
+	// IsNested is true for delta.nested struct-value fields (N-01). When true,
+	// DeltaName equals the source field name (no "Set" prefix), DeltaType is the
+	// companion Delta type name (e.g. "InnerDelta"), and no pointer-wrap is used.
+	IsNested bool
+
+	// NestedFuncName is the package-level Apply function to call for cross-package
+	// nested fields (e.g. "ApplyInner"). Empty in same-package mode, where the
+	// method wrapper is used instead (s.F.Apply(d.F)).
+	NestedFuncName string
+
+	// NestedDiffFuncName is the package-level Diff function for cross-package
+	// nested fields (e.g. "DiffInner"). Empty in same-package mode.
+	NestedDiffFuncName string
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
@@ -168,20 +217,26 @@ type fieldView struct {
 // EM-03 scope: Diff function and method wrapper.
 // EM-04 scope: Coalesce function and method wrapper.
 // EM-05 scope: EntityID function and method wrapper on the key type.
+// N-01 scope:  companion Delta types and Apply/Diff for delta.nested struct fields.
 //
 // Sub-template inventory:
-//   - applyFunc:      package-level Apply function (always emitted).
-//   - applyField:     per-field Apply contribution (atomic or suppressed).
-//   - applyMethod:    same-package method wrapper delegating to Apply (E-12).
-//   - diffFunc:       package-level Diff function (always emitted).
-//   - diffField:      per-field Diff contribution (non-suppressed fields only,
-//     using != for scalars and reflect.DeepEqual for others).
-//   - diffMethod:     same-package method wrapper delegating to Diff (E-12).
-//   - coalesceFunc:   package-level Coalesce function (always emitted).
-//   - coalesceMethod: same-package method wrapper delegating to Coalesce (E-12).
-//   - entityIDFunc:   package-level EntityID function (always emitted, EM-05).
-//   - entityIDMethod: same-package method wrapper on the key type (E-12, EM-05);
+//   - applyFunc:         package-level Apply function (always emitted).
+//   - applyField:        per-field Apply contribution (atomic, suppressed, or nested).
+//   - applyMethod:       same-package method wrapper delegating to Apply (E-12).
+//   - diffFunc:          package-level Diff function (always emitted).
+//   - diffField:         per-field Diff contribution (non-suppressed fields only).
+//   - diffMethod:        same-package method wrapper delegating to Diff (E-12).
+//   - coalesceFunc:      package-level Coalesce function (always emitted).
+//   - coalesceMethod:    same-package method wrapper delegating to Coalesce (E-12).
+//   - entityIDFunc:      package-level EntityID function (always emitted, EM-05).
+//   - entityIDMethod:    same-package method wrapper on the key type (E-12, EM-05);
 //     emitted only when the key type is a named type (EmitEntityIDMethod).
+//   - nestedTypeDecl:    companion Delta struct for a delta.nested type (N-01).
+//   - nestedApplyFunc:   package-level ApplyU function for a nested type (N-01).
+//   - nestedApplyMethod: same-package method wrapper func (u U) Apply(...) (N-01).
+//   - nestedApplyField:  per-field body line for nestedApplyFunc (uses u. receiver).
+//   - nestedDiffFunc:    package-level DiffU function for a nested type (N-01).
+//   - nestedDiffMethod:  same-package method wrapper func (u U) Diff(...) (N-01).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -194,7 +249,8 @@ import (
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
-{{range .Snapshots}}
+{{range .Snapshots}}{{range .NestedTypes}}{{template "nestedTypeDecl" .}}{{template "nestedApplyFunc" .}}{{if .EmitMethod}}{{template "nestedApplyMethod" .}}{{end}}{{template "nestedDiffFunc" .}}{{if .EmitMethod}}{{template "nestedDiffMethod" .}}{{end}}
+{{end}}
 // {{.DeltaName}} is the Delta companion type for {{.Qualifier}}{{.Name}}.
 // Each payload field is expressed as an optional pointer: a nil value means
 // "no change" for that field when Apply is called.
@@ -232,7 +288,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 }
 {{end -}}
 
-{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
@@ -258,7 +314,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 }
 {{end -}}
 
-{{define "diffField"}}{{if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+{{define "diffField"}}{{if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
@@ -313,7 +369,48 @@ func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 	return EntityID(k)
 }
-{{end}}`
+{{end}}
+{{define "nestedTypeDecl"}}
+// {{.DeltaName}} is the Delta companion type for delta.nested fields of
+// type {{.Name}}. It is generated by delta-gen and must not be edited.
+type {{.DeltaName}} struct {
+{{- range .Fields}}{{if not .Suppressed}}
+	{{.DeltaName}} {{.DeltaType}}
+{{- end}}{{end}}
+}
+{{end -}}
+
+{{define "nestedApplyFunc"}}
+// {{.ApplyFuncName}} produces the {{.Name}} that results from applying d to u.
+// It is a pure function with no chain-envelope validation (delta-gen spec §4.3).
+func {{.ApplyFuncName}}(u {{.Name}}, d {{.DeltaName}}) {{.Name}} {
+	result := u
+{{range .Fields}}	{{template "nestedApplyField" .}}
+{{end}}	return result
+}
+{{end -}}
+
+{{define "nestedApplyMethod"}}
+// Apply is an ergonomic same-package wrapper (E-12).
+func (u {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} { return {{.ApplyFuncName}}(u, d) }
+{{end -}}
+
+{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
+
+{{define "nestedDiffFunc"}}
+// {{.DiffFuncName}} produces the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d)
+// payload-equals b. Pure function, no chain-envelope validation (delta-gen spec §4.3).
+func {{.DiffFuncName}}(a, b {{.Name}}) {{.DeltaName}} {
+	d := {{.DeltaName}}{}
+{{range .DiffFields}}	{{template "diffField" .}}
+{{end}}	return d
+}
+{{end -}}
+
+{{define "nestedDiffMethod"}}
+// Diff is an ergonomic same-package wrapper (E-12).
+func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName}}(u, other) }
+{{end -}}`
 
 // deltaTemplate is the parsed and compiled template; compiled once at init.
 var deltaTemplate = template.Must(
@@ -460,28 +557,147 @@ func buildImports(
 
 // ── View construction ─────────────────────────────────────────────────────────
 
+// buildNestedTypeView constructs the template view for one delta.nested
+// companion type U. It recursively visits any delta.nested sub-fields of U,
+// collecting their companion views in bottom-up order (deepest first) so that
+// forward references are avoided in the generated output. The visited set
+// prevents duplicate emission when multiple fields share the same nested type
+// (N-01 req 09). Returns (view, additional companion views from deeper nesting, error).
+func buildNestedTypeView(
+	typeName string,
+	st *types.Struct,
+	qualifier types.Qualifier,
+	emitMethod bool,
+	visited map[string]bool,
+) (nestedTypeView, []nestedTypeView, error) {
+	nv := nestedTypeView{
+		Name:          typeName,
+		DeltaName:     typeName + "Delta",
+		ApplyFuncName: "Apply" + typeName,
+		DiffFuncName:  "Diff" + typeName,
+		EmitMethod:    emitMethod,
+	}
+
+	var additional []nestedTypeView
+
+	for i := 0; i < st.NumFields(); i++ {
+		field := st.Field(i)
+
+		// Skip unexported fields in cross-package mode (emitMethod == false means cross-pkg).
+		if !emitMethod && !field.Exported() {
+			continue
+		}
+
+		rawTag := reflect.StructTag(st.Tag(i)).Get("eddt")
+		tag, err := parseTag(rawTag)
+		if err != nil {
+			return nestedTypeView{}, nil, fmt.Errorf(
+				"nested type %s field %s: parsing eddt:%q: %w", typeName, field.Name(), rawTag, err)
+		}
+
+		// Suppressed fields: propagated in Apply, absent from TDelta and Diff.
+		if tag.Kind == TagKindOmit || tag.Kind == TagKindRetired {
+			nv.Fields = append(nv.Fields, fieldView{Name: field.Name(), Suppressed: true})
+			continue
+		}
+
+		shape, err := classifyShape(field.Type())
+		if err != nil {
+			return nestedTypeView{}, nil, fmt.Errorf(
+				"nested type %s field %s: %w", typeName, field.Name(), err)
+		}
+
+		if tag.Kind == TagKindNested {
+			if shape != ShapeStructValue {
+				return nestedTypeView{}, nil, fmt.Errorf(
+					"nested type %s field %s: delta.nested on slice/map shapes is not yet implemented (N-03/N-04)",
+					typeName, field.Name())
+			}
+			named, ok := field.Type().(*types.Named)
+			if !ok {
+				return nestedTypeView{}, nil, fmt.Errorf(
+					"nested type %s field %s: delta.nested requires a named type",
+					typeName, field.Name())
+			}
+			subTypeName := named.Obj().Name()
+			nestedFuncName, nestedDiffFuncName := "", ""
+			if !emitMethod {
+				nestedFuncName = "Apply" + subTypeName
+				nestedDiffFuncName = "Diff" + subTypeName
+			}
+			fv := fieldView{
+				Name:               field.Name(),
+				DeltaName:          field.Name(),
+				DeltaType:          subTypeName + "Delta",
+				IsNested:           true,
+				NestedFuncName:     nestedFuncName,
+				NestedDiffFuncName: nestedDiffFuncName,
+			}
+			nv.Fields = append(nv.Fields, fv)
+			nv.DiffFields = append(nv.DiffFields, fv)
+
+			if !visited[subTypeName] {
+				visited[subTypeName] = true
+				subSt, _ := named.Underlying().(*types.Struct)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited)
+				if err != nil {
+					return nestedTypeView{}, nil, err
+				}
+				if subView.NeedsReflect {
+					nv.NeedsReflect = true
+				}
+				additional = append(additional, subExtra...)
+				additional = append(additional, subView)
+			}
+			continue
+		}
+
+		// Atomic field (TagKindNone or TagKindCommutative): pointer-wrap the source type.
+		deltaType := types.TypeString(types.NewPointer(field.Type()), qualifier)
+		fv := fieldView{
+			Name:      field.Name(),
+			DeltaName: "Set" + field.Name(),
+			DeltaType: deltaType,
+		}
+		if shape != ShapeScalar {
+			fv.UseReflectEq = true
+			nv.NeedsReflect = true
+		}
+		nv.Fields = append(nv.Fields, fv)
+		nv.DiffFields = append(nv.DiffFields, fv)
+	}
+
+	return nv, additional, nil
+}
+
 // buildSnapshotView constructs the template view for one ParsedSnapshot.
 //
-// delta.nested on any shape returns an explicit error directing the caller
-// to Phase 5. (delta.clearable is already rejected upstream by T-01.)
+// delta.nested on struct-value shapes triggers N-01 compositional emission:
+// a companion UDelta type + ApplyU/DiffU functions are collected in
+// sv.NestedTypes (bottom-up order). delta.nested on slice/map shapes
+// returns a sentinel error referencing N-03/N-04. (delta.clearable is
+// rejected upstream by T-01.)
+//
+// emitMethod gates same-package method wrappers (E-12): pass true for
+// same-package output, false for cross-package.
 //
 // Suppressed fields (delta.omit / delta.retired) are included in sv.Fields
 // with Suppressed: true so the Apply template can emit result.F = s.F
 // propagation assignments (EM-02). The Delta-side type declaration template
 // gates on {{not .Suppressed}} to keep them out of TDelta.
 //
-// Each admitted field's DeltaType is rendered via types.TypeString on a
+// Each admitted atomic field's DeltaType is rendered via types.TypeString on a
 // single pointer-wrap of the source GoType:
 //
 //	scalar T        → *T
 //	pointer *T      → **T
-//	struct value T  → *T
-//	slice []T       → *[]T      (atomic per E-15)
-//	map[K]V         → *map[K]V  (atomic per E-16)
+//	struct value T  → *T      (atomic, untagged)
+//	slice []T       → *[]T    (atomic per E-15)
+//	map[K]V         → *map[K]V (atomic per E-16)
 //
 // The caller must pass a qualifier derived from buildImports so that foreign
 // packages are recorded as a side effect of type rendering.
-func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotView, error) {
+func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod bool) (snapshotView, error) {
 	sv := snapshotView{
 		Name:      ps.Name,
 		DeltaName: ps.Name + "Delta",
@@ -501,18 +717,60 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier) (snapshotV
 	}
 	sv.KeyHashLines = hashLines
 
-	for _, f := range ps.Fields {
-		// Phase-5 sentinel: delta.nested requires compositional emission (N-01/N-03/N-04).
-		if f.Tag.Kind == TagKindNested {
-			return snapshotView{}, fmt.Errorf(
-				"field %s.%s: delta.nested emission is not yet implemented (Phase 5)",
-				ps.Name, f.Name)
-		}
+	visited := make(map[string]bool) // dedup set for nested companion types (N-01 req 09)
 
+	for _, f := range ps.Fields {
 		// Presence-axis: omit/retired fields are suppressed on the Delta side
 		// but still appear in Fields so the Apply template emits result.F = s.F.
 		if f.Tag.Kind == TagKindOmit || f.Tag.Kind == TagKindRetired {
 			sv.Fields = append(sv.Fields, fieldView{Name: f.Name, Suppressed: true})
+			continue
+		}
+
+		// N-01: delta.nested struct-value fields emit a companion type.
+		// delta.nested on slice/map shapes remains a Phase-5 sentinel (N-03/N-04).
+		if f.Tag.Kind == TagKindNested {
+			if f.Shape != ShapeStructValue {
+				return snapshotView{}, fmt.Errorf(
+					"field %s.%s: delta.nested on slice/map shapes is not yet implemented (N-03/N-04)",
+					ps.Name, f.Name)
+			}
+			named, ok := f.GoType.(*types.Named)
+			if !ok {
+				return snapshotView{}, fmt.Errorf(
+					"field %s.%s: delta.nested requires a named type (anonymous struct types are not supported)",
+					ps.Name, f.Name)
+			}
+			subTypeName := named.Obj().Name()
+			nestedFuncName, nestedDiffFuncName := "", ""
+			if !emitMethod {
+				nestedFuncName = "Apply" + subTypeName
+				nestedDiffFuncName = "Diff" + subTypeName
+			}
+			fv := fieldView{
+				Name:               f.Name,
+				DeltaName:          f.Name,
+				DeltaType:          subTypeName + "Delta",
+				IsNested:           true,
+				NestedFuncName:     nestedFuncName,
+				NestedDiffFuncName: nestedDiffFuncName,
+			}
+			sv.Fields = append(sv.Fields, fv)
+			sv.DiffFields = append(sv.DiffFields, fv)
+
+			if !visited[subTypeName] {
+				visited[subTypeName] = true
+				subSt, _ := named.Underlying().(*types.Struct)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited)
+				if err != nil {
+					return snapshotView{}, fmt.Errorf("field %s.%s: %w", ps.Name, f.Name, err)
+				}
+				if subView.NeedsReflect {
+					sv.NeedsReflect = true
+				}
+				sv.NestedTypes = append(sv.NestedTypes, subExtra...)
+				sv.NestedTypes = append(sv.NestedTypes, subView)
+			}
 			continue
 		}
 
@@ -564,10 +822,13 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 	// Step 2: build the qualifier, import-recorder, and extra-import injector.
 	qualifier, getImports, recordExtra := buildImports(snapshots, opts)
 
+	// emitMethod gates same-package method wrappers (E-12); precomputed once.
+	emitMethod := !g.CrossPackage
+
 	// Step 3: translate each snapshot into a template view.
 	views := make([]snapshotView, 0, len(snapshots))
 	for _, ps := range snapshots {
-		sv, err := buildSnapshotView(ps, qualifier)
+		sv, err := buildSnapshotView(ps, qualifier, emitMethod)
 		if err != nil {
 			return err
 		}
@@ -585,7 +846,7 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		}
 
 		// EmitMethod gates the same-package method wrappers (E-12, EM-02..EM-04).
-		sv.EmitMethod = !g.CrossPackage
+		sv.EmitMethod = emitMethod
 
 		// EmitEntityIDMethod additionally requires the key type to be a named
 		// type: Go forbids defining methods on unnamed basic types (EM-05, R-24).

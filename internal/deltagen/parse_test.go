@@ -626,6 +626,24 @@ func parseFixture(t *testing.T, fixture, structName string, opts ParseOpts) *Par
 	return snap
 }
 
+// TestParse_NestedFieldEmbedHeader verifies that a delta.nested field whose
+// type embeds runtime.Header is rejected at parse time with a §3.3.2 error
+// (nested types must be sub-structures, not chain anchors).
+// Covers: N-01 req 07
+func TestParse_NestedFieldEmbedHeader(t *testing.T) {
+	pkgs := loadFixture(t, "nested_header_embed")
+	_, err := parseSnapshot(pkgs, "NestedHeaderEmbedSnapshot", ParseOpts{})
+	if err == nil {
+		t.Fatal("expected §3.3.2 parse error for delta.nested type embedding runtime.Header, got nil")
+	}
+	if !strings.Contains(err.Error(), "embeds runtime.Header") {
+		t.Errorf("error should mention 'embeds runtime.Header', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "§3.3.2") {
+		t.Errorf("error should mention §3.3.2, got: %v", err)
+	}
+}
+
 // fieldNames returns the field names from a ParsedSnapshot for use in error
 // messages. It avoids importing fmt in the test output path.
 func fieldNames(s *ParsedSnapshot) []string {

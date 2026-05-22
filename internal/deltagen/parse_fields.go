@@ -70,6 +70,15 @@ func walkFields(
 			return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
 		}
 
+		if tag.Kind == TagKindNested && shape == ShapeStructValue {
+			if containsHeaderEmbed(field.Type(), headerType) {
+				return nil, nil, fmt.Errorf(
+					"field %s.%s: delta.nested struct type %s embeds runtime.Header; "+
+						"nested types must be sub-structures, not chain anchors (§3.3.2)",
+					structName, field.Name(), field.Type())
+			}
+		}
+
 		if err := validateTagCombination(tag); err != nil {
 			return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
 		}
@@ -84,6 +93,22 @@ func walkFields(
 	}
 
 	return header, fields, nil
+}
+
+// containsHeaderEmbed reports whether t directly embeds a field of type headerType.
+// Used by walkFields to reject delta.nested struct types that embed runtime.Header
+// (they would be chain anchors, not sub-structures — §3.3.2).
+func containsHeaderEmbed(t types.Type, headerType types.Type) bool {
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		if types.Identical(st.Field(i).Type(), headerType) {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyShape returns the FieldShape for a payload field type t.
