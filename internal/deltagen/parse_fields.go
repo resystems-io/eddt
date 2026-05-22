@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/types"
 	"reflect"
+	"strings"
 )
 
 // walkFields walks the fields of st exactly once, returning the embedded
@@ -77,6 +78,11 @@ func walkFields(
 						"nested types must be sub-structures, not chain anchors (§3.3.2)",
 					structName, field.Name(), field.Type())
 			}
+			// N-02: cycle guard — seed path with the snapshot struct name so the
+			// error message reads "SnapshotName → A → B → A".
+			if err := validateNestedAcyclic(field.Type(), []string{structName}, headerType); err != nil {
+				return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
+			}
 		}
 
 		if err := validateTagCombination(tag); err != nil {
@@ -109,6 +115,52 @@ func containsHeaderEmbed(t types.Type, headerType types.Type) bool {
 		}
 	}
 	return false
+}
+
+// validateNestedAcyclic returns a non-nil error if the delta.nested type graph
+// rooted at t contains a cycle reachable via struct-value delta.nested fields.
+// path is the sequence of type names already on the current ancestry chain (the
+// snapshot struct name seeds it, so the error reads "Snapshot → A → B → A").
+//
+// For struct-value shapes Go's type checker prevents cycles in source code; this
+// function provides the infrastructure that N-03/N-04 will extend for map/slice
+// paths, and gives a clear diagnostic for programmatically-constructed cycles.
+func validateNestedAcyclic(t types.Type, path []string, headerType types.Type) error {
+	named, ok := t.(*types.Named)
+	if !ok {
+		return nil // anonymous struct already rejected elsewhere
+	}
+	typeName := named.Obj().Name()
+	for _, ancestor := range path {
+		if ancestor == typeName {
+			cycle := strings.Join(append(path, typeName), " → ")
+			return fmt.Errorf("delta.nested type chain forms a cycle: %s (§3.3.2)", cycle)
+		}
+	}
+	st, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	newPath := append(path, typeName)
+	for i := 0; i < st.NumFields(); i++ {
+		field := st.Field(i)
+		rawTag := reflect.StructTag(st.Tag(i)).Get("eddt")
+		tag, err := parseTag(rawTag)
+		if err != nil {
+			continue // malformed tag — parse stage will surface this separately
+		}
+		if tag.Kind != TagKindNested {
+			continue
+		}
+		shape, err := classifyShape(field.Type())
+		if err != nil || shape != ShapeStructValue {
+			continue // non-struct shapes handled by N-03/N-04
+		}
+		if err := validateNestedAcyclic(field.Type(), newPath, headerType); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // classifyShape returns the FieldShape for a payload field type t.

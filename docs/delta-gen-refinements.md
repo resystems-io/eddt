@@ -848,15 +848,27 @@ rejection and depth handling, shared by all three.
     `TestEmitTemplate_NestedNYI_MapSentinel`,
     `TestParse_NestedFieldEmbedHeader`.
 
-- [ ] **N-02: Cycle and depth handling.** Reject cyclic struct
-  definitions at generation time (delta-gen §3.3.2); support
-  arbitrary non-cyclic depth. Cycle detection covers
-  `delta.nested` on struct, map (via value type), and slice (via
-  element type).
-  - Files: `internal/deltagen/parse.go`,
-    `internal/deltagen/parse_test.go`.
-  - Tests: cyclic fixture → generation-time error;
-    deeply-nested fixture → success.
+- [x] **N-02: Cycle and depth handling.** (2026-05-22) Reject cyclic
+  `delta.nested` struct graphs at generation time (§3.3.2); validate
+  arbitrary non-cyclic depth. Parse stage: `validateNestedAcyclic`
+  uses a path-slice DFS to detect A→B→A chains and returns a clear
+  error including the full cycle path and §3.3.2 reference. Emit
+  stage: `buildNestedTypeView` / `buildSnapshotView` separate
+  deduplication (`visited`) from cycle tracking (`inPath`); an
+  `inPath` hit returns an error instead of silently skipping.
+  Struct-value cycles are impossible in valid Go source (the compiler
+  rejects invalid recursive types), so both cycle tests construct the
+  cycle programmatically via `go/types`. Arbitrary depth demonstrated
+  by the new `nested_triple` fixture (Snapshot → Level1 → Level2 →
+  Level3) with a full compile-and-run round-trip.
+  - Files: `internal/deltagen/parse_fields.go`,
+    `internal/deltagen/template.go`,
+    `internal/deltagen/template_test.go`,
+    `internal/deltagen/parse_test.go`,
+    `internal/deltagen/testdata/emit/nested_triple/`.
+  - Tests: `TestEmitTemplate_Nested_Triple` (AST + compile-check),
+    `TestBuildSnapshotView_CycleDetected`,
+    `TestParse_NestedCycleDetected`.
 
 - [ ] **N-03: Compositional emission for `delta.nested` on map
   (`X map[K]V` → `UpdatedX map[K]V` + `RemovedX []K`).** Per Errata
@@ -1777,4 +1789,5 @@ git commit).
 | 2026-05-21 | EM-01                    | `text/template`-driven emit stage wired in: `template.go` introduces `templateData`/`snapshotView`/`fieldView` view types, a side-effecting `types.Qualifier` closure for lazy import discovery, `buildImports`, `buildSnapshotView`, and `executeEmit` (template → `go/format.Source` → `os.WriteFile`). Per-field atomic Delta-side declarations across the five payload shapes via a uniform `types.NewPointer(f.GoType)` wrap: scalar `T` → `*T`, pointer `*T` → `**T`, struct value `T` → `*T`, slice `[]T` → `*[]T` (E-15), map `map[K]V` → `*map[K]V` (E-16). `delta.omit` and `delta.retired` suppress fields; `delta.commutative` emits as untagged (§9.5); `delta.nested` returns an explicit Phase-5 sentinel error. Tests: view-construction matrix (V01–V10), AST-shape assertions on the generated file, Phase-5 sentinel, cross-package qualifier, and a compile-check that builds the generated Delta type in an isolated module. CLI sentinel tests rolled forward: five sites that previously asserted "not yet implemented" now assert successful emission and a valid `TDelta` struct declaration.                                                                                                                                      |
 | 2026-05-21 | EM-05                    | `EntityID` function and same-package method wrapper emitted. `buildKeyHashLines` / `keyHashLine` in `key.go` map each key sub-field to a `runtime.Write*` call (one for scalar keys, one per exported field for struct keys in lexicographic field-name order — reordering source fields is not a breaking change); named-alias types receive explicit conversions (`string(k)`, `uint64(k)`, etc.). Method wrapper gated on same-package mode AND a named key type (raw-basic keys such as `Key string` cannot host methods in Go). R-24 clarified. Tests: AST-shape assertions for primitive/named-primitive/struct/cross-package/path-equivalence/field-order-stability cases; compile-check behaviour suites: determinism, distinctness, length-prefix safety, zero-value handling, struct-key method delegation, field-order stability.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | 2026-05-22 | N-01                     | Compositional emission for `delta.nested` struct-value fields. `buildNestedTypeView` recursively walks the nested type's fields using the same atomic pointer-wrap convention; companion `UDelta` structs + package-level `ApplyU` / `DiffU` functions emitted always; same-package method wrappers gated on `emitMethod` (E-12). `NestedTypes []nestedTypeView` added to `snapshotView` (bottom-up order for forward-reference safety). `fieldView` gains `IsNested`, `NestedFuncName`, `NestedDiffFuncName`; parent `applyField`/`diffField` templates dispatch on `IsNested`. Multi-level nesting recursive with visited-name dedup. Parse-stage: `containsHeaderEmbed` rejects nested types embedding `runtime.Header` (§3.3.2). Anonymous struct types rejected at emit time. Slice/map `delta.nested` retains N-03/N-04 sentinels. `buildSnapshotView` gains `emitMethod bool` parameter. Tests: 8 new AST / sentinel / error tests; `compileCheckEmitNested` and `compileCheckEmitNestedDeep` behaviour suites (Apply round-trip, Diff minimality, multi-step Coalesce transitive delegation); `TestParse_NestedFieldEmbedHeader` parse-error test. All 3 fixtures new: `nested_struct`, `nested_multi`, `nested_deep`, `parse/nested_header_embed`. |
+| 2026-05-22 | N-02                     | Cycle detection and arbitrary-depth validation for `delta.nested`. Parse stage: `validateNestedAcyclic` (path-slice DFS) added to `parse_fields.go`; wired into `walkFields` after the Header-embed check; reports full cycle path and §3.3.2 reference. Emit stage: `buildNestedTypeView` / `buildSnapshotView` split single `visited` map into `visited` (dedup, N-01 req 09) and `inPath` (active DFS ancestry); `inPath` hit returns error instead of silently skipping; `buildNestedTypeView` gains `inPath map[string]bool` parameter. Struct-value cycles are impossible in valid Go source (compiler rejects invalid recursive types); both cycle tests construct the graph programmatically via `go/types`. Arbitrary depth demonstrated by new `nested_triple` fixture (Snapshot → Level1 → Level2 → Level3) with full compile-and-run round-trip. Tests: `TestEmitTemplate_Nested_Triple` (AST + compile-check), `TestBuildSnapshotView_CycleDetected`, `TestParse_NestedCycleDetected`.                                                                                                                                                                                                                                                         |
 | 2026-05-21 | EM-02, E-19              | `Apply` function and same-package method wrapper emitted for atomic rows across all five payload shapes. `fieldView` gains `Suppressed` flag so suppressed fields (`delta.omit` / `delta.retired`) appear in Apply body as `result.F = s.F`; `snapshotView` gains `KeyName` and `EmitMethod`. New erratum E-19 documents `Apply` returning `(T, error)` to propagate `runtime.HeaderAfterApply` chain-envelope errors (spec §6.4 / §7.1 amended). R-20 updated to reference E-19. Tests: view-construction matrix updated for suppressed-fields contract change; Apply AST-shape tests for same-package and cross-package modes; compile-check promoted to behaviour test (`go test`) exercising Apply round-trip and `HeaderAfterApply` error propagation; `assertGofmtClean` (`gofmt -l`) guard added across all emit tests.                                                                                                                                                                                                                                                                                                                                                                                                                              |

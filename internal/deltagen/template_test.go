@@ -2415,6 +2415,68 @@ func TestEmitTemplate_Nested_Deep(t *testing.T) {
 	})
 }
 
+// TestEmitTemplate_Nested_Triple verifies three-level nested emission:
+// Level3Delta, Level2Delta, and Level1Delta are all emitted, Level2Delta
+// contains Stats Level3Delta, and Apply/Diff delegate transitively at all
+// levels.
+// Covers: N-02
+func TestEmitTemplate_Nested_Triple(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_triple_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_triple"},
+		TargetStructs: []string{"NestedTripleSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// All three companion types must be emitted.
+	for _, name := range []string{"Level3Delta", "Level2Delta", "Level1Delta"} {
+		if findStructDecl(f, name) == nil {
+			t.Fatalf("%s not found in generated output", name)
+		}
+	}
+
+	// Level2Delta must have Stats Level3Delta (not *Level3Delta).
+	level2Delta := findStructDecl(f, "Level2Delta")
+	l2Fields := structFieldNames(level2Delta)
+	if !contains(l2Fields, "Stats") {
+		t.Errorf("Level2Delta missing Stats field; fields: %v", l2Fields)
+	}
+	if strings.Contains(srcStr, "*Level3Delta") {
+		t.Errorf("Level3Delta must not be pointer-wrapped in Level2Delta")
+	}
+
+	// ApplyLevel2 body must delegate to u.Stats.Apply(d.Stats).
+	if !strings.Contains(srcStr, "u.Stats.Apply(d.Stats)") {
+		t.Errorf("ApplyLevel2 body missing u.Stats.Apply(d.Stats)")
+	}
+	// Root Apply must delegate to s.Root.Apply(d.Root).
+	if !strings.Contains(srcStr, "s.Root.Apply(d.Root)") {
+		t.Errorf("root Apply body missing s.Root.Apply(d.Root)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNestedTriple(t, src)
+	})
+}
+
 // TestEmitTemplate_Nested_CrossPkg verifies that in cross-package mode nested
 // types emit only package-level functions (no method wrappers), and the parent
 // Apply/Diff use function call syntax (req 06).
@@ -2512,6 +2574,63 @@ func TestEmitTemplate_Nested_AnonymousStruct_Error(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "named type") {
 		t.Errorf("error should mention 'named type', got: %v", err)
+	}
+}
+
+// TestBuildSnapshotView_CycleDetected verifies that the emit stage returns a
+// clear error when the delta.nested type graph contains a cycle (A.F → B,
+// B.G → A). Struct-value cycles cannot exist in valid Go source; the graph is
+// constructed directly via go/types to exercise the inPath guard (N-02 §3.3.2).
+// Covers: N-02
+func TestBuildSnapshotView_CycleDetected(t *testing.T) {
+	pkg := types.NewPackage("test/cycle", "cycle")
+
+	objA := types.NewTypeName(0, pkg, "A", nil)
+	typeA := types.NewNamed(objA, nil, nil)
+
+	objB := types.NewTypeName(0, pkg, "B", nil)
+	typeB := types.NewNamed(objB, nil, nil)
+
+	fieldAF := types.NewVar(0, pkg, "F", typeB)
+	structA := types.NewStruct([]*types.Var{fieldAF}, []string{`eddt:"delta.nested"`})
+	typeA.SetUnderlying(structA)
+
+	fieldBG := types.NewVar(0, pkg, "G", typeA)
+	structB := types.NewStruct([]*types.Var{fieldBG}, []string{`eddt:"delta.nested"`})
+	typeB.SetUnderlying(structB)
+
+	keyVar := types.NewVar(0, nil, "Key", types.Typ[types.String])
+	headerVar := types.NewVar(0, nil, "Header", types.Typ[types.String])
+
+	ps := &ParsedSnapshot{
+		Name:      "CycleSnapshot",
+		PkgPath:   "test/cycle",
+		PkgName:   "cycle",
+		HeaderVar: headerVar,
+		KeyVar:    keyVar,
+		KeyShape:  ShapeScalar,
+		Fields: []ParsedField{
+			{
+				Name:   "Root",
+				Shape:  ShapeStructValue,
+				GoType: typeA,
+				Tag:    ParsedTag{Kind: TagKindNested, Raw: "delta.nested"},
+			},
+		},
+	}
+
+	opts := emitOpts{crossPackage: false}
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+
+	_, err := buildSnapshotView(ps, qualifier, true)
+	if err == nil {
+		t.Fatal("expected cycle error from buildSnapshotView, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention 'cycle', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "§3.3.2") {
+		t.Errorf("error should mention §3.3.2, got: %v", err)
 	}
 }
 
@@ -2791,6 +2910,127 @@ func TestDeep_RoundTrip(t *testing.T) {
 	}
 
 	modContent := "module nested_deep\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitNestedTriple verifies the three-level nesting fixture compiles
+// and that Apply(a, Diff(a,b))==b works for simultaneous changes at all three
+// levels (Level1.Count, Level2.Rank, Level3.Score).
+// Covers: N-02
+func compileCheckEmitNestedTriple(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package nested_triple
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type Level3 struct{ Score int32 }
+
+type Level2 struct {
+	Rank  int32
+	Stats Level3 ` + "`eddt:\"delta.nested\"`" + `
+}
+
+type Level1 struct {
+	Count int32
+	Meta  Level2 ` + "`eddt:\"delta.nested\"`" + `
+}
+
+type NestedTripleSnapshot struct {
+	eddt.Header
+	Key  string ` + "`eddt:\"entity.key\"`" + `
+	Root Level1 ` + "`eddt:\"delta.nested\"`" + `
+	Name string
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_triple_test
+
+import (
+	"testing"
+	"time"
+
+	"nested_triple"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// TestTriple_RoundTrip exercises Apply(a, Diff(a,b))==b when Level1.Count,
+// Level2.Rank, and Level3.Score all change simultaneously.
+func TestTriple_RoundTrip(t *testing.T) {
+	var a nested_triple.NestedTripleSnapshot
+	a.Header = eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: 1, EffectiveAt: time.Now()}
+	a.Key = "k"
+	a.Root = nested_triple.Level1{
+		Count: 1,
+		Meta:  nested_triple.Level2{Rank: 2, Stats: nested_triple.Level3{Score: 3}},
+	}
+	a.Name = "before"
+
+	var b nested_triple.NestedTripleSnapshot
+	b.Header = eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: 2, EffectiveAt: time.Now()}
+	b.Key = "k"
+	b.Root = nested_triple.Level1{
+		Count: 10,
+		Meta:  nested_triple.Level2{Rank: 20, Stats: nested_triple.Level3{Score: 30}},
+	}
+	b.Name = "after"
+
+	delta, err := nested_triple.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	result, err := nested_triple.Apply(a, delta)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Root.Count != b.Root.Count {
+		t.Errorf("Root.Count: got %d, want %d", result.Root.Count, b.Root.Count)
+	}
+	if result.Root.Meta.Rank != b.Root.Meta.Rank {
+		t.Errorf("Root.Meta.Rank: got %d, want %d", result.Root.Meta.Rank, b.Root.Meta.Rank)
+	}
+	if result.Root.Meta.Stats.Score != b.Root.Meta.Stats.Score {
+		t.Errorf("Root.Meta.Stats.Score: got %d, want %d", result.Root.Meta.Stats.Score, b.Root.Meta.Stats.Score)
+	}
+	if result.Name != b.Name {
+		t.Errorf("Name: got %q, want %q", result.Name, b.Name)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_triple_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_triple_test.go: %v", err)
+	}
+
+	modContent := "module nested_triple\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}

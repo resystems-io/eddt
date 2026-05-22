@@ -560,15 +560,20 @@ func buildImports(
 // buildNestedTypeView constructs the template view for one delta.nested
 // companion type U. It recursively visits any delta.nested sub-fields of U,
 // collecting their companion views in bottom-up order (deepest first) so that
-// forward references are avoided in the generated output. The visited set
-// prevents duplicate emission when multiple fields share the same nested type
-// (N-01 req 09). Returns (view, additional companion views from deeper nesting, error).
+// forward references are avoided in the generated output.
+//
+// visited prevents duplicate emission when multiple fields share the same
+// nested type (N-01 req 09). inPath tracks the active DFS ancestry chain; an
+// entry already in inPath signals a cycle and returns an error (N-02 §3.3.2).
+//
+// Returns (view, additional companion views from deeper nesting, error).
 func buildNestedTypeView(
 	typeName string,
 	st *types.Struct,
 	qualifier types.Qualifier,
 	emitMethod bool,
 	visited map[string]bool,
+	inPath map[string]bool,
 ) (nestedTypeView, []nestedTypeView, error) {
 	nv := nestedTypeView{
 		Name:          typeName,
@@ -636,10 +641,16 @@ func buildNestedTypeView(
 			nv.Fields = append(nv.Fields, fv)
 			nv.DiffFields = append(nv.DiffFields, fv)
 
+			if inPath[subTypeName] {
+				return nestedTypeView{}, nil, fmt.Errorf(
+					"delta.nested type chain forms a cycle at %s (§3.3.2)", subTypeName)
+			}
 			if !visited[subTypeName] {
 				visited[subTypeName] = true
+				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				delete(inPath, subTypeName)
 				if err != nil {
 					return nestedTypeView{}, nil, err
 				}
@@ -718,6 +729,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 	sv.KeyHashLines = hashLines
 
 	visited := make(map[string]bool) // dedup set for nested companion types (N-01 req 09)
+	inPath := make(map[string]bool)  // active DFS ancestry chain for cycle detection (N-02)
 
 	for _, f := range ps.Fields {
 		// Presence-axis: omit/retired fields are suppressed on the Delta side
@@ -758,10 +770,17 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			sv.Fields = append(sv.Fields, fv)
 			sv.DiffFields = append(sv.DiffFields, fv)
 
+			if inPath[subTypeName] {
+				return snapshotView{}, fmt.Errorf(
+					"field %s.%s: delta.nested type chain forms a cycle at %s (§3.3.2)",
+					ps.Name, f.Name, subTypeName)
+			}
 			if !visited[subTypeName] {
 				visited[subTypeName] = true
+				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				delete(inPath, subTypeName)
 				if err != nil {
 					return snapshotView{}, fmt.Errorf("field %s.%s: %w", ps.Name, f.Name, err)
 				}

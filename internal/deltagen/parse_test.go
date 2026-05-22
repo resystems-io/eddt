@@ -40,6 +40,7 @@ package deltagen
 // through the module's go.mod without requiring a separate go.work file.
 
 import (
+	"go/types"
 	"strings"
 	"testing"
 
@@ -638,6 +639,43 @@ func TestParse_NestedFieldEmbedHeader(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "embeds runtime.Header") {
 		t.Errorf("error should mention 'embeds runtime.Header', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "§3.3.2") {
+		t.Errorf("error should mention §3.3.2, got: %v", err)
+	}
+}
+
+// TestParse_NestedCycleDetected verifies that validateNestedAcyclic reports a
+// clear cycle error for a programmatically-constructed cyclic delta.nested graph
+// (A.F → B, B.G → A). Struct-value cycles cannot be expressed in valid Go source
+// because the compiler rejects invalid recursive types, so this test constructs
+// the cycle directly via go/types.
+// Covers: N-02
+func TestParse_NestedCycleDetected(t *testing.T) {
+	pkg := types.NewPackage("test/cycle", "cycle")
+
+	objA := types.NewTypeName(0, pkg, "A", nil)
+	typeA := types.NewNamed(objA, nil, nil)
+
+	objB := types.NewTypeName(0, pkg, "B", nil)
+	typeB := types.NewNamed(objB, nil, nil)
+
+	// A has one delta.nested field F of type B.
+	fieldAF := types.NewVar(0, pkg, "F", typeB)
+	structA := types.NewStruct([]*types.Var{fieldAF}, []string{`eddt:"delta.nested"`})
+	typeA.SetUnderlying(structA)
+
+	// B has one delta.nested field G of type A — completing the cycle.
+	fieldBG := types.NewVar(0, pkg, "G", typeA)
+	structB := types.NewStruct([]*types.Var{fieldBG}, []string{`eddt:"delta.nested"`})
+	typeB.SetUnderlying(structB)
+
+	err := validateNestedAcyclic(typeA, []string{"Root"}, nil)
+	if err == nil {
+		t.Fatal("expected cycle error from validateNestedAcyclic, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error should mention 'cycle', got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "§3.3.2") {
 		t.Errorf("error should mention §3.3.2, got: %v", err)
