@@ -208,6 +208,23 @@ type fieldView struct {
 	// NestedDiffFuncName is the package-level Diff function for cross-package
 	// nested fields (e.g. "DiffInner"). Empty in same-package mode.
 	NestedDiffFuncName string
+
+	// IsMapNested is true for delta.nested map[K]V fields (N-03). When true,
+	// DeltaName = "Updated"+Name, DeltaType = rendered map type (no pointer wrap),
+	// MapRemovedName = "Removed"+Name, MapKeyType = rendered K type.
+	IsMapNested bool
+
+	// MapRemovedName is the Delta-side field name for the removed-keys slice
+	// (e.g. "RemovedTags" for a source field named Tags). Only set when IsMapNested.
+	MapRemovedName string
+
+	// MapKeyType is the rendered Go type string for the map key K
+	// (e.g. "string"). Used to declare the RemovedX []K field. Only when IsMapNested.
+	MapKeyType string
+
+	// MapValueUseReflectEq is true when the map value type V is non-scalar and
+	// Diff must use reflect.DeepEqual for value comparison. Only when IsMapNested.
+	MapValueUseReflectEq bool
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
@@ -231,12 +248,15 @@ type fieldView struct {
 //   - entityIDFunc:      package-level EntityID function (always emitted, EM-05).
 //   - entityIDMethod:    same-package method wrapper on the key type (E-12, EM-05);
 //     emitted only when the key type is a named type (EmitEntityIDMethod).
-//   - nestedTypeDecl:    companion Delta struct for a delta.nested type (N-01).
-//   - nestedApplyFunc:   package-level ApplyU function for a nested type (N-01).
-//   - nestedApplyMethod: same-package method wrapper func (u U) Apply(...) (N-01).
-//   - nestedApplyField:  per-field body line for nestedApplyFunc (uses u. receiver).
-//   - nestedDiffFunc:    package-level DiffU function for a nested type (N-01).
-//   - nestedDiffMethod:  same-package method wrapper func (u U) Diff(...) (N-01).
+//   - nestedTypeDecl:      companion Delta struct for a delta.nested type (N-01).
+//   - nestedApplyFunc:     package-level ApplyU function for a nested type (N-01).
+//   - nestedApplyMethod:   same-package method wrapper func (u U) Apply(...) (N-01).
+//   - nestedApplyField:    per-field body line for nestedApplyFunc (uses u. receiver).
+//   - nestedDiffFunc:      package-level DiffU function for a nested type (N-01).
+//   - nestedDiffMethod:    same-package method wrapper func (u U) Diff(...) (N-01).
+//   - applyMapField:       apply body block for a delta.nested map field (N-03, uses s.).
+//   - nestedApplyMapField: apply body block for a map field inside a nested type (N-03, uses u.).
+//   - diffMapField:        diff body block for a delta.nested map field (N-03, E-16).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -256,9 +276,12 @@ import (
 // "no change" for that field when Apply is called.
 type {{.DeltaName}} struct {
 	runtime.Header
-{{- range .Fields}}{{if not .Suppressed}}
+{{- range .Fields}}{{if not .Suppressed}}{{if .IsMapNested}}
 	{{.DeltaName}} {{.DeltaType}}
-{{- end}}{{end}}
+	{{.MapRemovedName}} []{{.MapKeyType}}
+{{- else}}
+	{{.DeltaName}} {{.DeltaType}}
+{{- end}}{{end}}{{end}}
 }
 {{template "applyFunc" .}}
 {{if .EmitMethod}}{{template "applyMethod" .}}
@@ -288,7 +311,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 }
 {{end -}}
 
-{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsMapNested}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
@@ -314,7 +337,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 }
 {{end -}}
 
-{{define "diffField"}}{{if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+{{define "diffField"}}{{if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
@@ -374,9 +397,12 @@ func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 // {{.DeltaName}} is the Delta companion type for delta.nested fields of
 // type {{.Name}}. It is generated by delta-gen and must not be edited.
 type {{.DeltaName}} struct {
-{{- range .Fields}}{{if not .Suppressed}}
+{{- range .Fields}}{{if not .Suppressed}}{{if .IsMapNested}}
 	{{.DeltaName}} {{.DeltaType}}
-{{- end}}{{end}}
+	{{.MapRemovedName}} []{{.MapKeyType}}
+{{- else}}
+	{{.DeltaName}} {{.DeltaType}}
+{{- end}}{{end}}{{end}}
 }
 {{end -}}
 
@@ -395,7 +421,7 @@ func {{.ApplyFuncName}}(u {{.Name}}, d {{.DeltaName}}) {{.Name}} {
 func (u {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} { return {{.ApplyFuncName}}(u, d) }
 {{end -}}
 
-{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
+{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsMapNested}}{{template "nestedApplyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
 
 {{define "nestedDiffFunc"}}
 // {{.DiffFuncName}} produces the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d)
@@ -410,7 +436,51 @@ func {{.DiffFuncName}}(a, b {{.Name}}) {{.DeltaName}} {
 {{define "nestedDiffMethod"}}
 // Diff is an ergonomic same-package wrapper (E-12).
 func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName}}(u, other) }
-{{end -}}`
+{{end -}}
+
+{{define "applyMapField"}}
+// apply delta.nested map field {{.Name}} (N-03):
+// 1. copy source map, 2. delete removed keys, 3. upsert updated entries.
+{
+	__m := make({{.DeltaType}}, len(s.{{.Name}}))
+	for __k, __v := range s.{{.Name}} { __m[__k] = __v }
+	for _, __k := range d.{{.MapRemovedName}} { delete(__m, __k) }
+	for __k, __v := range d.{{.DeltaName}} { __m[__k] = __v }
+	result.{{.Name}} = __m
+}{{end -}}
+
+{{define "nestedApplyMapField"}}
+// apply delta.nested map field {{.Name}} (N-03):
+// 1. copy source map, 2. delete removed keys, 3. upsert updated entries.
+{
+	__m := make({{.DeltaType}}, len(u.{{.Name}}))
+	for __k, __v := range u.{{.Name}} { __m[__k] = __v }
+	for _, __k := range d.{{.MapRemovedName}} { delete(__m, __k) }
+	for __k, __v := range d.{{.DeltaName}} { __m[__k] = __v }
+	result.{{.Name}} = __m
+}{{end -}}
+
+{{define "diffMapField"}}
+// diff delta.nested map field {{.Name}} (N-03, E-16 upsert semantics):
+// RemovedX = keys in a absent from b; UpdatedX = entries in b absent or changed vs a.
+// A value-changed entry appears in UpdatedX only, never in RemovedX.
+{
+	var __removed []{{.MapKeyType}}
+	for __k := range a.{{.Name}} {
+		if _, __ok := b.{{.Name}}[__k]; !__ok {
+			__removed = append(__removed, __k)
+		}
+	}
+	if len(__removed) > 0 { d.{{.MapRemovedName}} = __removed }
+	var __updated {{.DeltaType}}
+	for __k, __v := range b.{{.Name}} {
+		if __av, __ok := a.{{.Name}}[__k]; !__ok || {{if .MapValueUseReflectEq}}!reflect.DeepEqual(__av, __v){{else}}__av != __v{{end}} {
+			if __updated == nil { __updated = make({{.DeltaType}}) }
+			__updated[__k] = __v
+		}
+	}
+	if __updated != nil { d.{{.DeltaName}} = __updated }
+}{{end -}}`
 
 // deltaTemplate is the parsed and compiled template; compiled once at init.
 var deltaTemplate = template.Must(
@@ -613,10 +683,31 @@ func buildNestedTypeView(
 		}
 
 		if tag.Kind == TagKindNested {
-			if shape != ShapeStructValue {
+			if shape == ShapeSlice {
 				return nestedTypeView{}, nil, fmt.Errorf(
-					"nested type %s field %s: delta.nested on slice/map shapes is not yet implemented (N-03/N-04)",
+					"nested type %s field %s: delta.nested on slice is not yet implemented (N-04)",
 					typeName, field.Name())
+			}
+			if shape == ShapeMap {
+				mapT := field.Type().Underlying().(*types.Map)
+				keyStr := types.TypeString(mapT.Key(), qualifier)
+				mapStr := types.TypeString(field.Type(), qualifier)
+				valShape, _ := classifyShape(mapT.Elem())
+				fv := fieldView{
+					Name:                 field.Name(),
+					DeltaName:            "Updated" + field.Name(),
+					DeltaType:            mapStr,
+					IsMapNested:          true,
+					MapRemovedName:       "Removed" + field.Name(),
+					MapKeyType:           keyStr,
+					MapValueUseReflectEq: valShape != ShapeScalar,
+				}
+				nv.Fields = append(nv.Fields, fv)
+				nv.DiffFields = append(nv.DiffFields, fv)
+				if fv.MapValueUseReflectEq {
+					nv.NeedsReflect = true
+				}
+				continue
 			}
 			named, ok := field.Type().(*types.Named)
 			if !ok {
@@ -739,13 +830,34 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			continue
 		}
 
-		// N-01: delta.nested struct-value fields emit a companion type.
-		// delta.nested on slice/map shapes remains a Phase-5 sentinel (N-03/N-04).
+		// N-01/N-03: delta.nested struct-value fields emit a companion type (N-01);
+		// map fields emit UpdatedX/RemovedX encoding (N-03); slice remains N-04.
 		if f.Tag.Kind == TagKindNested {
-			if f.Shape != ShapeStructValue {
+			if f.Shape == ShapeSlice {
 				return snapshotView{}, fmt.Errorf(
-					"field %s.%s: delta.nested on slice/map shapes is not yet implemented (N-03/N-04)",
+					"field %s.%s: delta.nested on slice is not yet implemented (N-04)",
 					ps.Name, f.Name)
+			}
+			if f.Shape == ShapeMap {
+				mapT := f.GoType.Underlying().(*types.Map)
+				keyStr := types.TypeString(mapT.Key(), qualifier)
+				mapStr := types.TypeString(f.GoType, qualifier)
+				valShape, _ := classifyShape(mapT.Elem())
+				fv := fieldView{
+					Name:                 f.Name,
+					DeltaName:            "Updated" + f.Name,
+					DeltaType:            mapStr,
+					IsMapNested:          true,
+					MapRemovedName:       "Removed" + f.Name,
+					MapKeyType:           keyStr,
+					MapValueUseReflectEq: valShape != ShapeScalar,
+				}
+				sv.Fields = append(sv.Fields, fv)
+				sv.DiffFields = append(sv.DiffFields, fv)
+				if fv.MapValueUseReflectEq {
+					sv.NeedsReflect = true
+				}
+				continue
 			}
 			named, ok := f.GoType.(*types.Named)
 			if !ok {

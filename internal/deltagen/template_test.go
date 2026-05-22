@@ -23,11 +23,19 @@ package deltagen
 //     Phase-5 sentinel error.
 //   - TestEmitTemplate_CrossPackageQualifier: asserts type-string qualification
 //     in cross-package mode.
+//   - TestEmitTemplate_Nested_Map_SamePkg: asserts N-03 map delta encoding —
+//     UpdatedX/RemovedX fields in TDelta, no companion EntryDelta type, reflect
+//     import present; backed by compileCheckEmitNestedMap runtime tests.
+//   - TestEmitTemplate_Nested_Map_CrossPkg: asserts N-03 cross-package mode —
+//     no method wrappers, map operation fragments present (E-12).
 //   - compileCheckEmit: runs go test in an isolated temp module with a replace
 //     directive; exercises Apply round-trip and HeaderAfterApply error
 //     propagation (EM-02); also exercises Diff round-trip, identity-diff
 //     minimality, partial-diff minimality, and HeaderForDiff error propagation
 //     (EM-03).
+//   - compileCheckEmitNestedMap: isolated-module compile-and-run for N-03;
+//     covers add/remove/update entries, round-trip on Tags and Scores, and
+//     atomic-field coexistence (E-16 upsert semantics).
 
 import (
 	"bytes"
@@ -152,7 +160,7 @@ func TestBuildSnapshotView(t *testing.T) {
 }
 
 // TestBuildSnapshotView_NestedSliceError verifies that delta.nested on a slice
-// field returns the N-03 sentinel error at view-construction time.
+// field returns the N-04 sentinel error at view-construction time.
 // Covers: R-19
 func TestBuildSnapshotView_NestedSliceError(t *testing.T) {
 	ps := loadEmitFixture(t, "nested_nyi", "NestedSliceNYISnapshot")
@@ -161,10 +169,10 @@ func TestBuildSnapshotView_NestedSliceError(t *testing.T) {
 
 	_, err := buildSnapshotView(ps, qualifier, true)
 	if err == nil {
-		t.Fatal("expected N-03 sentinel error for delta.nested on slice, got nil")
+		t.Fatal("expected N-04 sentinel error for delta.nested on slice, got nil")
 	}
-	if !strings.Contains(err.Error(), "N-03") {
-		t.Errorf("error should mention N-03, got: %v", err)
+	if !strings.Contains(err.Error(), "N-04") {
+		t.Errorf("error should mention N-04, got: %v", err)
 	}
 }
 
@@ -464,7 +472,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 }
 
 // TestEmitTemplate_NestedNYI_SliceSentinel verifies that the emit pipeline
-// returns the N-03 sentinel error for delta.nested on a slice field.
+// returns the N-04 sentinel error for delta.nested on a slice field.
 // Covers: R-19
 func TestEmitTemplate_NestedNYI_SliceSentinel(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_nyi_delta.go")
@@ -476,30 +484,141 @@ func TestEmitTemplate_NestedNYI_SliceSentinel(t *testing.T) {
 	}
 	err := New(cfg).Run()
 	if err == nil {
-		t.Fatal("expected N-03 sentinel error for delta.nested on slice, got nil")
+		t.Fatal("expected N-04 sentinel error for delta.nested on slice, got nil")
 	}
-	if !strings.Contains(err.Error(), "N-03") {
-		t.Errorf("error should mention N-03, got: %v", err)
+	if !strings.Contains(err.Error(), "N-04") {
+		t.Errorf("error should mention N-04, got: %v", err)
 	}
 }
 
-// TestEmitTemplate_NestedNYI_MapSentinel verifies that the emit pipeline
-// returns the N-03/N-04 sentinel error for delta.nested on a map field.
-// Covers: R-19
-func TestEmitTemplate_NestedNYI_MapSentinel(t *testing.T) {
-	outPath := filepath.Join(t.TempDir(), "nested_nyi_delta.go")
+// TestEmitTemplate_Nested_Map_SamePkg verifies end-to-end generation for
+// delta.nested map fields (N-03) in same-package mode:
+//   - NestedMapSnapshotDelta carries UpdatedTags/RemovedTags and
+//     UpdatedScores/RemovedScores (E-16 upsert encoding), plus SetCount *int32.
+//   - No companion type is emitted for the map value types (V is atomic).
+//   - Apply body references both the removed-keys slice and the updated-entries map.
+//   - Generated file is gofmt-clean and reflects import is present (Scores uses
+//     reflect.DeepEqual because Entry is a struct value).
+//
+// Covers: N-03, E-16
+func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_map_delta.go")
 
 	cfg := Config{
-		InputPkgs:     []string{"./testdata/emit/nested_nyi"},
-		TargetStructs: []string{"NestedMapNYISnapshot"},
+		InputPkgs:     []string{"./testdata/emit/nested_map"},
+		TargetStructs: []string{"NestedMapSnapshot"},
 		OutPath:       outPath,
 	}
-	err := New(cfg).Run()
-	if err == nil {
-		t.Fatal("expected N-03/N-04 sentinel error for delta.nested on map, got nil")
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "N-03") {
-		t.Errorf("error should mention N-03, got: %v", err)
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// NestedMapSnapshotDelta must contain the N-03 map encoding fields.
+	deltaDecl := findStructDecl(f, "NestedMapSnapshotDelta")
+	if deltaDecl == nil {
+		t.Fatalf("NestedMapSnapshotDelta not found in generated file")
+	}
+	deltaFields := structFieldNames(deltaDecl)
+	for _, want := range []string{"UpdatedTags", "RemovedTags", "UpdatedScores", "RemovedScores", "SetCount"} {
+		if !contains(deltaFields, want) {
+			t.Errorf("NestedMapSnapshotDelta missing field %q; fields: %v", want, deltaFields)
+		}
+	}
+	// Raw source field names must not appear in the Delta struct.
+	for _, absent := range []string{"Tags", "Scores", "Count"} {
+		if contains(deltaFields, absent) {
+			t.Errorf("NestedMapSnapshotDelta must not have raw field %q; fields: %v", absent, deltaFields)
+		}
+	}
+
+	// No companion type for the map value type Entry (V is treated atomically).
+	if findStructDecl(f, "EntryDelta") != nil {
+		t.Errorf("EntryDelta must not be emitted: N-03 treats map value type atomically")
+	}
+
+	// Apply body must include the three map-apply steps for each map field.
+	for _, fragment := range []string{"RemovedTags", "UpdatedTags", "RemovedScores", "UpdatedScores"} {
+		if !strings.Contains(srcStr, fragment) {
+			t.Errorf("Apply body missing %q reference", fragment)
+		}
+	}
+
+	// reflect import must be present (Scores field uses reflect.DeepEqual).
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf(`generated file missing "reflect" import (required for Scores struct-value comparison)`)
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNestedMap(t, src)
+	})
+}
+
+// TestEmitTemplate_Nested_Map_CrossPkg verifies N-03 generation in cross-package
+// mode: no method wrappers are emitted (E-12), and the Apply/Diff function bodies
+// still contain the map-copy/delete/upsert logic.
+// Covers: N-03, E-12
+func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_map_cross_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/nested_map"},
+		TargetStructs:      []string{"NestedMapSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Package-level Apply and Diff must exist.
+	if findFuncDecl(f, "Apply") == nil {
+		t.Errorf("Apply function not found in cross-pkg output")
+	}
+	if findFuncDecl(f, "Diff") == nil {
+		t.Errorf("Diff function not found in cross-pkg output")
+	}
+
+	// Method wrappers must NOT be emitted (E-12).
+	if findMethodDecl(f, "NestedMapSnapshot", "Apply") != nil {
+		t.Errorf("Apply method wrapper must not be emitted in cross-pkg mode")
+	}
+	if findMethodDecl(f, "NestedMapSnapshot", "Diff") != nil {
+		t.Errorf("Diff method wrapper must not be emitted in cross-pkg mode")
+	}
+
+	// Apply and Diff bodies must still contain the map operation fragments.
+	for _, fragment := range []string{"RemovedTags", "UpdatedTags", "RemovedScores", "UpdatedScores"} {
+		if !strings.Contains(srcStr, fragment) {
+			t.Errorf("cross-pkg output missing %q reference in Apply/Diff body", fragment)
+		}
 	}
 }
 
@@ -3031,6 +3150,199 @@ func TestTriple_RoundTrip(t *testing.T) {
 	}
 
 	modContent := "module nested_triple\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitNestedMap verifies that the generated nested_map delta source
+// compiles and satisfies five runtime contracts (N-03, E-16 upsert semantics):
+//
+//  1. Add entry: Diff records new key in UpdatedTags; Apply adds it to result.
+//  2. Remove entry: Diff records removed key in RemovedTags; Apply removes it.
+//  3. Update entry: changed key appears in UpdatedTags only (never in RemovedTags).
+//  4. Round-trip: Apply(a, Diff(a,b)) payload-equals b across simultaneous
+//     add/remove/update on both Tags (scalar value) and Scores (struct value).
+//  5. Atomic coexistence: Count-only change → SetCount non-nil, maps nil.
+//
+// Covers: N-03, E-16
+func compileCheckEmitNestedMap(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	// Inline the fixture source so the isolated module is self-contained.
+	srcCode := `package nested_map
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+// Entry is the struct-value map element type; requires reflect.DeepEqual in Diff.
+type Entry struct {
+	Score int32
+	Label string
+}
+
+// NestedMapSnapshot carries two delta.nested map fields and one atomic field.
+type NestedMapSnapshot struct {
+	eddt.Header
+	Key    string            ` + "`eddt:\"entity.key\"`" + `
+	Tags   map[string]string ` + "`eddt:\"delta.nested\"`" + `
+	Scores map[string]Entry  ` + "`eddt:\"delta.nested\"`" + `
+	Count  int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_map_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"nested_map"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// header returns a minimal Header for test snapshots.
+func header(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// TestMap_AddEntry: Diff records new key in UpdatedTags; Apply adds it (N-03 req 1).
+func TestMap_AddEntry(t *testing.T) {
+	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1"}}
+	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
+
+	d, err := nested_map.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if d.UpdatedTags == nil { t.Fatal("UpdatedTags must not be nil when entry added") }
+	if d.UpdatedTags["y"] != "2" { t.Errorf("UpdatedTags[y]: got %q want %q", d.UpdatedTags["y"], "2") }
+	if len(d.RemovedTags) != 0 { t.Errorf("RemovedTags must be empty for add-only delta; got %v", d.RemovedTags) }
+
+	result, err := nested_map.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if result.Tags["y"] != "2" { t.Errorf("Apply: Tags[y]: got %q want %q", result.Tags["y"], "2") }
+	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
+}
+
+// TestMap_RemoveEntry: Diff records removed key in RemovedTags; Apply removes it (N-03 req 2).
+func TestMap_RemoveEntry(t *testing.T) {
+	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
+	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1"}}
+
+	d, err := nested_map.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.RemovedTags) != 1 || d.RemovedTags[0] != "y" {
+		t.Errorf("RemovedTags: got %v want [y]", d.RemovedTags)
+	}
+	if d.UpdatedTags != nil { t.Errorf("UpdatedTags must be nil for remove-only delta; got %v", d.UpdatedTags) }
+
+	result, err := nested_map.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if _, ok := result.Tags["y"]; ok { t.Error("Apply: key y must have been removed") }
+	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
+}
+
+// TestMap_UpdateEntry: changed key appears in UpdatedTags only, not RemovedTags (E-16 upsert, N-03 req 3).
+func TestMap_UpdateEntry(t *testing.T) {
+	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "old"}}
+	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "new"}}
+
+	d, err := nested_map.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if d.UpdatedTags == nil || d.UpdatedTags["x"] != "new" {
+		t.Errorf("UpdatedTags must have x=new; got %v", d.UpdatedTags)
+	}
+	// E-16: a value-changed entry must NOT appear in RemovedTags.
+	if len(d.RemovedTags) != 0 {
+		t.Errorf("RemovedTags must be empty for update-only delta (E-16 upsert); got %v", d.RemovedTags)
+	}
+}
+
+// TestMap_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove/update on both
+// Tags (scalar value) and Scores (struct value with reflect.DeepEqual comparison) (N-03 req 4).
+func TestMap_RoundTrip(t *testing.T) {
+	a := nested_map.NestedMapSnapshot{
+		Header: header(1), Key: "k",
+		Tags:   map[string]string{"keep": "v", "change": "old", "drop": "gone"},
+		Scores: map[string]nested_map.Entry{
+			"keep":   {Score: 1, Label: "kept"},
+			"change": {Score: 2, Label: "old-label"},
+			"drop":   {Score: 3, Label: "dropped"},
+		},
+		Count: 5,
+	}
+	b := nested_map.NestedMapSnapshot{
+		Header: header(2), Key: "k",
+		Tags:   map[string]string{"keep": "v", "change": "new", "added": "fresh"},
+		Scores: map[string]nested_map.Entry{
+			"keep":   {Score: 1, Label: "kept"},
+			"change": {Score: 2, Label: "new-label"},
+			"added":  {Score: 9, Label: "brand-new"},
+		},
+		Count: 5,
+	}
+
+	d, err := nested_map.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+
+	result, err := nested_map.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+
+	// Tags round-trip.
+	if !reflect.DeepEqual(result.Tags, b.Tags) {
+		t.Errorf("Tags round-trip failed: got %v want %v", result.Tags, b.Tags)
+	}
+	// Scores round-trip.
+	if !reflect.DeepEqual(result.Scores, b.Scores) {
+		t.Errorf("Scores round-trip failed: got %v want %v", result.Scores, b.Scores)
+	}
+}
+
+// TestMap_AtomicCoexistence: Count-only change yields non-nil SetCount with nil map deltas (N-03 req 5).
+func TestMap_AtomicCoexistence(t *testing.T) {
+	tags := map[string]string{"x": "1"}
+	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: tags, Count: 1}
+	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: tags, Count: 2}
+
+	d, err := nested_map.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if d.SetCount == nil { t.Error("SetCount must be non-nil when Count changed") }
+	if *d.SetCount != 2 { t.Errorf("SetCount: got %d want 2", *d.SetCount) }
+	if d.UpdatedTags != nil { t.Errorf("UpdatedTags must be nil when Tags unchanged; got %v", d.UpdatedTags) }
+	if len(d.RemovedTags) != 0 { t.Errorf("RemovedTags must be empty when Tags unchanged; got %v", d.RemovedTags) }
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_map_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_map_test.go: %v", err)
+	}
+
+	modContent := "module nested_map\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
