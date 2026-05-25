@@ -403,7 +403,9 @@ func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
 {{end -}}
 
 {{define "entityIDFunc"}}
-// EntityID returns the deterministic content-hash EntityID of k. The hash is
+// EntityID creates a hash for the key field: {{.KeyName}}
+//
+// It returns the deterministic content-hash EntityID of k. The hash is
 // Blake2b-256 over the canonical encoding of k's fields (E-10, RT-02). It is
 // a pure function: same input → same output forever.
 func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
@@ -416,7 +418,9 @@ func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 {{end -}}
 
 {{define "entityIDMethod"}}
-// EntityID is an ergonomic same-package wrapper that delegates to the
+// EntityID creates a hash for the key field: {{.KeyName}}
+//
+// It is an ergonomic same-package wrapper that delegates to the
 // package-level EntityID function (E-12).
 func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 	return EntityID(k)
