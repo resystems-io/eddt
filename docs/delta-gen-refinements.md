@@ -934,9 +934,31 @@ rejection and depth handling, shared by all three.
     pairs.
 
 - [ ] **C-03: Identity-diff property test.**
-  `Apply(a, Diff(a, a)) ≡ a` on payload.
+  For any Snapshot `a`, construct `aprime` such that
+  `payload(aprime) == payload(a)` (identical user-defined fields,
+  excluding `eddt.Header`) but `aprime.Header.Sequence =
+  a.Header.Sequence + 1` and `aprime.Header.Provenance = nil`.
+  Then assert:
+
+  > `payload(Apply(a, Diff(a, aprime))) = payload(a)`
+
+  where `payload(s)` denotes all exported user-defined fields of `s`
+  excluding the embedded `eddt.Header`.  Because
+  `payload(a) == payload(aprime)` the invariant is equivalent to
+  asserting that a zero-change diff leaves the payload unchanged.
+  The `aprime` construction is required to satisfy
+  `HeaderAfterApply`'s strict-monotonicity precondition
+  (`delta.Sequence > snapshot.Sequence`), which `Diff(a, a)` violates
+  (E-06).
+
+  Two sub-properties are exercised:
+  1. **Delta minimality** — `Diff(a, aprime)` produces a delta whose
+     payload fields are all nil / empty (no change detected).
+  2. **Apply preserves payload** — applying the minimal delta to `a`
+     leaves all user-defined fields unchanged.
+
   - Files: `internal/deltagen/conformance_test.go`.
-  - Tests: property test passes.
+  - Tests: property test passes across 1000+ random Snapshot inputs.
 
 - [ ] **C-04: Coalesce-as-fold property test.** Assert `Coalesce(s,
   [d_1..d_n])` equals iterated `Apply`.
