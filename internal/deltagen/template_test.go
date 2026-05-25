@@ -25,9 +25,17 @@ package deltagen
 //     in cross-package mode.
 //   - TestEmitTemplate_Nested_Map_SamePkg: asserts N-03 map delta encoding —
 //     UpdatedX/RemovedX fields in TDelta, no companion EntryDelta type, reflect
-//     import present; backed by compileCheckEmitNestedMap runtime tests.
+//     import absent (Entry is comparable, NR-01); backed by compileCheckEmitNestedMap.
 //   - TestEmitTemplate_Nested_Map_CrossPkg: asserts N-03 cross-package mode —
 //     no method wrappers, map operation fragments present (E-12).
+//   - TestEmitTemplate_Nested_Slice_SamePkg: asserts N-04 slice delta encoding —
+//     AddedX/RemovedX fields in TDelta, no reflect import (comparable elements),
+//     method wrappers present; backed by compileCheckEmitNestedSlice.
+//   - TestEmitTemplate_Nested_Slice_CrossPkg: asserts N-04 cross-package mode —
+//     no method wrappers, AddedX/RemovedX fragments present (E-12).
+//   - TestEmitTemplate_Nested_Slice_Reflect_SamePkg: asserts N-04 non-comparable
+//     element path — reflect import present, reflect.DeepEqual in generated code;
+//     backed by compileCheckEmitNestedSliceReflect runtime tests (§5.2).
 //   - compileCheckEmit: runs go test in an isolated temp module with a replace
 //     directive; exercises Apply round-trip and HeaderAfterApply error
 //     propagation (EM-02); also exercises Diff round-trip, identity-diff
@@ -36,6 +44,9 @@ package deltagen
 //   - compileCheckEmitNestedMap: isolated-module compile-and-run for N-03;
 //     covers add/remove/update entries, round-trip on Tags and Scores, and
 //     atomic-field coexistence (E-16 upsert semantics).
+//   - compileCheckEmitNestedSlice: isolated-module compile-and-run for N-04;
+//     covers add/remove elements, simultaneous add+remove, round-trip on Names
+//     and Tags, and atomic-field coexistence (E-15 set-diff semantics).
 
 import (
 	"bytes"
@@ -156,23 +167,6 @@ func TestBuildSnapshotView(t *testing.T) {
 	// by the parse stage into KeyVar, not included in the field list.
 	if _, ok := byName["Key"]; ok {
 		t.Errorf("entity-key field Key should not appear in the snapshot view")
-	}
-}
-
-// TestBuildSnapshotView_NestedSliceError verifies that delta.nested on a slice
-// field returns the N-04 sentinel error at view-construction time.
-// Covers: R-19
-func TestBuildSnapshotView_NestedSliceError(t *testing.T) {
-	ps := loadEmitFixture(t, "nested_nyi", "NestedSliceNYISnapshot")
-	opts := emitOpts{crossPackage: false}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
-
-	_, err := buildSnapshotView(ps, qualifier, true)
-	if err == nil {
-		t.Fatal("expected N-04 sentinel error for delta.nested on slice, got nil")
-	}
-	if !strings.Contains(err.Error(), "N-04") {
-		t.Errorf("error should mention N-04, got: %v", err)
 	}
 }
 
@@ -472,26 +466,6 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	})
 }
 
-// TestEmitTemplate_NestedNYI_SliceSentinel verifies that the emit pipeline
-// returns the N-04 sentinel error for delta.nested on a slice field.
-// Covers: R-19
-func TestEmitTemplate_NestedNYI_SliceSentinel(t *testing.T) {
-	outPath := filepath.Join(t.TempDir(), "nested_nyi_delta.go")
-
-	cfg := Config{
-		InputPkgs:     []string{"./testdata/emit/nested_nyi"},
-		TargetStructs: []string{"NestedSliceNYISnapshot"},
-		OutPath:       outPath,
-	}
-	err := New(cfg).Run()
-	if err == nil {
-		t.Fatal("expected N-04 sentinel error for delta.nested on slice, got nil")
-	}
-	if !strings.Contains(err.Error(), "N-04") {
-		t.Errorf("error should mention N-04, got: %v", err)
-	}
-}
-
 // TestEmitTemplate_Nested_Map_SamePkg verifies end-to-end generation for
 // delta.nested map fields (N-03) in same-package mode:
 //   - NestedMapSnapshotDelta carries UpdatedTags/RemovedTags and
@@ -625,6 +599,213 @@ func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
 			t.Errorf("cross-pkg output missing %q reference in Apply/Diff body", fragment)
 		}
 	}
+}
+
+// TestEmitTemplate_Nested_Slice_SamePkg verifies end-to-end generation for
+// delta.nested slice fields (N-04) in same-package mode:
+//   - NestedSliceSnapshotDelta carries AddedNames/RemovedNames and
+//     AddedTags/RemovedTags (E-15 set-diff encoding), plus SetCount *int32.
+//   - No companion type is emitted for the slice element types (V is atomic).
+//   - Apply body references both the removed-elements path and the added-elements append.
+//   - Generated file is gofmt-clean and the reflect import is ABSENT: Names (string)
+//     and Tags (comparable struct) both use the O(n) map[T]struct{} path (NR-01).
+//
+// Covers: N-04, E-15, NR-01
+func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_slice_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_slice"},
+		TargetStructs: []string{"NestedSliceSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// NestedSliceSnapshotDelta must contain the N-04 set-diff encoding fields.
+	deltaDecl := findStructDecl(f, "NestedSliceSnapshotDelta")
+	if deltaDecl == nil {
+		t.Fatalf("NestedSliceSnapshotDelta not found in generated file")
+	}
+	deltaFields := structFieldNames(deltaDecl)
+	for _, want := range []string{"AddedNames", "RemovedNames", "AddedTags", "RemovedTags", "SetCount"} {
+		if !contains(deltaFields, want) {
+			t.Errorf("NestedSliceSnapshotDelta missing field %q; fields: %v", want, deltaFields)
+		}
+	}
+	// Raw source field names must not appear in the Delta struct.
+	for _, absent := range []string{"Names", "Tags", "Count"} {
+		if contains(deltaFields, absent) {
+			t.Errorf("NestedSliceSnapshotDelta must not have raw field %q; fields: %v", absent, deltaFields)
+		}
+	}
+
+	// No companion type for the slice element types.
+	if findStructDecl(f, "TagDelta") != nil {
+		t.Errorf("TagDelta must not be emitted: N-04 treats slice element type atomically")
+	}
+
+	// Apply body must reference the removed and added slice fields.
+	for _, fragment := range []string{"RemovedNames", "AddedNames", "RemovedTags", "AddedTags"} {
+		if !strings.Contains(srcStr, fragment) {
+			t.Errorf("Apply body missing %q reference", fragment)
+		}
+	}
+
+	// reflect import must be ABSENT: Names (string) and Tags (comparable struct)
+	// both use the O(n) map[T]struct{} path (NR-01, §5.2).
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf(`unexpected "reflect" import: element types are comparable, must use map-set path`)
+	}
+	if strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Errorf("unexpected reflect.DeepEqual in generated code: element types are comparable (NR-01)")
+	}
+
+	// Method wrappers must be present in same-package mode (E-12).
+	if findMethodDecl(f, "NestedSliceSnapshot", "Apply") == nil {
+		t.Errorf("Apply method wrapper not found (expected in same-package mode)")
+	}
+	if findMethodDecl(f, "NestedSliceSnapshot", "Diff") == nil {
+		t.Errorf("Diff method wrapper not found (expected in same-package mode)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNestedSlice(t, src)
+	})
+}
+
+// TestEmitTemplate_Nested_Slice_CrossPkg verifies N-04 generation in cross-package
+// mode: no method wrappers are emitted (E-12), and the Apply/Diff function bodies
+// still contain the slice set-diff logic.
+// Covers: N-04, E-12
+func TestEmitTemplate_Nested_Slice_CrossPkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_slice_cross_delta.go")
+
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/nested_slice"},
+		TargetStructs:      []string{"NestedSliceSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Package-level Apply and Diff must exist.
+	if findFuncDecl(f, "Apply") == nil {
+		t.Errorf("Apply function not found in cross-pkg output")
+	}
+	if findFuncDecl(f, "Diff") == nil {
+		t.Errorf("Diff function not found in cross-pkg output")
+	}
+
+	// Method wrappers must NOT be emitted (E-12).
+	if findMethodDecl(f, "NestedSliceSnapshot", "Apply") != nil {
+		t.Errorf("Apply method wrapper must not be emitted in cross-pkg mode")
+	}
+	if findMethodDecl(f, "NestedSliceSnapshot", "Diff") != nil {
+		t.Errorf("Diff method wrapper must not be emitted in cross-pkg mode")
+	}
+
+	// Apply and Diff bodies must still contain the slice operation fragments.
+	for _, fragment := range []string{"RemovedNames", "AddedNames", "RemovedTags", "AddedTags"} {
+		if !strings.Contains(srcStr, fragment) {
+			t.Errorf("cross-pkg output missing %q reference in Apply/Diff body", fragment)
+		}
+	}
+}
+
+// TestEmitTemplate_Nested_Slice_Reflect_SamePkg verifies N-04 generation for a
+// slice field whose element type is not comparable ([][]byte, element type []byte).
+// The generator must set SliceElemUseReflectEq=true, inject the reflect import,
+// and emit reflect.DeepEqual calls in both Apply and Diff bodies (§5.2).
+//
+// Covers: N-04, §5.2 (non-comparable element fallback)
+func TestEmitTemplate_Nested_Slice_Reflect_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "nested_slice_reflect_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/nested_slice_reflect"},
+		TargetStructs: []string{"NestedSliceReflectSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// NestedSliceReflectSnapshotDelta must contain AddedBlobs and RemovedBlobs.
+	deltaDecl := findStructDecl(f, "NestedSliceReflectSnapshotDelta")
+	if deltaDecl == nil {
+		t.Fatalf("NestedSliceReflectSnapshotDelta not found in generated file")
+	}
+	deltaFields := structFieldNames(deltaDecl)
+	for _, want := range []string{"AddedBlobs", "RemovedBlobs"} {
+		if !contains(deltaFields, want) {
+			t.Errorf("NestedSliceReflectSnapshotDelta missing field %q; fields: %v", want, deltaFields)
+		}
+	}
+
+	// reflect import must be PRESENT: []byte is not comparable (§5.2).
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf(`expected "reflect" import: []byte element type is not comparable`)
+	}
+	if !strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Errorf("expected reflect.DeepEqual in generated code: []byte element type is not comparable (§5.2)")
+	}
+
+	// Apply and Diff bodies must reference the slice delta fields.
+	for _, fragment := range []string{"RemovedBlobs", "AddedBlobs"} {
+		if !strings.Contains(srcStr, fragment) {
+			t.Errorf("generated code missing %q reference", fragment)
+		}
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitNestedSliceReflect(t, src)
+	})
 }
 
 // TestEmitTemplate_CrossPackageQualifier verifies that in cross-package mode
@@ -3349,6 +3530,344 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 	}
 
 	modContent := "module nested_map\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitNestedSlice verifies that the generated nested_slice delta source
+// compiles and satisfies five runtime contracts (N-04, E-15 set-diff semantics):
+//
+//  1. Add elements: Diff records new elements in AddedNames; Apply adds them.
+//  2. Remove elements: Diff records removed elements in RemovedNames; Apply removes them.
+//  3. Add and remove simultaneously: both AddedNames and RemovedNames are populated.
+//  4. Round-trip: Apply(a, Diff(a,b)) payload-equals b across simultaneous
+//     add/remove on both Names (string) and Tags (comparable struct).
+//  5. Atomic coexistence: Count-only change → SetCount non-nil, slice deltas nil.
+//
+// Covers: N-04, E-15
+func compileCheckEmitNestedSlice(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	// Inline the fixture source so the isolated module is self-contained.
+	srcCode := `package nested_slice
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+// Tag is the struct element type; all fields are scalar so Tag is comparable.
+type Tag struct {
+	Key string
+	Val string
+}
+
+// NestedSliceSnapshot carries two delta.nested slice fields and one atomic field.
+type NestedSliceSnapshot struct {
+	eddt.Header
+	Key   string   ` + "`eddt:\"entity.key\"`" + `
+	Names []string ` + "`eddt:\"delta.nested\"`" + `
+	Tags  []Tag    ` + "`eddt:\"delta.nested\"`" + `
+	Count int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_slice_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"time"
+
+	"nested_slice"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// hdr returns a minimal Header for test snapshots.
+func hdr(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// sortedStrings returns a sorted copy of ss for order-independent comparison.
+func sortedStrings(ss []string) []string {
+	out := make([]string, len(ss))
+	copy(out, ss)
+	sort.Strings(out)
+	return out
+}
+
+// TestSlice_AddElements: Diff records new elements in AddedNames; Apply adds them (N-04 req 1).
+func TestSlice_AddElements(t *testing.T) {
+	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x"}}
+	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x", "y"}}
+
+	d, err := nested_slice.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.AddedNames) != 1 || d.AddedNames[0] != "y" {
+		t.Errorf("AddedNames: got %v want [y]", d.AddedNames)
+	}
+	if len(d.RemovedNames) != 0 { t.Errorf("RemovedNames must be empty for add-only delta; got %v", d.RemovedNames) }
+
+	result, err := nested_slice.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if !reflect.DeepEqual(sortedStrings(result.Names), []string{"x", "y"}) {
+		t.Errorf("Apply: Names: got %v want [x y]", result.Names)
+	}
+}
+
+// TestSlice_RemoveElements: Diff records removed elements in RemovedNames; Apply removes them (N-04 req 2).
+func TestSlice_RemoveElements(t *testing.T) {
+	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x", "y"}}
+	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x"}}
+
+	d, err := nested_slice.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.RemovedNames) != 1 || d.RemovedNames[0] != "y" {
+		t.Errorf("RemovedNames: got %v want [y]", d.RemovedNames)
+	}
+	if len(d.AddedNames) != 0 { t.Errorf("AddedNames must be empty for remove-only delta; got %v", d.AddedNames) }
+
+	result, err := nested_slice.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if !reflect.DeepEqual(result.Names, []string{"x"}) {
+		t.Errorf("Apply: Names: got %v want [x]", result.Names)
+	}
+}
+
+// TestSlice_AddAndRemove: simultaneous add and remove populates both delta fields (N-04 req 3).
+func TestSlice_AddAndRemove(t *testing.T) {
+	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"keep", "drop"}}
+	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"keep", "new"}}
+
+	d, err := nested_slice.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.AddedNames) != 1 || d.AddedNames[0] != "new" {
+		t.Errorf("AddedNames: got %v want [new]", d.AddedNames)
+	}
+	if len(d.RemovedNames) != 1 || d.RemovedNames[0] != "drop" {
+		t.Errorf("RemovedNames: got %v want [drop]", d.RemovedNames)
+	}
+}
+
+// TestSlice_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove on both
+// Names (string) and Tags (comparable struct) (N-04 req 4).
+func TestSlice_RoundTrip(t *testing.T) {
+	a := nested_slice.NestedSliceSnapshot{
+		Header: hdr(1), Key: "k",
+		Names: []string{"keep", "drop"},
+		Tags:  []nested_slice.Tag{{Key: "env", Val: "prod"}, {Key: "region", Val: "eu"}},
+		Count: 5,
+	}
+	b := nested_slice.NestedSliceSnapshot{
+		Header: hdr(2), Key: "k",
+		Names: []string{"keep", "new"},
+		Tags:  []nested_slice.Tag{{Key: "env", Val: "prod"}, {Key: "tier", Val: "hot"}},
+		Count: 5,
+	}
+
+	d, err := nested_slice.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+
+	result, err := nested_slice.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+
+	// Names round-trip (order: survivors in source order, additions appended).
+	wantNames := []string{"keep", "new"}
+	if !reflect.DeepEqual(result.Names, wantNames) {
+		t.Errorf("Names round-trip failed: got %v want %v", result.Names, wantNames)
+	}
+	// Tags round-trip.
+	wantTags := []nested_slice.Tag{{Key: "env", Val: "prod"}, {Key: "tier", Val: "hot"}}
+	if !reflect.DeepEqual(result.Tags, wantTags) {
+		t.Errorf("Tags round-trip failed: got %v want %v", result.Tags, wantTags)
+	}
+}
+
+// TestSlice_AtomicCoexistence: Count-only change yields non-nil SetCount with nil slice deltas (N-04 req 5).
+func TestSlice_AtomicCoexistence(t *testing.T) {
+	names := []string{"x", "y"}
+	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: names, Count: 1}
+	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: names, Count: 2}
+
+	d, err := nested_slice.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if d.SetCount == nil { t.Error("SetCount must be non-nil when Count changed") }
+	if *d.SetCount != 2 { t.Errorf("SetCount: got %d want 2", *d.SetCount) }
+	if len(d.AddedNames) != 0 { t.Errorf("AddedNames must be nil when Names unchanged; got %v", d.AddedNames) }
+	if len(d.RemovedNames) != 0 { t.Errorf("RemovedNames must be empty when Names unchanged; got %v", d.RemovedNames) }
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_slice_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_slice_test.go: %v", err)
+	}
+
+	modContent := "module nested_slice\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+// compileCheckEmitNestedSliceReflect verifies that the generated nested_slice_reflect
+// delta source compiles and satisfies three runtime contracts for the non-comparable
+// element path (N-04, §5.2 reflect.DeepEqual fallback):
+//
+//  1. Add blob: Diff records new []byte in AddedBlobs; Apply adds it.
+//  2. Remove blob: Diff records removed []byte in RemovedBlobs; Apply removes it.
+//  3. Round-trip: Apply(a, Diff(a,b)) payload-equals b for simultaneous add/remove.
+//
+// Covers: N-04, §5.2 (non-comparable O(n²) path)
+func compileCheckEmitNestedSliceReflect(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package nested_slice_reflect
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+// NestedSliceReflectSnapshot carries a delta.nested [][]byte field.
+// []byte is not comparable, so generated code uses reflect.DeepEqual (§5.2).
+type NestedSliceReflectSnapshot struct {
+	eddt.Header
+	Key   string   ` + "`eddt:\"entity.key\"`" + `
+	Blobs [][]byte ` + "`eddt:\"delta.nested\"`" + `
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package nested_slice_reflect_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"nested_slice_reflect"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func blobHdr(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// TestReflect_AddBlob: Diff records new []byte in AddedBlobs; Apply adds it (N-04 §5.2 req 1).
+func TestReflect_AddBlob(t *testing.T) {
+	b1 := []byte{1, 2, 3}
+	b2 := []byte{4, 5, 6}
+	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{b1}}
+	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{b1, b2}}
+
+	d, err := nested_slice_reflect.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.AddedBlobs) != 1 || !reflect.DeepEqual(d.AddedBlobs[0], b2) {
+		t.Errorf("AddedBlobs: got %v want [%v]", d.AddedBlobs, b2)
+	}
+	if len(d.RemovedBlobs) != 0 { t.Errorf("RemovedBlobs must be empty; got %v", d.RemovedBlobs) }
+
+	result, err := nested_slice_reflect.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if !reflect.DeepEqual(result.Blobs, b.Blobs) {
+		t.Errorf("Apply result mismatch: got %v want %v", result.Blobs, b.Blobs)
+	}
+}
+
+// TestReflect_RemoveBlob: Diff records removed []byte in RemovedBlobs; Apply removes it (N-04 §5.2 req 2).
+func TestReflect_RemoveBlob(t *testing.T) {
+	b1 := []byte{1, 2, 3}
+	b2 := []byte{4, 5, 6}
+	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{b1, b2}}
+	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{b1}}
+
+	d, err := nested_slice_reflect.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+	if len(d.RemovedBlobs) != 1 || !reflect.DeepEqual(d.RemovedBlobs[0], b2) {
+		t.Errorf("RemovedBlobs: got %v want [%v]", d.RemovedBlobs, b2)
+	}
+	if len(d.AddedBlobs) != 0 { t.Errorf("AddedBlobs must be empty; got %v", d.AddedBlobs) }
+
+	result, err := nested_slice_reflect.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+	if !reflect.DeepEqual(result.Blobs, b.Blobs) {
+		t.Errorf("Apply result mismatch: got %v want %v", result.Blobs, b.Blobs)
+	}
+}
+
+// TestReflect_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove (N-04 §5.2 req 3).
+func TestReflect_RoundTrip(t *testing.T) {
+	keep := []byte{1}
+	drop := []byte{2}
+	add  := []byte{3}
+	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{keep, drop}}
+	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{keep, add}}
+
+	d, err := nested_slice_reflect.Diff(a, b)
+	if err != nil { t.Fatalf("Diff: %v", err) }
+
+	result, err := nested_slice_reflect.Apply(a, d)
+	if err != nil { t.Fatalf("Apply: %v", err) }
+
+	// Survivor order: keep is first (source order), add is appended (E-03).
+	want := [][]byte{keep, add}
+	if !reflect.DeepEqual(result.Blobs, want) {
+		t.Errorf("RoundTrip: got %v want %v", result.Blobs, want)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "nested_slice_reflect_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write nested_slice_reflect_test.go: %v", err)
+	}
+
+	modContent := "module nested_slice_reflect\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
