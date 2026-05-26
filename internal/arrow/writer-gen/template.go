@@ -117,7 +117,7 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 	} else {
 		{{$bldr}}.(*array.ListBuilder).Append(true)
 		{{$vn}}Bldr := {{$bldr}}.(*array.ListBuilder).ValueBuilder()
-		for _, {{$vn}} := range {{$var}} {
+		for _, {{$vn}} := range {{if $info.IsPointer}}*{{end}}{{$var}} {
 			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1)}}
 		}
 	}
@@ -136,7 +136,7 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 		{{$bldr}}.(*array.MapBuilder).Append(true)
 		{{$vn}}KeyBldr := {{$bldr}}.(*array.MapBuilder).KeyBuilder()
 		{{$vn}}ValBldr := {{$bldr}}.(*array.MapBuilder).ItemBuilder()
-		for {{$vn}}K, {{$vn}}V := range {{$var}} {
+		for {{$vn}}K, {{$vn}}V := range {{if $info.IsPointer}}*{{end}}{{$var}} {
 			{{$vn}}KeyBldr.({{$info.KeyInfo.ArrowBuilder}}).Append({{$info.KeyInfo.CastType}}({{$vn}}K))
 			{{- template "appendValue" dict "Info" $info.EltInfo "Var" (printf "%sV" $vn) "BldrExpr" (printf "%sValBldr" $vn) "Depth" (add $d 1)}}
 		}
@@ -181,6 +181,13 @@ func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
 	{{- else}}
 	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}.{{$info.ConvertMethod}}()))
 	{{- end}}
+{{- else if and $info.IsPointer $info.EltInfo (not $info.IsList) (not $info.IsMap) (not $info.IsStruct) (not $info.IsFixedSizeList)}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.EltInfo.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$vn}} := *{{$var}}
+		{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" $bldr "Depth" (add $d 1)}}
+	}
 {{- else}}
 	{{- if $info.IsPointer}}
 	if {{$var}} == nil {

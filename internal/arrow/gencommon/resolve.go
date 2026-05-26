@@ -121,6 +121,61 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 				return fieldInfoFromGenericInstantiation(name, typ, true, queue, processed)
 			}
 		}
+
+		// *[N]T: pointer to fixed-size array — unsupported; Arrow FixedSizeList has no
+		// outer nullable representation in the current builder API.
+		if arrayType, ok := t.X.(*ast.ArrayType); ok {
+			if arrayType.Len != nil {
+				return FieldInfo{}, fmt.Errorf("unsupported pointer type: pointer to fixed-size array")
+			}
+			// *[]byte → nullable Binary (consistent with non-pointer []byte → Binary).
+			if eltIdent, ok := arrayType.Elt.(*ast.Ident); ok && eltIdent.Name == "byte" {
+				return buildByteSliceFieldInfo(name, true), nil
+			}
+			// *[]T → nullable list.
+			eltInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", arrayType.Elt, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("slice element %w", err)
+			}
+			return buildSliceFieldInfo(name, eltInfo, true), nil
+		}
+
+		// *map[K]V → nullable map.
+		if mapType, ok := t.X.(*ast.MapType); ok {
+			keyInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", mapType.Key, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("map key %w", err)
+			}
+			if keyInfo.IsStruct {
+				return FieldInfo{}, fmt.Errorf("map key type must not be a struct")
+			}
+			valInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", mapType.Value, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("map value %w", err)
+			}
+			return buildMapFieldInfo(name, keyInfo, valInfo, true), nil
+		}
+
+		// **T → outer-nullable pointer wrapping an inner *T.
+		// The outer FieldInfo inherits all Arrow-encoding fields from the inner *T
+		// so the Arrow schema is identical to *T; only the Go accessor changes.
+		// Template discriminant: IsPointer=true AND EltInfo!=nil AND NOT IsList/IsMap.
+		// **struct requires dedicated struct-reader branches and is rejected here.
+		if innerStar, ok := t.X.(*ast.StarExpr); ok {
+			innerInfo, err := fieldInfoFromExpr(pkg, allPkgs, name, innerStar, queue, processed)
+			if err != nil {
+				return FieldInfo{}, fmt.Errorf("pointer-to-pointer inner type: %w", err)
+			}
+			if innerInfo.IsStruct {
+				return FieldInfo{}, fmt.Errorf("unsupported pointer type: pointer to pointer to struct")
+			}
+			innerCopy := innerInfo
+			fi := innerInfo
+			fi.GoType = "*" + innerInfo.GoType
+			fi.EltInfo = &innerCopy
+			return fi, nil
+		}
+
 		return FieldInfo{}, fmt.Errorf("unsupported pointer type")
 
 	case *ast.ArrayType:

@@ -34,7 +34,8 @@ Apache Arrow constructs:
 * **Binary Data**: `[]byte` is natively special-cased to an Arrow `Binary`
   column (instead of `ListOf(Uint8)`).
 * **Composites**: Native cross-package structs, pointers (nullable types),
-  slices (`ListOf`), maps (`MapOf`), and fixed-size arrays (`FixedSizeList`).
+  pointer-wrapped compounds (`*[]T`, `*map[K]V`, `**T`), slices (`ListOf`),
+  maps (`MapOf`), and fixed-size arrays (`FixedSizeList`).
 
 ### Structures and Arbitrary Nesting
 * **No Depth Limits**: Powered by a recursive template architecture, the
@@ -46,6 +47,8 @@ Apache Arrow constructs:
 * **Type Aliases**: Named slice, map, and array types (e.g., `type Tags
   []string` or `type MAC [6]byte`) are unwrapped to their underlying Arrow
   representation while preserving standard Go access semantics.
+* **Generic Instantiation**: Generic struct instantiations (e.g.,
+  `Pair[int32, string]`) are resolved to concrete schemas at generation time.
 
 ### Edge Cases and Known Types
 The generator has out-of-the-box native mappings for specialized standard

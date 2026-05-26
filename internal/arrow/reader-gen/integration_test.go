@@ -3301,6 +3301,302 @@ func TestCrossPackageRoundTrip(t *testing.T) {
 			tarball(t, "/tmp/arrow-reader-gen-cross-pkg.tar.gz", tmpDir)
 		}
 	})
+
+	t.Run("nullable-list", func(t *testing.T) {
+		goCode := `package dummy
+
+type NullableList struct {
+	ID   int32
+	Tags *[]string
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"NullableList"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestNullableListRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewNullableListArrowWriter(pool)
+	defer writer.Release()
+
+	tags2 := []string{"a", "b"}
+	r1 := NullableList{ID: 1, Tags: nil}
+	r2 := NullableList{ID: 2, Tags: &tags2}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewNullableListArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewNullableListArrowReader: %v", err)
+	}
+
+	var got NullableList
+
+	// Row 1: nil outer pointer -> Arrow null -> nil on read-back.
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: want 1, got %d", got.ID)
+	}
+	if got.Tags != nil {
+		t.Errorf("row0 Tags: want nil, got %v", got.Tags)
+	}
+
+	// Row 2: non-nil outer pointer with ["a","b"].
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: want 2, got %d", got.ID)
+	}
+	if got.Tags == nil || *got.Tags == nil || len(*got.Tags) != 2 {
+		t.Fatalf("row1 Tags: want 2 elements, got %v", got.Tags)
+	}
+	if (*got.Tags)[0] != "a" || (*got.Tags)[1] != "b" {
+		t.Errorf("row1 Tags: want [a b], got %v", *got.Tags)
+	}
+
+	// R6 reuse: second LoadRow must reuse the outer pointer allocation.
+	ptr1 := got.Tags
+	reader.LoadRow(1, &got)
+	if got.Tags != ptr1 {
+		t.Errorf("R6: Tags pointer changed after second LoadRow — allocation not reused")
+	}
+	if len(*got.Tags) != 2 || (*got.Tags)[0] != "a" {
+		t.Errorf("R6: Tags content wrong after second LoadRow: %v", *got.Tags)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestNullableListRoundTrip")
+	})
+
+	t.Run("nullable-map", func(t *testing.T) {
+		goCode := `package dummy
+
+type NullableMap struct {
+	ID     int32
+	Scores *map[string]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"NullableMap"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestNullableMapRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewNullableMapArrowWriter(pool)
+	defer writer.Release()
+
+	scores2 := map[string]int32{"x": 10}
+	r1 := NullableMap{ID: 1, Scores: nil}
+	r2 := NullableMap{ID: 2, Scores: &scores2}
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewNullableMapArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewNullableMapArrowReader: %v", err)
+	}
+
+	var got NullableMap
+
+	// Row 1: nil outer pointer -> Arrow null -> nil on read-back.
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: want 1, got %d", got.ID)
+	}
+	if got.Scores != nil {
+		t.Errorf("row0 Scores: want nil, got %v", got.Scores)
+	}
+
+	// Row 2: non-nil outer pointer with {"x":10}.
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: want 2, got %d", got.ID)
+	}
+	if got.Scores == nil || *got.Scores == nil || len(*got.Scores) != 1 {
+		t.Fatalf("row1 Scores: want 1 entry, got %v", got.Scores)
+	}
+	if (*got.Scores)["x"] != 10 {
+		t.Errorf("row1 Scores[x]: want 10, got %d", (*got.Scores)["x"])
+	}
+
+	// R6 reuse: second LoadRow must reuse the outer pointer allocation.
+	ptr1 := got.Scores
+	reader.LoadRow(1, &got)
+	if got.Scores != ptr1 {
+		t.Errorf("R6: Scores pointer changed after second LoadRow — allocation not reused")
+	}
+	if len(*got.Scores) != 1 || (*got.Scores)["x"] != 10 {
+		t.Errorf("R6: Scores content wrong after second LoadRow: %v", *got.Scores)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestNullableMapRoundTrip")
+	})
+
+	t.Run("double-pointer", func(t *testing.T) {
+		goCode := `package dummy
+
+type DoublePointer struct {
+	ID       int32
+	Priority **int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"DoublePointer"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestDoublePointerRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewDoublePointerArrowWriter(pool)
+	defer writer.Release()
+
+	val := int32(42)
+	pVal := &val
+	var nilInner *int32
+
+	r1 := DoublePointer{ID: 1, Priority: nil}         // outer nil -> Arrow null
+	r2 := DoublePointer{ID: 2, Priority: &pVal}        // both non-nil -> 42
+	r3 := DoublePointer{ID: 3, Priority: &nilInner}    // inner nil -> Arrow null
+
+	writer.Append(&r1)
+	writer.Append(&r2)
+	writer.Append(&r3)
+
+	rec := writer.NewRecord()
+	defer rec.Release()
+
+	reader, err := NewDoublePointerArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewDoublePointerArrowReader: %v", err)
+	}
+
+	var got DoublePointer
+
+	// Row 1: outer nil -> nil on read-back.
+	reader.LoadRow(0, &got)
+	if got.ID != 1 {
+		t.Errorf("row0 ID: want 1, got %d", got.ID)
+	}
+	if got.Priority != nil {
+		t.Errorf("row0 Priority: want nil, got non-nil")
+	}
+
+	// Row 2: both non-nil -> **42 on read-back.
+	reader.LoadRow(1, &got)
+	if got.ID != 2 {
+		t.Errorf("row1 ID: want 2, got %d", got.ID)
+	}
+	if got.Priority == nil || *got.Priority == nil || **got.Priority != 42 {
+		t.Errorf("row1 Priority: want **42, got %v", got.Priority)
+	}
+
+	// R6 reuse: second LoadRow must reuse outer and inner pointer allocations.
+	outerPtr := got.Priority
+	innerPtr := *got.Priority
+	reader.LoadRow(1, &got)
+	if got.Priority != outerPtr {
+		t.Errorf("R6: outer Priority pointer changed — allocation not reused")
+	}
+	if *got.Priority != innerPtr {
+		t.Errorf("R6: inner Priority pointer changed — allocation not reused")
+	}
+	if **got.Priority != 42 {
+		t.Errorf("R6: Priority value wrong after second LoadRow: %d", **got.Priority)
+	}
+
+	// Row 3: inner nil collapses to Arrow null -> nil outer on read-back.
+	reader.LoadRow(2, &got)
+	if got.ID != 3 {
+		t.Errorf("row2 ID: want 3, got %d", got.ID)
+	}
+	if got.Priority != nil {
+		t.Errorf("row2 Priority: inner nil -> Arrow null -> nil outer, got non-nil")
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestDoublePointerRoundTrip")
+	})
+
+	t.Run("skipped-pointer-to-fixed-array", func(t *testing.T) {
+		goCode := `package dummy
+
+type WithFixedArrayPtr struct {
+	ID    int32
+	Field *[4]int32
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"WithFixedArrayPtr"})
+
+		// Unsupported *[4]int32 field is detected, warned, and skipped — generated
+		// reader covers only ID. Verify no Field reference and that code compiles.
+		outBytes, err := os.ReadFile(filepath.Join(tmpDir, "dummy_arrow_reader.go"))
+		if err != nil {
+			t.Fatalf("read generated reader: %v", err)
+		}
+		if strings.Contains(string(outBytes), `"Field"`) {
+			t.Errorf("generated reader must not reference the skipped *[4]int32 Field")
+		}
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+		runCmd(t, tmpDir, "go", "build", ".")
+	})
+
+	t.Run("skipped-double-pointer-to-struct", func(t *testing.T) {
+		goCode := `package dummy
+
+type Inner struct {
+	Value int32
+}
+
+type WithDoubleStructPtr struct {
+	ID    int32
+	Field **Inner
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"WithDoubleStructPtr"})
+
+		// Unsupported **struct field is detected, warned, and skipped — generated
+		// reader covers only ID. Verify no Field reference and that code compiles.
+		outBytes, err := os.ReadFile(filepath.Join(tmpDir, "dummy_arrow_reader.go"))
+		if err != nil {
+			t.Fatalf("read generated reader: %v", err)
+		}
+		if strings.Contains(string(outBytes), `"Field"`) {
+			t.Errorf("generated reader must not reference the skipped **struct Field")
+		}
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+		runCmd(t, tmpDir, "go", "build", ".")
+	})
 }
 
 // TestGenericClearableField verifies that arrow-reader-gen correctly handles
