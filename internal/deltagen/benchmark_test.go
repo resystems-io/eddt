@@ -15,7 +15,9 @@ package deltagen
 //	TestBenchmark_Composite  — BenchmarkApply / BenchmarkDiff / BenchmarkCoalesce
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -128,7 +130,22 @@ func benchmarkCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte
 		t.Fatalf("write go.sum: %v", err)
 	}
 
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-bench=.", "-benchtime=1s", "-run=^$", "./...")
+	runBenchCmd(t, tmpDir, "go", "test", "-mod=mod", "-bench=.", "-benchtime=1s", "-run=^$", "./...")
+}
+
+// runBenchCmd runs a command in dir, fatals on error, and logs the full output
+// via t.Log so that go test -v surfaces benchmark results inline.
+func runBenchCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = dir
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("command %q failed: %v\nOutput:\n%s", strings.Join(args, " "), err, outBuf.String())
+	}
+	t.Log("\n" + outBuf.String())
 }
 
 // baselineBenchmarkTest is the inner benchmark for the baseline corpus case.
