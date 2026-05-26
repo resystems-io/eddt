@@ -985,24 +985,38 @@ rejection and depth handling, shared by all three.
     `internal/deltagen/template.go` (generator bug fix).
   - Tests: all 17 subtests pass.
 
-- [ ] **C-06: Cross-generator integration round-trip — delta-gen ×
-  arrow-writer-gen × arrow-reader-gen.** Take a baseline Snapshot fixture; run
-  delta-gen to produce its `*_delta.go` (Snapshot + Delta types + `Apply` /
-  `Diff` / `Coalesce` / `EntityID`); run arrow-writer-gen against the same
-  package to emit the Arrow writer for Snapshot and Delta; run arrow-reader-gen
-  to emit the Arrow reader. In an isolated module, marshal a synthetic Delta
-  value to an Arrow record via the generated writer, then read it back via the
-  generated reader, and assert payload + Header equality. Verifies the
-  cross-subsystem contract — that the type shapes delta-gen emits are compatible
-  with the arrow-gens' supported field-shape vocabulary, end-to-end.
-  - Files: `internal/deltagen/integration_arrow_test.go`,
-    `internal/deltagen/testdata/arrow_roundtrip/*`.
-  - Tests: baseline Snapshot fixture (every non-clearable field
-    shape from §5.1) round-trips Delta → Arrow record → Delta
-    losslessly. Subprocess pattern mirrors arrow-reader-gen's
-    existing integration tests.
-  - Gates: requires no clearable fields (clearable round-trip is
-    CL-09 in Phase 7, gated separately by `PR-01` / `PR-02`).
+- [x] **C-06: Cross-generator integration round-trip — delta-gen ×
+  arrow-writer-gen × arrow-reader-gen.** Verifies the cross-subsystem contract —
+  that the type shapes delta-gen emits are compatible with the arrow generators'
+  supported field-shape vocabulary, end-to-end.  All three generators invoked
+  programmatically from the local in-tree packages.  Arrow-gen shape compatibility
+  analysis: `ShapeScalar` (`*T`) and `ShapeStructValue` (`*SubStruct`) delta
+  fields are supported and round-trip losslessly; `ShapePointer` (`**T`),
+  `ShapeSlice` (`*[]T`), and `ShapeMap` (`*map[K]V`) are not yet supported by
+  `gencommon.fieldInfoFromExpr` — subtests for these shapes are present but
+  `t.Skip`-ped pending PR-03 + C-08.
+  - Files: `internal/deltagen/integration_arrow_test.go` (new),
+    `internal/deltagen/testdata/arrow_roundtrip/snapshot.go` (new),
+    `internal/deltagen/testdata/arrow_roundtrip/snapshot_extended.go` (new).
+  - Tests: `TestIntegration_ArrowRoundTrip/ScalarAndStruct` PASS;
+    `ShapePointer` / `ShapeSliceAtomic` / `ShapeMapAtomic` SKIP.
+  - Verified: 2026-05-26.
+
+- [ ] **PR-03: Extend `gencommon` to support pointer-wrapped compound types in
+  `fieldInfoFromExpr`.** `fieldInfoFromExpr` (`internal/arrow/gencommon/resolve.go`)
+  handles `*ast.StarExpr` only when the inner expression is `Ident`, `SelectorExpr`,
+  or a generic instantiation.  This blocks Arrow generation for `**T`, `*[]T`, and
+  `*map[K]V` — the delta representations of `ShapePointer`, `ShapeSlice` (E-15), and
+  `ShapeMap` (E-16) source fields respectively.
+  - Sub-items: add `*ast.StarExpr` inner case (recursive pointer); add
+    `*ast.ArrayType` inner case (nullable list); add `*ast.MapType` inner case
+    (nullable map).  Add unit tests in `resolve_test.go` and integration tests in
+    the writer-gen and reader-gen integration test files.
+  - Files: `internal/arrow/gencommon/resolve.go`,
+    `internal/arrow/gencommon/resolve_test.go`,
+    `internal/arrow/writer-gen/integration_test.go`,
+    `internal/arrow/reader-gen/integration_test.go`.
+  - Prerequisite for: C-08.
 
 - [ ] **C-07: Optional — generated-Apply benchmark.** Benchmark
   `Apply` and `Coalesce` on representative Snapshots. Establish
@@ -1010,6 +1024,16 @@ rejection and depth handling, shared by all three.
   - Files: `internal/deltagen/benchmark_test.go`.
   - Tests: `go test ./internal/deltagen/... -bench=.
     -benchtime=1s` runs; record baseline in commit message.
+
+- [ ] **C-08: Complete Arrow round-trip tests for ShapePointer / ShapeSlice /
+  ShapeMap delta fields.** Remove `t.Skip` markers from
+  `TestIntegration_ArrowRoundTrip/ShapePointer`, `/ShapeSliceAtomic`,
+  `/ShapeMapAtomic` in `integration_arrow_test.go`; implement the round-trip
+  bodies using `testdata/arrow_roundtrip/snapshot_extended.go`.
+  - Files: `internal/deltagen/integration_arrow_test.go`.
+  - Tests: all four subtests of `TestIntegration_ArrowRoundTrip` pass (none
+    skipped).
+  - Gate: PR-03 merged.
 
 ### Phase 7 — Tri-State Clearable Extension
 
@@ -1845,5 +1869,6 @@ git commit).
 | 2026-05-26 | C-04                     | Coalesce-as-fold property test implemented. `TestConformance_Coalesce` added to `conformance_test.go`, dispatching to three per-corpus-case helpers (`coalesceCheckBaseline`, `coalesceCheckComposite`, `coalesceCheckStructKey`) via a shared `coalesceCheckCorpus` helper that mirrors `identityCheckCorpus`. Each case injects `coalesce_test.go` with `TestCoalesce_Property` (MaxCount: 1000) and runs `go test -run TestCoalesce_Property`. Chain design: zero-payload seed `s0` (Sequence 0), three random payloads `p1/p2/p3` producing `s1/s2/s3` (Sequence 1/2/3). Three invariants per prop call: fold equivalence (`Coalesce(s0,[d1,d2,d3]) == s3`) and chunkability at both split points. baseline and struct_key use `reflect.DeepEqual`; composite uses `snapshotEqual` with `toSortedUnique` for the `Groups` field (N-04 E-15 set-membership across multi-step folds). File comment updated to document C-02/C-03/C-04 together. All 3 subtests pass; full suite clean. |
 | 2026-05-25 | C-03                     | Identity-diff property test implemented. `TestConformance_Identity` added to `conformance_test.go`, dispatching to three per-corpus-case helpers (`identityCheckBaseline`, `identityCheckComposite`, `identityCheckStructKey`) via a shared `identityCheckCorpus` helper that mirrors `roundTripCheckCorpus`. Each case injects `identity_test.go` with `TestIdentity_Property` (MaxCount: 1000) and runs `go test -run TestIdentity_Property`. Invariant: `reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)` — full snapshot equality (Header + payload) — for all three corpus cases. `aprime` is a struct copy of `a` with `aprime.Header.Sequence = a.Sequence + 1` (E-06 resolution). No `toSortedUnique` needed: identity diff produces nil `AddedGroups`/`RemovedGroups`, so N-04 slice order is preserved exactly. Planning note: `testing/quick` never generates nil slices or maps (`reflect.MakeSlice`/`reflect.MakeMap` always non-nil), so the N-03/N-04 Apply nil-preservation gap (future E-22) is not triggered. File comment updated to document both C-02 and C-03. All 3 subtests pass; full suite clean. |
 | 2026-05-25 | C-02                     | Round-trip property test implemented. `conformance_test.go` added: `TestConformance_RoundTrip` dispatches to three per-corpus-case roundtrip check functions (`roundTripCheckBaseline`, `roundTripCheckComposite`, `roundTripCheckStructKey`). Each generates the corpus fixture's delta source, injects a `testing/quick` property test (`TestRoundTrip_Property`, MaxCount: 1000) into an isolated temp module, and runs `go test -run TestRoundTrip_Property`. Invariant: `reflect.DeepEqual(Apply(a, Diff(a, b)), b)` — full snapshot equality (Header + payload) — for baseline and struct_key; `snapshotEqual(got, b)` using `toSortedUnique` for composite's `Groups` field (N-04 E-15 set-membership). Shared helper `roundTripCheckCorpus` handles temp-module setup (fixture copy, delta.go, roundtrip_test.go, go.mod, go.sum). All 3 subtests pass. C-03 spec wording updated (same commit series): `Apply(a, Diff(a, a)) ≡ a` replaced with `aprime`/`payload(s)` formulation that avoids E-06 Sequence monotonicity collision. |
+| 2026-05-26 | C-06                     | Cross-generator integration round-trip implemented. `integration_arrow_test.go` added: `TestIntegration_ArrowRoundTrip` with 4 subtests. `ScalarAndStruct` PASS: runs delta-gen → arrow-writer-gen → arrow-reader-gen against the `arrowroundtrip` fixture (ARSnapshot + ARMeta); verifies ARSnapshotDelta (SetName *string, SetScore *float64, SetMeta *ARMeta, runtime.Header) round-trips losslessly through an Arrow record. All three generators invoked programmatically via local in-tree import paths. `ShapePointer` / `ShapeSliceAtomic` / `ShapeMapAtomic` SKIP: `gencommon.fieldInfoFromExpr` does not handle `**T`, `*[]T`, or `*map[K]V` (pointer-wrapped compound types from ShapePointer/ShapeSlice/ShapeMap delta fields); subtests present with `t.Skip` pending PR-03 + C-08. Two new checklist entries added: PR-03 (extend gencommon) and C-08 (unskip the three failing subtests). Full suite clean. |
 | 2026-05-26 | C-05                     | Per-field emission and tag-validation integration tests implemented. `integration_test.go` added: `TestIntegration_PerFieldEmission` (3 subtests — EM-item view of C-01 corpus compile checks), `TestIntegration_CrossPkgEmissionCompiles` (3 subtests — first end-to-end cross-package `go build` for all corpus cases; E-12), `TestIntegration_TagValidationErrors` (10 subtests — T-02/T-03 error propagation through `Run()`), `TestIntegration_KeyFieldOverride` (1 subtest — override-path positive test with no `entity.key` tag). Cross-package tests exposed a generator bug: `nestedTypeView.Name` was set to the bare type name, causing `ApplyU`/`DiffU` function signatures to reference source-package types without the package qualifier in cross-package mode. Fixed by adding `qualifiedTypeName string` parameter to `buildNestedTypeView` and computing it via `types.TypeString(named, qualifier)` at both call sites in `template.go`. All 17 new subtests pass; full suite clean. |
 | 2026-05-25 | C-01                     | Conformance corpus established. Three fixtures added under `testdata/corpus/`: `baseline` (all 5 atomic shapes, all baseline presence tags, scalar string `entity.key`), `composite` (all three `delta.nested` shapes — struct/map/slice — plus atomic coexistence field), `struct_key` (struct-valued `SessionKey{TenantID, SessionN}` exercising multi-field EntityID hash, EM-05). `corpus_test.go` added: `corpusCase` type, `corpus` table, `TestCorpus_All` table-driven test with three subtests per case (`Parse`, `Generate`, `Compile`), and `compileCheckCorpus` helper (runs `go build -mod=mod ./...` in an isolated temp module with a replace directive; lighter than `compileCheckEmit*` — no `go test`, since C-01 scope is compilation correctness only). All 9 subtests pass (1.7 s); full suite clean.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

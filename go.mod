@@ -10,6 +10,7 @@ require (
 	github.com/nats-io/nats.go v1.44.0
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.9.1
+	golang.org/x/crypto v0.49.0
 	golang.org/x/tools v0.43.0
 	gonum.org/v1/gonum v0.17.0
 )
@@ -31,7 +32,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
