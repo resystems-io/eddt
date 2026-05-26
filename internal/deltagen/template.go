@@ -791,6 +791,7 @@ func buildImports(
 // Returns (view, additional companion views from deeper nesting, error).
 func buildNestedTypeView(
 	typeName string,
+	qualifiedTypeName string,
 	st *types.Struct,
 	qualifier types.Qualifier,
 	emitMethod bool,
@@ -798,7 +799,7 @@ func buildNestedTypeView(
 	inPath map[string]bool,
 ) (nestedTypeView, []nestedTypeView, error) {
 	nv := nestedTypeView{
-		Name:          typeName,
+		Name:          qualifiedTypeName, // qualified in cross-package mode (E-12)
 		DeltaName:     typeName + "Delta",
 		ApplyFuncName: "Apply" + typeName,
 		DiffFuncName:  "Diff" + typeName,
@@ -883,6 +884,7 @@ func buildNestedTypeView(
 					typeName, field.Name())
 			}
 			subTypeName := named.Obj().Name()
+			qualifiedSubTypeName := types.TypeString(named, qualifier)
 			nestedFuncName, nestedDiffFuncName := "", ""
 			if !emitMethod {
 				nestedFuncName = "Apply" + subTypeName
@@ -907,7 +909,7 @@ func buildNestedTypeView(
 				visited[subTypeName] = true
 				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSubTypeName, subSt, qualifier, emitMethod, visited, inPath)
 				delete(inPath, subTypeName)
 				if err != nil {
 					return nestedTypeView{}, nil, err
@@ -1050,6 +1052,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 					ps.Name, f.Name)
 			}
 			subTypeName := named.Obj().Name()
+			qualifiedSubTypeName := types.TypeString(named, qualifier)
 			nestedFuncName, nestedDiffFuncName := "", ""
 			if !emitMethod {
 				nestedFuncName = "Apply" + subTypeName
@@ -1075,7 +1078,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 				visited[subTypeName] = true
 				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSubTypeName, subSt, qualifier, emitMethod, visited, inPath)
 				delete(inPath, subTypeName)
 				if err != nil {
 					return snapshotView{}, fmt.Errorf("field %s.%s: %w", ps.Name, f.Name, err)
