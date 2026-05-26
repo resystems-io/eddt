@@ -1,6 +1,6 @@
 package deltagen
 
-// conformance_test.go implements C-02 and C-03 corpus conformance property tests.
+// conformance_test.go implements C-02, C-03, and C-04 corpus conformance property tests.
 //
 // C-02 (TestConformance_RoundTrip): For each corpus case, generates the delta
 // source and injects a testing/quick round-trip property test:
@@ -24,6 +24,16 @@ package deltagen
 // toSortedUnique required (identity diff produces zero additions/removals, so
 // N-04 slice order is preserved exactly).
 //
+// C-04 (TestConformance_Coalesce): For each corpus case, generates the delta
+// source and injects a testing/quick coalesce-as-fold property test:
+//
+//	Coalesce(s0, [d1,d2,d3]) == s3
+//
+// where s0 is a zero-payload seed and s1/s2/s3 are built from random payloads
+// p1/p2/p3.  Both chunkability split points are verified in the same prop
+// function.  baseline and struct_key use reflect.DeepEqual; composite uses
+// snapshotEqual with toSortedUnique for Groups (N-04 E-15 set-membership).
+//
 // Test matrix:
 //
 //	TestConformance_RoundTrip/BaselineSnapshot  (C-02)
@@ -32,6 +42,9 @@ package deltagen
 //	TestConformance_Identity/BaselineSnapshot   (C-03)
 //	TestConformance_Identity/CompositeSnapshot  (C-03)
 //	TestConformance_Identity/SessionSnapshot    (C-03)
+//	TestConformance_Coalesce/BaselineSnapshot   (C-04)
+//	TestConformance_Coalesce/CompositeSnapshot  (C-04)
+//	TestConformance_Coalesce/SessionSnapshot    (C-04)
 
 import (
 	"os"
@@ -745,6 +758,479 @@ func TestIdentity_Property(t *testing.T) {
 }
 `
 
-// compositeRoundTripTest is the injected round-trip property test for the composite
-// corpus case.  It asserts snapshotEqual(Apply(a, Diff(a, b)), b) — full equality
-// except Groups (N-04 E-15 set-membership) — for 1000 random compositePayload pairs.
+// ── C-04: coalesce-as-fold property tests ────────────────────────────────────
+
+// TestConformance_Coalesce is the C-04 property test.
+//
+// For each corpus case it generates the delta source, injects a
+// testing/quick coalesce-as-fold property test into an isolated temp module,
+// and runs go test -run TestCoalesce_Property.  Three invariants are tested:
+//
+//	Coalesce(s0, [d1,d2,d3]) == s3                              (fold equivalence)
+//	Coalesce(Coalesce(s0,[d1]), [d2,d3]) == s3                  (chunkability split 1)
+//	Coalesce(Coalesce(s0,[d1,d2]), [d3]) == s3                  (chunkability split 2)
+//
+// s0 is a fixed zero-payload seed; s1/s2/s3 are built from random payloads
+// p1/p2/p3.  All three assertions are verified in the same prop function for
+// 1000 random (p1,p2,p3) triples per corpus case.
+func TestConformance_Coalesce(t *testing.T) {
+	dispatchers := map[string]func(*testing.T, []byte){
+		"baseline":   coalesceCheckBaseline,
+		"composite":  coalesceCheckComposite,
+		"struct_key": coalesceCheckStructKey,
+	}
+	for _, tc := range corpus {
+		t.Run(tc.name, func(t *testing.T) {
+			check := dispatchers[tc.dir]
+			outPath := filepath.Join(t.TempDir(), "delta.go")
+			cfg := Config{
+				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
+				TargetStructs: []string{tc.name},
+				OutPath:       outPath,
+			}
+			if err := New(cfg).Run(); err != nil {
+				t.Fatalf("Run(): %v", err)
+			}
+			src, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read generated file: %v", err)
+			}
+			check(t, src)
+		})
+	}
+}
+
+// coalesceCheckBaseline runs the C-04 property test for the baseline corpus case.
+//
+// Injected invariant: reflect.DeepEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
+// chunkability at both split points — for 1000 random (p1,p2,p3) triples.
+func coalesceCheckBaseline(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	coalesceCheckCorpus(t, "baseline", "baseline", generatedSrc, baselineCoalesceTest)
+}
+
+// coalesceCheckComposite runs the C-04 property test for the composite corpus case.
+//
+// Injected invariant: snapshotEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
+// chunkability at both split points — set-membership for Groups (N-04 E-15).
+func coalesceCheckComposite(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	coalesceCheckCorpus(t, "composite", "composite", generatedSrc, compositeCoalesceTest)
+}
+
+// coalesceCheckStructKey runs the C-04 property test for the struct_key corpus case.
+//
+// Injected invariant: reflect.DeepEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
+// chunkability at both split points — for 1000 random (p1,p2,p3) triples.
+func coalesceCheckStructKey(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	coalesceCheckCorpus(t, "struct_key", "struct_key", generatedSrc, structKeyCoalesceTest)
+}
+
+// coalesceCheckCorpus writes the corpus fixture, the generated delta source,
+// and an injected testing/quick coalesce property test into an isolated temp
+// module and runs go test -run TestCoalesce_Property.
+//
+// Steps mirror identityCheckCorpus exactly; only the injected test filename
+// and -run pattern differ.
+func coalesceCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	// Two levels up: internal/deltagen → internal → module root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	// Copy the fixture source file as snapshot.go in the temp module.
+	fixtureDir := filepath.Join("testdata", "corpus", dir)
+	entries, err := os.ReadDir(fixtureDir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", fixtureDir, err)
+	}
+	wroteFixture := false
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
+			if err != nil {
+				t.Fatalf("read fixture %s: %v", e.Name(), err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
+				t.Fatalf("write snapshot.go: %v", err)
+			}
+			wroteFixture = true
+			break
+		}
+	}
+	if !wroteFixture {
+		t.Fatalf("no .go file found in %s", fixtureDir)
+	}
+
+	// Write the generated delta source and assert it is gofmt-clean.
+	deltaPath := filepath.Join(tmpDir, "delta.go")
+	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, deltaPath)
+
+	// Write the coalesce property test source.
+	if err := os.WriteFile(filepath.Join(tmpDir, "coalesce_test.go"), []byte(testSrc), 0644); err != nil {
+		t.Fatalf("write coalesce_test.go: %v", err)
+	}
+
+	// Write go.mod with a replace directive pointing at the local module root.
+	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	// Copy go.sum so transitive dependencies resolve locally.
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestCoalesce_Property", "./...")
+}
+
+// baselineCoalesceTest is the injected coalesce property test for the baseline
+// corpus case.  It asserts fold equivalence and chunkability at both split points
+// for 1000 random (p1, p2, p3) triples.
+//
+// Suppressed fields (Hidden delta.omit, Legacy delta.retired) are excluded from
+// the payload struct and left at zero in every snapshot so reflect.DeepEqual
+// holds unconditionally.
+const baselineCoalesceTest = `package baseline_test
+
+import (
+	"reflect"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"baseline"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// baselinePayload carries only delta-carrying fields of BaselineSnapshot.
+// Hidden (delta.omit) and Legacy (delta.retired) are excluded and left at zero
+// in every snapshot so reflect.DeepEqual(result, s3) holds unconditionally.
+type baselinePayload struct {
+	Name     string
+	Priority *int32
+	Meta     baseline.MetaInfo
+	Tags     []string
+	Attrs    map[string]string
+	Score    int32
+}
+
+// snap constructs a sequential snapshot from a payload and sequence number.
+func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p baselinePayload) baseline.BaselineSnapshot {
+	return baseline.BaselineSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: seq, EffectiveAt: now},
+		Key: "k", Name: p.Name, Priority: p.Priority,
+		Meta: p.Meta, Tags: p.Tags, Attrs: p.Attrs,
+		Score: p.Score,
+	}
+}
+
+// TestCoalesce_Property asserts the coalesce-as-fold invariant and chunkability
+// across a 3-step chain for 1000 random (p1, p2, p3) triples.
+//
+// Chain: s0 (zero-payload seed) →d1→ s1 →d2→ s2 →d3→ s3
+//
+// Fold equivalence:   Coalesce(s0, [d1,d2,d3]) == s3
+// Chunkability (1/2): Coalesce(Coalesce(s0,[d1]), [d2,d3]) == s3
+// Chunkability (2/2): Coalesce(Coalesce(s0,[d1,d2]), [d3]) == s3
+func TestCoalesce_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	now := time.Now()
+
+	s0 := baseline.BaselineSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 0, EffectiveAt: now},
+		Key: "k",
+	}
+
+	prop := func(p1, p2, p3 baselinePayload) bool {
+		s1 := snap(fixedID, 1, now, p1)
+		s2 := snap(fixedID, 2, now, p2)
+		s3 := snap(fixedID, 3, now, p3)
+
+		d1, err := baseline.Diff(s0, s1)
+		if err != nil {
+			return false
+		}
+		d2, err := baseline.Diff(s1, s2)
+		if err != nil {
+			return false
+		}
+		d3, err := baseline.Diff(s2, s3)
+		if err != nil {
+			return false
+		}
+
+		// Fold equivalence.
+		full, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1, d2, d3})
+		if err != nil || !reflect.DeepEqual(full, s3) {
+			return false
+		}
+
+		// Chunkability at split point 1.
+		mid1, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1})
+		if err != nil {
+			return false
+		}
+		chunk1, err := baseline.Coalesce(mid1, []baseline.BaselineSnapshotDelta{d2, d3})
+		if err != nil || !reflect.DeepEqual(chunk1, s3) {
+			return false
+		}
+
+		// Chunkability at split point 2.
+		mid2, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1, d2})
+		if err != nil {
+			return false
+		}
+		chunk2, err := baseline.Coalesce(mid2, []baseline.BaselineSnapshotDelta{d3})
+		if err != nil {
+			return false
+		}
+		return reflect.DeepEqual(chunk2, s3)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("coalesce property failed: %v", err)
+	}
+}
+`
+
+// compositeCoalesceTest is the injected coalesce property test for the composite
+// corpus case.  It asserts fold equivalence and chunkability at both split points
+// for 1000 random (p1, p2, p3) triples.
+//
+// Groups uses snapshotEqual with toSortedUnique (N-04 E-15 set-membership):
+// multi-step set-diffs preserve the group SET but not ORDER.
+const compositeCoalesceTest = `package composite_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// compositePayload carries the delta-carrying fields of CompositeSnapshot.
+// The entity key (Key) is fixed to "k" in all snapshots.
+type compositePayload struct {
+	Details composite.ContactDetails
+	Labels  map[string]string
+	Groups  []string
+	Rank    int32
+}
+
+// snap constructs a sequential snapshot from a payload and sequence number.
+func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p compositePayload) composite.CompositeSnapshot {
+	return composite.CompositeSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: seq, EffectiveAt: now},
+		Key: "k", Details: p.Details, Labels: p.Labels,
+		Groups: p.Groups, Rank: p.Rank,
+	}
+}
+
+// toSortedUnique returns a sorted, deduplicated copy of ss.
+// N-04 set-diff semantics: Apply preserves the group SET but not ORDER.
+func toSortedUnique(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// snapshotEqual reports whether got and want satisfy the correct invariant:
+// full equality for Header, Key, Details, Labels, Rank; set-membership for Groups.
+func snapshotEqual(got, want composite.CompositeSnapshot) bool {
+	return reflect.DeepEqual(got.Header, want.Header) &&
+		got.Key == want.Key &&
+		got.Details == want.Details &&
+		reflect.DeepEqual(got.Labels, want.Labels) &&
+		reflect.DeepEqual(toSortedUnique(got.Groups), toSortedUnique(want.Groups)) &&
+		got.Rank == want.Rank
+}
+
+// TestCoalesce_Property asserts fold equivalence and chunkability for 1000
+// random (p1, p2, p3) triples.  Groups uses set-membership equality (N-04 E-15).
+func TestCoalesce_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	now := time.Now()
+
+	s0 := composite.CompositeSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 0, EffectiveAt: now},
+		Key: "k",
+	}
+
+	prop := func(p1, p2, p3 compositePayload) bool {
+		s1 := snap(fixedID, 1, now, p1)
+		s2 := snap(fixedID, 2, now, p2)
+		s3 := snap(fixedID, 3, now, p3)
+
+		d1, err := composite.Diff(s0, s1)
+		if err != nil {
+			return false
+		}
+		d2, err := composite.Diff(s1, s2)
+		if err != nil {
+			return false
+		}
+		d3, err := composite.Diff(s2, s3)
+		if err != nil {
+			return false
+		}
+
+		// Fold equivalence.
+		full, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1, d2, d3})
+		if err != nil || !snapshotEqual(full, s3) {
+			return false
+		}
+
+		// Chunkability at split point 1.
+		mid1, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1})
+		if err != nil {
+			return false
+		}
+		chunk1, err := composite.Coalesce(mid1, []composite.CompositeSnapshotDelta{d2, d3})
+		if err != nil || !snapshotEqual(chunk1, s3) {
+			return false
+		}
+
+		// Chunkability at split point 2.
+		mid2, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1, d2})
+		if err != nil {
+			return false
+		}
+		chunk2, err := composite.Coalesce(mid2, []composite.CompositeSnapshotDelta{d3})
+		if err != nil {
+			return false
+		}
+		return snapshotEqual(chunk2, s3)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("coalesce property failed: %v", err)
+	}
+}
+`
+
+// structKeyCoalesceTest is the injected coalesce property test for the struct_key
+// corpus case.  It asserts fold equivalence and chunkability at both split points
+// for 1000 random (p1, p2, p3) triples.
+//
+// The struct-valued Key is fixed across all snapshots, confirming that the
+// struct-key EntityID hash (EM-05) does not corrupt payload Diff/Apply across a fold.
+const structKeyCoalesceTest = `package struct_key_test
+
+import (
+	"reflect"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"struct_key"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// sessionPayload carries the delta-carrying fields of SessionSnapshot.
+// The struct-valued Key is fixed to the same value in all snapshots.
+type sessionPayload struct {
+	State string
+	Count int32
+}
+
+// snap constructs a sequential snapshot from a payload and sequence number.
+func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p sessionPayload, key struct_key.SessionKey) struct_key.SessionSnapshot {
+	return struct_key.SessionSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: seq, EffectiveAt: now},
+		Key: key, State: p.State, Count: p.Count,
+	}
+}
+
+// TestCoalesce_Property asserts fold equivalence and chunkability for 1000
+// random (p1, p2, p3) triples.  The struct-valued Key is fixed across all snapshots.
+func TestCoalesce_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	fixedKey := struct_key.SessionKey{TenantID: "t", SessionN: 1}
+	now := time.Now()
+
+	s0 := struct_key.SessionSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 0, EffectiveAt: now},
+		Key: fixedKey,
+	}
+
+	prop := func(p1, p2, p3 sessionPayload) bool {
+		s1 := snap(fixedID, 1, now, p1, fixedKey)
+		s2 := snap(fixedID, 2, now, p2, fixedKey)
+		s3 := snap(fixedID, 3, now, p3, fixedKey)
+
+		d1, err := struct_key.Diff(s0, s1)
+		if err != nil {
+			return false
+		}
+		d2, err := struct_key.Diff(s1, s2)
+		if err != nil {
+			return false
+		}
+		d3, err := struct_key.Diff(s2, s3)
+		if err != nil {
+			return false
+		}
+
+		// Fold equivalence.
+		full, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1, d2, d3})
+		if err != nil || !reflect.DeepEqual(full, s3) {
+			return false
+		}
+
+		// Chunkability at split point 1.
+		mid1, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1})
+		if err != nil {
+			return false
+		}
+		chunk1, err := struct_key.Coalesce(mid1, []struct_key.SessionSnapshotDelta{d2, d3})
+		if err != nil || !reflect.DeepEqual(chunk1, s3) {
+			return false
+		}
+
+		// Chunkability at split point 2.
+		mid2, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1, d2})
+		if err != nil {
+			return false
+		}
+		chunk2, err := struct_key.Coalesce(mid2, []struct_key.SessionSnapshotDelta{d3})
+		if err != nil {
+			return false
+		}
+		return reflect.DeepEqual(chunk2, s3)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("coalesce property failed: %v", err)
+	}
+}
+`
