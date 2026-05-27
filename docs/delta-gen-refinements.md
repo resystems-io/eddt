@@ -1045,10 +1045,13 @@ clearable is opt-in for the Snapshot author; this phase makes that
 opt-in valid. User-facing documentation for the full feature set —
 baseline plus clearable — lives in Phase 8.
 
-Phase 7 items proceed in dependency order (`PR-*` → runtime → tag
-handling → emission → conformance properties → cross-generator
-integration). Each item is one `system-refinement` cycle that
-*extends* the corresponding baseline item without rewriting it.
+Phase 7 items proceed in dependency order (`PR-*` → baseline Diff
+correction (`CL-10`) → runtime → tag handling → emission → conformance
+properties → cross-generator integration). Each item is one
+`system-refinement` cycle that *extends* the corresponding baseline item
+without rewriting it. `CL-10` is the exception: it *corrects* a baseline
+Diff defect (pointer-field identity comparison) that must be fixed before the
+tri-state emission in `CL-05`–`CL-07` builds on it.
 
 - [ ] **PR-01: Verify `arrow-writer-gen` handles generic struct
   instantiations as field types.** Investigate whether
@@ -1075,6 +1078,31 @@ integration). Each item is one `system-refinement` cycle that
     `internal/arrow/gencommon/` (investigation only).
   - Tests: existing reader-gen suite passes; ad-hoc fixture for
     `FieldDelta[T]` round-trip.
+
+- [ ] **CL-10: Correct pointer-field `Diff` to value equality
+  (implements R-27; resolves E-02). Sequenced first in Phase 7, before
+  CL-01.** The baseline `Diff` compares pointer (`*T`) fields by *identity*
+  (`a.X != b.X`) because NR-01 routed every `types.Comparable` type —
+  pointers included — through the `!=` path. Per E-02 the intended semantics
+  is value equality with nil-equivalence
+  (`ptrEqual(a,b) := (a==nil && b==nil) || (a!=nil && b!=nil && *a==*b)`).
+  Two independently-allocated snapshots holding equal values behind different
+  addresses currently diff as "changed" (a minimality violation; round-trip
+  still holds because Apply writes the correct value). The property tests miss
+  it: identity-diff copies the struct so the pointer aliases, and
+  `testing/quick` never produces equal-value-different-address pointers.
+  Exclude `ShapePointer` fields from the `UseReflectEq`/`!=` classification and
+  emit a nil-equivalence comparison whose pointee check is `==` when the
+  pointee is comparable and `reflect.DeepEqual` otherwise.
+  - Files: `internal/deltagen/template.go` (Diff emission + `fieldView`
+    pointer classification), `internal/deltagen/template_test.go`.
+  - Tests: pointer field with equal values at different addresses diffs as
+    unchanged (nil `SetX`); differing values diff as changed; nil↔non-nil
+    transitions both directions; comparable-scalar and value-struct paths
+    unchanged; a property/behaviour test that constructs distinct-address
+    equal-value pointers (the gap `testing/quick` cannot reach).
+  - Gate: must land before CL-05/CL-06/CL-07 so tri-state emission builds on
+    correct equality.
 
 - [ ] **CL-01: Extend runtime types with `FieldDelta[T]` and
   `FieldDeltaOp`.** Add to `runtime/types.go`: the
@@ -1239,6 +1267,16 @@ and are not separately listed.
 - **Proposed amendment:** Add a footnote to §5.1 specifying the
   pointer-equality semantics, or replace `ptrEqual` with explicit
   pseudocode in the cell.
+- **Implementation status (2026-05-27):** NR-01 regressed this. By setting
+  `UseReflectEq = !types.Comparable(t)`, pointer fields (which *are*
+  comparable in Go) were routed to `a.X != b.X` — pointer *identity*
+  comparison, the opposite of the value-equality intent above. The generated
+  `Diff` therefore compares `*T` fields by address; two snapshots holding
+  equal values at different addresses diff as "changed" (minimality
+  violation — round-trip still holds since Apply writes the correct value).
+  Corrective tracked as CL-10 (Phase 7, sequenced first), which implements
+  R-27 by excluding `ShapePointer` from the `!=` path and emitting
+  `ptrEqual`-style nil-equivalence + dereferenced-value comparison.
 
 ### E-03 — Slice set-diff: survivor order not pinned
 
