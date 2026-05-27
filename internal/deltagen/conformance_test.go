@@ -607,6 +607,11 @@ type baselinePayload struct {
 // for 1000 random baselinePayload values (full equality including Header).
 // aprime is a struct copy of a with aprime.Header.Sequence = a.Sequence + 1.
 // The diff must be minimal (all Set* nil) and Apply must preserve every field.
+//
+// Priority is reassigned to a fresh *int32 allocation with the same value so
+// that a.Priority and aprime.Priority point to different addresses. This closes
+// the documented gap (E-02/CL-10): struct-copy aliasing masks pointer-identity
+// bugs, and testing/quick never produces equal-value/different-address pointers.
 func TestIdentity_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
 	now := time.Now()
@@ -622,8 +627,18 @@ func TestIdentity_Property(t *testing.T) {
 		aprime := a
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
+		// Reassign Priority to a distinct allocation with the same value so the
+		// Diff minimality check below is not masked by pointer aliasing (CL-10).
+		if a.Priority != nil {
+			v := *a.Priority
+			aprime.Priority = &v
+		}
 		d, err := baseline.Diff(a, aprime)
 		if err != nil {
+			return false
+		}
+		// Minimality: equal-value Priority must not produce a non-nil SetPriority.
+		if d.SetPriority != nil {
 			return false
 		}
 		got, err := baseline.Apply(a, d)

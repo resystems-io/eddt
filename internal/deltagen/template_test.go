@@ -90,17 +90,20 @@ func TestBuildSnapshotView(t *testing.T) {
 
 	cases := []struct {
 		// V-number label, field name, expected DeltaName, DeltaType, flags.
-		label        string
-		fieldName    string
-		deltaName    string
-		deltaType    string
-		suppressed   bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
-		useReflectEq bool // true when !types.Comparable(GoType): UseReflectEq: true (EM-03, NR-01)
+		label               string
+		fieldName           string
+		deltaName           string
+		deltaType           string
+		suppressed          bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
+		useReflectEq        bool // true when !types.Comparable(GoType): UseReflectEq: true (EM-03, NR-01)
+		isPointer           bool // true for ShapePointer: nil-equivalence + deref comparison (CL-10, R-27)
+		pointeeUseReflectEq bool // true when pointee is non-comparable: reflect.DeepEqual(*a,*b)
 	}{
 		// V01 — ShapeScalar int32: comparable → !=, no reflect.
 		{label: "V01_Scalar", fieldName: "Scalar", deltaName: "SetScalar", deltaType: "*int32"},
-		// V02 — ShapePointer *string: pointer types are always comparable → !=, no reflect (NR-01).
-		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string"},
+		// V02 — ShapePointer *string: nil-equivalence + *a == *b comparison (CL-10, R-27).
+		// UseReflectEq stays false (pointer identity via != is not used); IsPointer drives its own branch.
+		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string", isPointer: true},
 		// V03 — ShapeStructValue Inner{A,B int32}: all-scalar struct, comparable → !=, no reflect (NR-01).
 		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner"},
 		// V05 — ShapeSlice []byte: slices are not comparable → reflect.DeepEqual.
@@ -131,7 +134,7 @@ func TestBuildSnapshotView(t *testing.T) {
 				}
 				return
 			}
-			// Non-suppressed: Suppressed must be false; check Set name, type, and reflect flag.
+			// Non-suppressed: Suppressed must be false; check Set name, type, and flags.
 			if fv.Suppressed {
 				t.Errorf("field %q: want Suppressed=false, got true", tc.fieldName)
 			}
@@ -143,6 +146,12 @@ func TestBuildSnapshotView(t *testing.T) {
 			}
 			if fv.UseReflectEq != tc.useReflectEq {
 				t.Errorf("UseReflectEq: got %v, want %v", fv.UseReflectEq, tc.useReflectEq)
+			}
+			if fv.IsPointer != tc.isPointer {
+				t.Errorf("IsPointer: got %v, want %v", fv.IsPointer, tc.isPointer)
+			}
+			if fv.PointeeUseReflectEq != tc.pointeeUseReflectEq {
+				t.Errorf("PointeeUseReflectEq: got %v, want %v", fv.PointeeUseReflectEq, tc.pointeeUseReflectEq)
 			}
 		})
 	}
@@ -357,16 +366,31 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Diff body missing runtime.HeaderForDiff(a.Header, b.Header)")
 	}
 
-	// Comparable fields use !=; non-comparable fields use reflect.DeepEqual (NR-01).
-	// Comparable: Scalar (int32), Pointer (*string), Struct (Inner{int32,int32}), Commute (int32).
-	// Non-comparable: Slice ([]byte), Map (map[string]int32).
-	for _, name := range []string{"Scalar", "Pointer", "Struct", "Commute"} {
+	// Comparable scalar/struct fields use !=; non-comparable fields use reflect.DeepEqual (NR-01).
+	// Pointer fields use nil-equivalence + dereferenced comparison, NOT plain != (CL-10, R-27).
+	// Comparable (!=): Scalar (int32), Struct (Inner{int32,int32}), Commute (int32).
+	// Pointer (*string): nil-equivalence guard + *a.Pointer == *b.Pointer.
+	// Non-comparable (reflect): Slice ([]byte), Map (map[string]int32).
+	for _, name := range []string{"Scalar", "Struct", "Commute"} {
 		if !strings.Contains(srcStr, "a."+name+" != b."+name) {
 			t.Errorf("Diff body missing != comparison for comparable field %s", name)
 		}
 		if strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
 			t.Errorf("Diff body must not use reflect.DeepEqual for comparable field %s (NR-01)", name)
 		}
+	}
+	// Pointer field: nil-equivalence guard (CL-10). Must NOT use plain identity comparison.
+	if strings.Contains(srcStr, "a.Pointer != b.Pointer") {
+		t.Errorf("Diff body must not compare Pointer by identity (pointer address); want nil-equivalence + deref (CL-10)")
+	}
+	if strings.Contains(srcStr, "reflect.DeepEqual(a.Pointer, b.Pointer)") {
+		t.Errorf("Diff body must not use whole-pointer reflect.DeepEqual for Pointer; want deref comparison (CL-10)")
+	}
+	if !strings.Contains(srcStr, "*a.Pointer == *b.Pointer") {
+		t.Errorf("Diff body missing dereferenced pointer comparison *a.Pointer == *b.Pointer (CL-10)")
+	}
+	if !strings.Contains(srcStr, "a.Pointer == nil") {
+		t.Errorf("Diff body missing nil-equivalence guard for Pointer (CL-10)")
 	}
 	for _, name := range []string{"Slice", "Map"} {
 		if !strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
@@ -1423,6 +1447,90 @@ func TestEmitTemplate_ReflectImport_WhenNeeded(t *testing.T) {
 	}
 }
 
+// TestEmitTemplate_PtrNonComparable exercises the PointeeUseReflectEq path
+// (CL-10): a *SliceBag field whose pointee is non-comparable (contains a
+// slice). The generated Diff must emit reflect.DeepEqual(*a.Bag, *b.Bag)
+// inside the nil-equivalence guard, and the "reflect" import must be present.
+func TestEmitTemplate_PtrNonComparable(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/ptr_noncomparable"},
+		TargetStructs: []string{"PtrNonComparableSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	// "reflect" import must be injected (PointeeUseReflectEq → NeedsReflect).
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Errorf("expected \"reflect\" import for *SliceBag (non-comparable pointee):\n%s", srcStr)
+	}
+	// Diff must use dereferenced reflect.DeepEqual, not whole-pointer comparison.
+	if !strings.Contains(srcStr, "reflect.DeepEqual(*a.Bag, *b.Bag)") {
+		t.Errorf("Diff body missing reflect.DeepEqual(*a.Bag, *b.Bag) for non-comparable pointee:\n%s", srcStr)
+	}
+	// Nil-equivalence guard must be present.
+	if !strings.Contains(srcStr, "a.Bag == nil") {
+		t.Errorf("Diff body missing nil-equivalence guard for Bag:\n%s", srcStr)
+	}
+	// Must NOT use plain pointer identity comparison.
+	if strings.Contains(srcStr, "a.Bag != b.Bag") {
+		t.Errorf("Diff body must not compare Bag by pointer identity:\n%s", srcStr)
+	}
+
+	// Compile-check: write an isolated module and verify go build succeeds.
+	t.Run("CompileCheck", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+		snapshotSrc := `package ptrnoncomparable
+
+import eddt "go.resystems.io/eddt/runtime"
+
+type SliceBag struct{ Tags []string }
+
+var _ eddt.Header
+
+type PtrNonComparableSnapshot struct {
+	eddt.Header
+	Key string ` + "`eddt:\"entity.key\"`" + `
+	Bag *SliceBag
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(snapshotSrc), 0644); err != nil {
+			t.Fatalf("write snapshot.go: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), src, 0644); err != nil {
+			t.Fatalf("write delta.go: %v", err)
+		}
+		modContent := "module ptrnoncomparable\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+		goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+		if err != nil {
+			t.Fatalf("read go.sum: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+			t.Fatalf("write go.sum: %v", err)
+		}
+		runBuildCmd(t, tmpDir, "go", "build", "-mod=mod", "./...")
+	})
+}
+
 // ── Compile-check helper ──────────────────────────────────────────────────────
 
 // compileCheckEmit writes the generated source (plus a matching source
@@ -1801,6 +1909,74 @@ func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
 	}
 	if result.Commute != x.Commute {
 		t.Errorf("Commute: got %d, want %d", result.Commute, x.Commute)
+	}
+}
+
+// TestDiffPointerMinimality verifies that Diff uses value equality for pointer
+// fields, not pointer identity (CL-10, R-27, E-02). Two independently-allocated
+// strings with equal content must diff as unchanged (SetPointer==nil); differing
+// values and nil↔non-nil transitions must diff as changed.
+func TestDiffPointerMinimality(t *testing.T) {
+	id := eddt.EntityID{1}
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+
+	makePtr := func(s string) *string { v := s; return &v }
+	base := func(seq uint64, ts time.Time) atomic_all.AtomicAllSnapshot {
+		var s atomic_all.AtomicAllSnapshot
+		s.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: seq, EffectiveAt: ts}
+		s.Key = "key"
+		return s
+	}
+
+	// Case 1: equal values at different addresses → SetPointer must be nil.
+	a1 := base(1, t1)
+	b1 := base(2, t2)
+	a1.Pointer = makePtr("hello")
+	b1.Pointer = makePtr("hello") // different allocation, same content
+	d1, err := atomic_all.Diff(a1, b1)
+	if err != nil {
+		t.Fatalf("case1 Diff: %v", err)
+	}
+	if d1.SetPointer != nil {
+		t.Errorf("case1: equal-value/different-address pointers: want SetPointer=nil, got non-nil (identity comparison bug)")
+	}
+
+	// Case 2: differing values → SetPointer must be non-nil.
+	a2 := base(1, t1)
+	b2 := base(2, t2)
+	a2.Pointer = makePtr("hello")
+	b2.Pointer = makePtr("world")
+	d2, err := atomic_all.Diff(a2, b2)
+	if err != nil {
+		t.Fatalf("case2 Diff: %v", err)
+	}
+	if d2.SetPointer == nil {
+		t.Errorf("case2: differing values: want SetPointer non-nil, got nil")
+	}
+
+	// Case 3: nil → non-nil → SetPointer must be non-nil.
+	a3 := base(1, t1)
+	b3 := base(2, t2)
+	b3.Pointer = makePtr("hello")
+	d3, err := atomic_all.Diff(a3, b3)
+	if err != nil {
+		t.Fatalf("case3 Diff: %v", err)
+	}
+	if d3.SetPointer == nil {
+		t.Errorf("case3: nil→non-nil: want SetPointer non-nil, got nil")
+	}
+
+	// Case 4: non-nil → nil → SetPointer must be non-nil.
+	a4 := base(1, t1)
+	b4 := base(2, t2)
+	a4.Pointer = makePtr("hello")
+	d4, err := atomic_all.Diff(a4, b4)
+	if err != nil {
+		t.Fatalf("case4 Diff: %v", err)
+	}
+	if d4.SetPointer == nil {
+		t.Errorf("case4: non-nil→nil: want SetPointer non-nil, got nil")
 	}
 }
 `

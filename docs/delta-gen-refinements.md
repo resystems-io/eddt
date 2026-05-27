@@ -434,7 +434,7 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 | ID   | Requirement                 | Spec reference              | Description                                                                               |
 |:-----|:----------------------------|:----------------------------|:------------------------------------------------------------------------------------------|
 | R-26 | Set-diff for slice fields   | delta-gen §5.3; Errata E-03 | `AddedX` / `RemovedX` emission; set-minus semantics with survivor order preserved.        |
-| R-27 | Structural equality helpers | delta-gen §5.2; Errata E-02 | Generate equality for struct value fields; nil-equivalence + value-equality for pointers. |
+| R-27 | Structural equality helpers | delta-gen §5.2; Errata E-02 | Generate equality for struct value fields; nil-equivalence + value-equality for pointers. Implemented by CL-10 (2026-05-27). |
 
 ### 2.7 Conformance Tests
 
@@ -1119,28 +1119,30 @@ tri-state emission in `CL-05`–`CL-07` builds on it.
   - Tests: existing reader-gen suite passes; ad-hoc fixture for
     `FieldDelta[T]` round-trip.
 
-- [ ] **CL-10: Correct pointer-field `Diff` to value equality
+- [x] **CL-10: Correct pointer-field `Diff` to value equality
   (implements R-27; resolves E-02). Sequenced first in Phase 7, before
-  CL-01.** The baseline `Diff` compares pointer (`*T`) fields by *identity*
-  (`a.X != b.X`) because NR-01 routed every `types.Comparable` type —
-  pointers included — through the `!=` path. Per E-02 the intended semantics
-  is value equality with nil-equivalence
+  CL-01.** *(2026-05-27)* The baseline `Diff` was comparing pointer (`*T`) fields
+  by *identity* (`a.X != b.X`) because NR-01 routed every `types.Comparable`
+  type — pointers included — through the `!=` path. Per E-02 the intended
+  semantics is value equality with nil-equivalence
   (`ptrEqual(a,b) := (a==nil && b==nil) || (a!=nil && b!=nil && *a==*b)`).
   Two independently-allocated snapshots holding equal values behind different
-  addresses currently diff as "changed" (a minimality violation; round-trip
-  still holds because Apply writes the correct value). The property tests miss
-  it: identity-diff copies the struct so the pointer aliases, and
-  `testing/quick` never produces equal-value-different-address pointers.
-  Exclude `ShapePointer` fields from the `UseReflectEq`/`!=` classification and
-  emit a nil-equivalence comparison whose pointee check is `==` when the
-  pointee is comparable and `reflect.DeepEqual` otherwise.
-  - Files: `internal/deltagen/template.go` (Diff emission + `fieldView`
-    pointer classification), `internal/deltagen/template_test.go`.
-  - Tests: pointer field with equal values at different addresses diffs as
-    unchanged (nil `SetX`); differing values diff as changed; nil↔non-nil
-    transitions both directions; comparable-scalar and value-struct paths
-    unchanged; a property/behaviour test that constructs distinct-address
-    equal-value pointers (the gap `testing/quick` cannot reach).
+  addresses diffed as "changed" (minimality violation; round-trip held because
+  Apply writes the correct value). The property tests missed it: struct-copy
+  aliasing and `testing/quick` never producing equal-value/different-address
+  pointers.
+  Added `IsPointer` / `PointeeUseReflectEq` to `fieldView`; new `{{else if
+  .IsPointer}}` branch in `diffField` emits the nil-equivalence guard with
+  `*a.X == *b.X` (comparable pointee) or `reflect.DeepEqual(*a.X, *b.X)`
+  (non-comparable). Both `buildSnapshotView` and `buildNestedTypeView` branch
+  on `ShapePointer` before the generic comparable check. New fixture
+  `testdata/emit/ptr_noncomparable` covers the `PointeeUseReflectEq` path.
+  `TestDiffPointerMinimality` covers all four transitions including
+  equal-value/different-address. `baselineIdentityTest` strengthened with fresh
+  Priority allocation to close the property-test gap.
+  - Files: `internal/deltagen/template.go`, `internal/deltagen/template_test.go`,
+    `internal/deltagen/conformance_test.go`,
+    `internal/deltagen/testdata/emit/ptr_noncomparable/ptr_noncomparable.go`.
   - Gate: must land before CL-05/CL-06/CL-07 so tri-state emission builds on
     correct equality.
 
@@ -1330,16 +1332,14 @@ and are not separately listed.
 - **Proposed amendment:** Add a footnote to §5.1 specifying the
   pointer-equality semantics, or replace `ptrEqual` with explicit
   pseudocode in the cell.
-- **Implementation status (2026-05-27):** NR-01 regressed this. By setting
-  `UseReflectEq = !types.Comparable(t)`, pointer fields (which *are*
-  comparable in Go) were routed to `a.X != b.X` — pointer *identity*
-  comparison, the opposite of the value-equality intent above. The generated
-  `Diff` therefore compares `*T` fields by address; two snapshots holding
-  equal values at different addresses diff as "changed" (minimality
-  violation — round-trip still holds since Apply writes the correct value).
-  Corrective tracked as CL-10 (Phase 7, sequenced first), which implements
-  R-27 by excluding `ShapePointer` from the `!=` path and emitting
-  `ptrEqual`-style nil-equivalence + dereferenced-value comparison.
+- **Implementation status (2026-05-27):** Fixed by CL-10 (2026-05-27).
+  NR-01 had regressed this: `UseReflectEq = !types.Comparable(t)` routed
+  pointer fields (which *are* comparable) to `a.X != b.X` — pointer *identity*
+  comparison. CL-10 adds `IsPointer` / `PointeeUseReflectEq` to `fieldView`,
+  branches `buildSnapshotView` / `buildNestedTypeView` on `ShapePointer`, and
+  emits the nil-equivalence guard: `!(a.X==nil && b.X==nil) || (a.X!=nil &&
+  b.X!=nil && <deref-eq>)` where `<deref-eq>` is `==` for comparable pointees
+  and `reflect.DeepEqual(*a.X, *b.X)` otherwise.
 
 ### E-03 — Slice set-diff: survivor order not pinned
 
@@ -2069,4 +2069,5 @@ git commit).
 | 2026-05-26 | PR-03                    | Three new inner-expression branches in `fieldInfoFromExpr` `*ast.StarExpr` handler: `*ast.ArrayType` → nullable list (`*[]T`), `*ast.MapType` → nullable map (`*map[K]V`), `*ast.StarExpr` → outer-nullable scalar pointer (`**T`). Unsupported shapes (`*[N]T`, `**struct`) warn and skip. Writer template: range-dereference fixes for pointer-wrapped list/map; `**T` append branch. Reader template: `(not .IsPointer)` guards removed from `colField`/`initField`/`initStructField`; new `IsList+IsPointer` and `IsMap+IsPointer` `loadField` branches (field-named locals avoid `*ptr[:n]` precedence trap); `**T` branch with R6 outer+inner pointer reuse; `stripPtr` make fixes in `loadFieldListInner`/`loadFieldMapInner`. Arrow overview docs updated. |
 | 2026-05-26 | C-06                     | Cross-generator integration round-trip implemented. `integration_arrow_test.go` added: `TestIntegration_ArrowRoundTrip` with 4 subtests. `ScalarAndStruct` PASS: runs delta-gen → arrow-writer-gen → arrow-reader-gen against the `arrowroundtrip` fixture (ARSnapshot + ARMeta); verifies ARSnapshotDelta (SetName *string, SetScore *float64, SetMeta *ARMeta, runtime.Header) round-trips losslessly through an Arrow record. All three generators invoked programmatically via local in-tree import paths. `ShapePointer` / `ShapeSliceAtomic` / `ShapeMapAtomic` SKIP: `gencommon.fieldInfoFromExpr` does not handle `**T`, `*[]T`, or `*map[K]V` (pointer-wrapped compound types from ShapePointer/ShapeSlice/ShapeMap delta fields); subtests present with `t.Skip` pending PR-03 + C-08. Two new checklist entries added: PR-03 (extend gencommon) and C-08 (unskip the three failing subtests). Full suite clean. |
 | 2026-05-26 | C-05                     | Per-field emission and tag-validation integration tests implemented. `integration_test.go` added: `TestIntegration_PerFieldEmission` (3 subtests — EM-item view of C-01 corpus compile checks), `TestIntegration_CrossPkgEmissionCompiles` (3 subtests — first end-to-end cross-package `go build` for all corpus cases; E-12), `TestIntegration_TagValidationErrors` (10 subtests — T-02/T-03 error propagation through `Run()`), `TestIntegration_KeyFieldOverride` (1 subtest — override-path positive test with no `entity.key` tag). Cross-package tests exposed a generator bug: `nestedTypeView.Name` was set to the bare type name, causing `ApplyU`/`DiffU` function signatures to reference source-package types without the package qualifier in cross-package mode. Fixed by adding `qualifiedTypeName string` parameter to `buildNestedTypeView` and computing it via `types.TypeString(named, qualifier)` at both call sites in `template.go`. All 17 new subtests pass; full suite clean. |
+| 2026-05-27 | CL-10                    | Corrected pointer-field `Diff` from pointer identity to value equality (R-27, E-02). Added `IsPointer bool` and `PointeeUseReflectEq bool` to `fieldView`; new `{{else if .IsPointer}}` branch in `diffField` emits nil-equivalence guard `!(a.X==nil && b.X==nil) || (a.X!=nil && b.X!=nil && <deref-eq>)` where `<deref-eq>` is `*a.X == *b.X` (comparable pointee) or `reflect.DeepEqual(*a.X, *b.X)` (non-comparable). Both `buildSnapshotView` (Site A) and `buildNestedTypeView` (Site B) branch on `ShapePointer` before the generic `!types.Comparable` check to set these flags. `NeedsReflect` propagation unchanged. New fixture `testdata/emit/ptr_noncomparable` (`*SliceBag` field) covers the `PointeeUseReflectEq` path end-to-end. Tests: `TestBuildSnapshotView` V02_Pointer updated (IsPointer=true, UseReflectEq=false); `TestEmitTemplate_AtomicAll` updated (Pointer out of `!=` group; new deref-comparison assertions); `TestEmitTemplate_PtrNonComparable` (string assertions + compile subtest); `TestDiffPointerMinimality` (4 cases: equal-value/different-address → nil, differing → non-nil, nil→non-nil, non-nil→nil); `baselineIdentityTest` strengthened (fresh Priority allocation closes struct-copy aliasing gap). Baseline Diff ns/op: 154 → 174 ns (+13%); Apply/Coalesce unchanged. |
 | 2026-05-25 | C-01                     | Conformance corpus established. Three fixtures added under `testdata/corpus/`: `baseline` (all 5 atomic shapes, all baseline presence tags, scalar string `entity.key`), `composite` (all three `delta.nested` shapes — struct/map/slice — plus atomic coexistence field), `struct_key` (struct-valued `SessionKey{TenantID, SessionN}` exercising multi-field EntityID hash, EM-05). `corpus_test.go` added: `corpusCase` type, `corpus` table, `TestCorpus_All` table-driven test with three subtests per case (`Parse`, `Generate`, `Compile`), and `compileCheckCorpus` helper (runs `go build -mod=mod ./...` in an isolated temp module with a replace directive; lighter than `compileCheckEmit*` — no `go test`, since C-01 scope is compilation correctness only). All 9 subtests pass (1.7 s); full suite clean.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

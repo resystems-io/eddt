@@ -194,11 +194,21 @@ type fieldView struct {
 
 	// UseReflectEq is true when the Diff template must use reflect.DeepEqual
 	// because the field's Go type is not comparable (e.g. slice, map, or a struct
-	// containing a slice/map). Comparable types — including pointers and all-scalar
-	// structs — use != directly. Set by !types.Comparable(GoType).
-	// rather than != to compare this field's values (EM-03). Set for all
-	// non-scalar shapes: pointer, struct value, slice, map.
+	// containing a slice/map). Scalars and simple structs use != directly.
+	// Pointer fields (*T) are handled separately via IsPointer regardless of
+	// types.Comparable — they always use nil-equivalence + dereferenced comparison.
 	UseReflectEq bool
+
+	// IsPointer is true for ShapePointer (*T) fields. Diff emits a
+	// nil-equivalence + dereferenced-value comparison rather than pointer identity
+	// (implements R-27, resolves E-02). PointeeUseReflectEq controls whether the
+	// pointee comparison uses == or reflect.DeepEqual.
+	IsPointer bool
+
+	// PointeeUseReflectEq is true when the pointee type T of a *T field is not
+	// comparable (e.g. a struct containing a slice), so the deref comparison must
+	// use reflect.DeepEqual(*a.X, *b.X). Only meaningful when IsPointer is true.
+	PointeeUseReflectEq bool
 
 	// IsNested is true for delta.nested struct-value fields (N-01). When true,
 	// DeltaName equals the source field name (no "Set" prefix), DeltaType is the
@@ -366,7 +376,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 }
 {{end -}}
 
-{{define "diffField"}}{{if .IsSliceNested}}{{template "diffSliceField" .}}{{else if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+{{define "diffField"}}{{if .IsSliceNested}}{{template "diffSliceField" .}}{{else if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .IsPointer}}if !((a.{{.Name}} == nil && b.{{.Name}} == nil) || (a.{{.Name}} != nil && b.{{.Name}} != nil && {{if .PointeeUseReflectEq}}reflect.DeepEqual(*a.{{.Name}}, *b.{{.Name}}){{else}}*a.{{.Name}} == *b.{{.Name}}{{end}})) { d.{{.DeltaName}} = &b.{{.Name}} }{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
@@ -930,10 +940,17 @@ func buildNestedTypeView(
 			DeltaName: "Set" + field.Name(),
 			DeltaType: deltaType,
 		}
-		// Non-comparable types (slice, map, structs with slice/map fields) cannot use !=
-		// and require reflect.DeepEqual. Comparable types (scalars, pointers, simple structs,
-		// arrays) use != directly. types.Comparable is the authoritative Go answer.
-		if !types.Comparable(field.Type()) {
+		// ShapePointer (*T) uses nil-equivalence + dereferenced-value comparison (R-27,
+		// E-02). Other non-comparable types use reflect.DeepEqual; scalars and simple
+		// structs use != directly.
+		if shape == ShapePointer {
+			fv.IsPointer = true
+			pointeeT := field.Type().Underlying().(*types.Pointer).Elem()
+			if !types.Comparable(pointeeT) {
+				fv.PointeeUseReflectEq = true
+				nv.NeedsReflect = true
+			}
+		} else if !types.Comparable(field.Type()) {
 			fv.UseReflectEq = true
 			nv.NeedsReflect = true
 		}
@@ -1101,10 +1118,17 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			DeltaName: "Set" + f.Name,
 			DeltaType: deltaType,
 		}
-		// Non-comparable types (slice, map, structs with slice/map fields) cannot use !=
-		// and require reflect.DeepEqual. Comparable types (scalars, pointers, simple structs,
-		// arrays) use != directly. types.Comparable is the authoritative Go answer.
-		if !types.Comparable(f.GoType) {
+		// ShapePointer (*T) uses nil-equivalence + dereferenced-value comparison (R-27,
+		// E-02). Other non-comparable types use reflect.DeepEqual; scalars and simple
+		// structs use != directly.
+		if f.Shape == ShapePointer {
+			fv.IsPointer = true
+			pointeeT := f.GoType.Underlying().(*types.Pointer).Elem()
+			if !types.Comparable(pointeeT) {
+				fv.PointeeUseReflectEq = true
+				sv.NeedsReflect = true
+			}
+		} else if !types.Comparable(f.GoType) {
 			fv.UseReflectEq = true
 			sv.NeedsReflect = true
 		}
