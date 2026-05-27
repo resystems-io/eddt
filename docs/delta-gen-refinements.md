@@ -53,7 +53,11 @@ cycle.
   - [E-15 — Slice default flipped from compositional to atomic](#e-15-slice-default-flipped-from-compositional-to-atomic)
   - [E-16 — Map admission with `delta.nested` element-wise encoding](#e-16-map-admission-with-deltanested-element-wise-encoding)
   - [E-17 — Admit `delta.nested + delta.clearable` (tri-state envelope around compositional inner)](#e-17-admit-deltanested-deltaclearable-tri-state-envelope-around-compositional-inner)
-  - [E-18 — Admit `delta.clearable` on slice and map shapes](#e-18-admit-deltaclearable-on-slice-and-map-shapes)
+  - [E-18 — Clearable on slice and map: admitted only via `delta.nested` (revised by E-23)](#e-18-clearable-on-slice-and-map-admitted-only-via-deltanested-revised-by-e-23)
+  - [E-19 — `Apply` returns `(T, error)`](#e-19-apply-returns-t-error)
+  - [E-20 — `Diff` returns `(TDelta, error)`](#e-20-diff-returns-tdelta-error)
+  - [E-21 — `Coalesce` returns `(T, error)`](#e-21-coalesce-returns-t-error)
+  - [E-23 — Tri-state is the implicit norm; `delta.clearable` requires `delta.nested`](#e-23-tri-state-is-the-implicit-norm-deltaclearable-requires-deltanested)
 - [5. Change Log](#5-change-log)
 
 <!-- /TOC -->
@@ -121,7 +125,7 @@ Delta-gen-emitted code calls the runtime in exactly three places.
 |:-----------------------------------|:------------------------------------------------------------------|
 | `Apply` body — chain envelope      | `hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)` (E-19) |
 | `Diff` body — chain envelope       | `hdr, err := runtime.HeaderForDiff(a.Header, b.Header)` (E-20)    |
-| `Apply` body — per clearable field | `runtime.ApplyFieldDelta(s.X, d.X)`                               |
+| `Apply` body — clearable field     | per-field `Op` switch (`OpAssert` → inner Apply, E-23)           |
 
 This gives the runtime its minimum surface.
 
@@ -129,8 +133,15 @@ This gives the runtime its minimum surface.
 |:----------|:------------------------------------------------------------------------------------------------|
 | Types     | `Header`, `Provenance`, `SequenceRange`, `FieldDelta[T]`, `FieldDeltaOp`, `EntityID`            |
 | Constants | `OpIgnore`, `OpAssert`, `OpRetract`                                                             |
-| Functions | `HeaderAfterApply`, `HeaderForDiff`, `ApplyFieldDelta`                                          |
+| Functions | `HeaderAfterApply`, `HeaderForDiff`, `ApplyFieldDelta`†                                         |
 | Helpers   | `EntityID.IsZero()` plus deterministic-hash primitives consumed by emitted `EntityID()` methods |
+
+† `ApplyFieldDelta` is provisional. Per E-23 the only clearable form is
+compositional, so `FieldDelta[T]` carries an inner *delta* type and a
+single-type-parameter `ApplyFieldDelta[T](T, FieldDelta[T]) T` does not fit;
+the generator emits a per-field `Op` switch instead. Whether any runtime Apply
+helper survives is settled in CL-02 — the guaranteed runtime surface is
+`FieldDelta[T]` + `FieldDeltaOp` + the `Op*` constants.
 
 ### 1.6 Architectural Decisions Adopted
 
@@ -216,14 +227,16 @@ For these reasons the implementation is **phased**:
   handles the atomic and compositional rows of §5.1 (i.e. every
   combination on the granularity and presence axes), excluding the
   tri-state envelope.
-- **Phase 7 (clearable extension)** layers the tri-state envelope
-  in as its own set of system refinements: the arrow-gen prerequisite
-  checks, the runtime additions, the tag-handling additions, the
-  emission additions (`FieldDelta[T_inner]` for every inner shape
-  produced by the granularity axis), the clearable-specific
-  conformance tests, and a documentation extension. Each Phase-7
-  item *extends* its baseline counterpart without rewriting it,
-  mirroring the existing subsystem-refinement discipline.
+- **Phase 7 (clearable extension)** layers the *explicit* tri-state
+  envelope in as its own set of system refinements: the arrow-gen
+  prerequisite checks, the runtime additions, the tag-handling additions,
+  the emission additions (`FieldDelta[T_inner]` for the **compositional
+  inner shapes only** — struct `TDelta`, map `<X>MapDelta`, slice
+  `<X>SliceDelta`; see E-23), the clearable-specific conformance tests, and
+  a documentation extension. Each Phase-7 item *extends* its baseline
+  counterpart without rewriting it, mirroring the existing
+  subsystem-refinement discipline — except `CL-10`, which *corrects* the
+  baseline pointer-equality defect (E-02) the rest build on.
 
 A Snapshot author who never tags any field `delta.clearable` is
 fully served by the baseline. Adding clearable usage to a Snapshot
@@ -231,12 +244,12 @@ becomes valid only after Phase 7 has landed.
 
 #### 1.6.3 Three-axis tag model
 
-The `eddt:` tag vocabulary is best understood as three **orthogonal
-axes** that compose freely (subject to one combination ban). The
-spec-as-written conflates these into a single tag × field-shape
-matrix (§3.3, §5.1); the implementation adopts the orthogonal model
-upfront, with the deltas captured as Errata `E-14` (the axis model)
-and `E-15` through `E-18` (the consequent spec amendments).
+The `eddt:` tag vocabulary is understood as three axes — **presence**,
+**granularity**, and **envelope**. The spec-as-written conflates these into a
+single tag × field-shape matrix (§3.3, §5.1); the implementation adopts the
+axis model up-front, captured as Errata `E-14` (the axis model) and `E-15`
+through `E-18`, **as revised by `E-23`** (which couples the envelope axis to
+the granularity axis — see below).
 
 | Axis            | Default              | Tag that flips it              | Question it answers                               |
 |:----------------|:---------------------|:-------------------------------|:--------------------------------------------------|
@@ -247,41 +260,68 @@ and `E-15` through `E-18` (the consequent spec amendments).
 A fourth `delta.commutative` tag is reserved (v1 generators accept
 without semantic effect).
 
-The axes apply uniformly across the recognised field shapes (scalar,
-pointer, struct value, slice, map) with one carve-out: the
-granularity axis only meaningfully flips for composite shapes (struct
-value, slice, map). `delta.nested` on scalar / pointer is rejected.
+**Tri-state is the implicit norm (E-23).** Every *atomic* field already
+carries tri-state semantics through its baseline pointer-wrap: the Delta-side
+`SetX *T` (or `**T`, `*map[K]V`, `*[]T`) distinguishes **ignore** (nil
+pointer), **reset** to the zero/nil value (non-nil pointer to that value), and
+**assert** (non-nil pointer to any other value). There is therefore nothing for
+an explicit envelope to add on an atomic field — `delta.clearable` on a scalar,
+pointer, struct value, atomic map, or atomic slice is redundant (and on a
+pointer field, `OpRetract` and `OpAssert{nil}` even collapse to the same
+outcome).
 
-The single forbidden combination is `delta.omit + delta.clearable`
-(retracting a field that's not in the Delta is meaningless). All
-other combinations — including the historically banned
-`delta.nested + delta.clearable`, `delta.clearable` on slice / map,
-and `delta.nested` on map — are admitted.
+The one place the implicit envelope is **absent** is a *compositional*
+(`delta.nested`) field: its Delta is the inline per-element form (`TDelta`, or
+`UpdatedX`/`RemovedX`, or `AddedX`/`RemovedX`) with no enclosing pointer to
+carry the ignore-vs-reset bit. `delta.clearable` is the explicit opt-in that
+supplies it — and is therefore valid **only in combination with
+`delta.nested`**.
 
-Untagged-default emission table under the harmonised model:
+Combination rules:
 
-| Shape           | Untagged             | `delta.nested`                          | `delta.clearable`     | `delta.nested + delta.clearable`                      |
-|:----------------|:---------------------|:----------------------------------------|:----------------------|:------------------------------------------------------|
-| Scalar `T`      | `SetX *T`            | (rejected — no decomposition)           | `FieldDelta[T]`       | (rejected — no decomposition)                         |
-| Pointer `*T`    | `SetX **T`           | (rejected — use value form + clearable) | `FieldDelta[*T]`      | (rejected — use value form + both tags)               |
-| Struct `T`      | `SetX *T`            | `X TDelta` (per-field recursion)        | `FieldDelta[T]`       | `FieldDelta[TDelta]` (tri-state compositional)        |
-| Map `map[K]V`   | `SetX *map[K]V`      | `UpdatedX map[K]V`, `RemovedX []K`      | `FieldDelta[map[K]V]` | `FieldDelta[<MapDeltaX>]` (tri-state compositional)   |
-| Slice `[]T`     | `SetX *[]T`          | `AddedX []T`, `RemovedX []T` (set-diff) | `FieldDelta[[]T]`     | `FieldDelta[<SliceDeltaX>]` (tri-state compositional) |
-| Embedded Header | (special, unchanged) | n/a                                     | n/a                   | n/a                                                   |
+- **Granularity:** `delta.nested` is admitted on composite shapes (struct
+  value, slice, map); rejected on scalar / pointer (no decomposition).
+- **Envelope:** `delta.clearable` **requires `delta.nested`** (and therefore a
+  composite shape). Standalone `delta.clearable` is rejected loudly — the
+  atomic pointer-wrap already provides tri-state. The single legal envelope
+  form is `delta.nested + delta.clearable`. (`E-23`)
+- **Presence:** `delta.omit` / `delta.retired` take the field out of the Delta
+  and never co-occur with `delta.nested` or `delta.clearable`. This subsumes
+  the former standalone `delta.omit + delta.clearable` ban — a clearable field
+  is necessarily nested, and a nested field is necessarily present.
 
-Three structural changes vs the spec-as-written, captured in
-errata:
+The validation rule reduces to a single predicate: **`Clearable ⟹
+Nested`** (and `Nested ⟹` composite shape, enforced by the granularity gate).
+
+Emission table under the revised model:
+
+| Shape           | Untagged (atomic) | `delta.nested`                      | `delta.clearable` (alone) | `delta.nested + delta.clearable` |
+|:----------------|:------------------|:------------------------------------|:--------------------------|:---------------------------------|
+| Scalar `T`      | `SetX *T`         | rejected                            | rejected                  | rejected                         |
+| Pointer `*T`    | `SetX **T`        | rejected                            | rejected                  | rejected                         |
+| Struct `T`      | `SetX *T`         | `X TDelta`                          | rejected                  | `X FieldDelta[TDelta]`           |
+| Map `map[K]V`   | `SetX *map[K]V`   | `UpdatedX map[K]V` + `RemovedX []K` | rejected                  | `X FieldDelta[<X>MapDelta]`      |
+| Slice `[]T`     | `SetX *[]T`       | `AddedX []T` + `RemovedX []T`       | rejected                  | `X FieldDelta[<X>SliceDelta]`    |
+| Embedded Header | (special)         | n/a                                 | n/a                       | n/a                              |
+
+Rejection reasons: `delta.nested` on scalar/pointer — no decomposition.
+`delta.clearable` (alone) on any shape — atomic already has tri-state via its
+pointer-wrap (E-23). `delta.nested + delta.clearable` on scalar/pointer —
+follows from `delta.nested` being invalid there.
+
+Structural changes vs the spec-as-written, captured in errata:
 
 1. **Slice default flips** from compositional (current spec) to
    atomic. `delta.nested` opts into the existing set-theoretic
    encoding. (`E-15`)
-2. **`delta.clearable` is admitted on slice and map**, providing a
-   tri-state envelope around the inner representation. (`E-18`)
-3. **`delta.nested + delta.clearable` is admitted**, producing a
-   tri-state envelope around a compositional delta. The
-   `OpRetract` semantics over a compositional inner: the inner is
-   reset to its zero composite (nil map / empty slice / zero
-   struct). (`E-17`)
+2. **`delta.clearable` is admitted on slice and map — but only via
+   `delta.nested`** (E-18 as revised by E-23; the spec-as-written's flat
+   slice/map ban is lifted, but standalone clearable is rejected because the
+   atomic pointer-wrap already supplies tri-state).
+3. **`delta.nested + delta.clearable` is admitted** — and is the *only* legal
+   clearable form. It produces a tri-state envelope around a compositional
+   delta; `OpRetract` resets the field to its zero composite (nil map / nil
+   slice / zero struct). (`E-17`)
 
 Map admission is the immediate practical consequence (`E-16`); the
 element-wise encoding for `delta.nested` on `map[K]V` is fixed at
@@ -349,7 +389,7 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 | R-04 | `EntityID` type                            | Errata E-10                                       | Fixed-width content-hash carrier; uniform across entity types. `[32]byte`; `IsZero()` helper.                                                             |
 | R-05 | `HeaderAfterApply` function                | chain-lifecycle §6.1; delta-gen §6.4              | Validates ChainID / EntityID (incl. zero-rejection) / Sequence / EffectiveAt / Closed; emits result Header per spec.                                      |
 | R-06 | `HeaderForDiff` function                   | chain-lifecycle §6.2; delta-gen §6.5              | Validates ChainID / EntityID / Sequence / EffectiveAt; emits Delta Header per spec (Provenance = nil per E-04).                                           |
-| R-07 | `ApplyFieldDelta[T]` function              | chain-lifecycle §6.3; delta-gen §6.6              | Pure tri-state merge.                                                                                                                                     |
+| R-07 | `ApplyFieldDelta[T]` function              | chain-lifecycle §6.3; delta-gen §6.6              | Pure tri-state merge. **Provisional (E-23):** the single-type-parameter form does not fit the compositional-only clearable model; per-field Apply is generator-emitted. Final runtime surface settled in CL-02.                                              |
 | R-08 | Deterministic-hash helpers                 | Errata E-10                                       | Reusable canonical-serialisation primitives (numeric writers, string writer, nil marker, finalise-to-`EntityID`). Driven by emitted `EntityID()` methods. |
 
 ### 2.2 Generator: CLI and Input Loading
@@ -374,7 +414,7 @@ implementation plan in §3 names Phase 7 items (`PR-01`, `PR-02`,
 |:-----|:-------------------------------|:---------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | R-15 | `eddt:` tag parsing            | delta-gen §3.3; Errata E-07                              | Parse all five tag values plus comma-separated options. Preserve unknown options.                                                                                                                                                                                                 |
 | R-16 | Tag combination validation     | delta-gen §3.3; Errata E-14, E-17                        | Three-axis model (§1.6.3): presence × granularity × envelope. Reject `nested + omit` and `clearable + omit`. Admit `nested + clearable` (envelope wraps the compositional inner shape).                                                                                           |
-| R-17 | Per-tag field-shape validation | delta-gen §3.3.1 – §3.3.4; Errata E-14, E-15, E-16, E-18 | `nested` requires a composite shape (struct value, slice, map) without embedded Header; rejected on scalar / pointer. `clearable` admitted on all shapes (envelope is shape-agnostic). Untagged-default emission is atomic uniformly (slice default flipped from spec; see E-15). |
+| R-17 | Per-tag field-shape validation | delta-gen §3.3.1 – §3.3.4; Errata E-14, E-15, E-16, E-18, E-23 | `nested` requires a composite shape (struct value, slice, map) without embedded Header; rejected on scalar / pointer. `clearable` requires `nested` (E-23) — standalone clearable is rejected on every shape (atomic already carries tri-state via its pointer-wrap). Untagged-default emission is atomic uniformly (slice default flipped from spec; see E-15). |
 | R-18 | `entity.key` tag handling      | Errata E-10                                              | Validate single occurrence; validate that the key type contains only comparable fields.                                                                                                                                                                                           |
 
 ### 2.5 Generator: Code Emission
@@ -1113,93 +1153,116 @@ tri-state emission in `CL-05`–`CL-07` builds on it.
   - Tests: `runtime/types_test.go` — zero values for each Op; struct
     equality on `FieldDelta[T]` instantiations.
 
-- [ ] **CL-02: Implement `ApplyFieldDelta[T]`.** Pure tri-state
-  switch per delta-gen §6.6 / chain-lifecycle §6.3.
-  - Files: `runtime/field_delta.go`.
-  - Tests: `runtime/field_delta_test.go` — all three Op values,
-    including zero-value behaviour on `OpRetract` for representative
-    `T`.
+- [ ] **CL-02: Settle the runtime Apply surface for the tri-state
+  envelope.** Per E-23, the only clearable form is compositional, so `T` in
+  `FieldDelta[T]` is always an inner *delta* type distinct from the Snapshot
+  field type. The spec's single-type-parameter
+  `ApplyFieldDelta[T](prior T, d FieldDelta[T]) T` therefore does **not**
+  type-check (prior and `Value` differ) and is superseded. Decide the minimal
+  runtime surface: the likely outcome is that `runtime` ships only
+  `FieldDelta[T]` + `FieldDeltaOp` + the `Op*` constants (CL-01), and the
+  generator inlines the per-field `Op` switch (CL-06); a higher-order helper
+  is an option to be weighed in this item's planning session.
+  - Files: `runtime/field_delta.go` (may be empty / removed if no helper
+    survives), `runtime/field_delta_test.go`.
+  - Tests: whatever helper is retained, exercised across all three `Op`
+    values incl. `OpRetract` zero behaviour; or, if none, this item records
+    the decision and CL-06 carries the behaviour tests.
 
-- [ ] **CL-03: Extend the `eddt:` tag parser for `clearable`.** Add
-  recognition of `delta.clearable` to the existing parser; preserve
-  comma-separated option behaviour from T-01.
-  - Files: `internal/deltagen/tag.go`,
-    `internal/deltagen/tag_test.go`.
-  - Tests: parser recognises `delta.clearable` (with and without
-    options); existing baseline tag tests still pass.
+- [ ] **CL-03: Recognise `delta.clearable` as a secondary tag.** Add
+  `TagKindClearable` to the enum and an `IsSecondary()` classification; map
+  `"delta.clearable"` in `tagKindFor`; in `parseTag`, classify each
+  comma-separated part by form (`=` ⇒ option, else ⇒ tag token) and route
+  secondary kinds to a new `ParsedTag.Clearable bool` while the single
+  primary occupies `Kind` (a second primary in the list is a parse error).
+  Surface syntax is comma-separated within one `eddt:` value
+  (`eddt:"delta.nested,delta.clearable"`), Go-stdlib convention. Per E-23 and
+  the Risk #1 decisions.
+  - Files: `internal/deltagen/tag.go`, `internal/deltagen/tag_test.go`.
+  - Tests: `delta.clearable` recognised (alone and combined); comma list with
+    options still parses (`delta.retired,since=…`); two primaries error;
+    `Kind` never holds `TagKindClearable`; existing baseline tag tests pass.
 
-- [ ] **CL-04: Extend tag combination and field-shape validation
-  (harmonised).** Per Errata E-14, E-17, E-18: reject only
-  `clearable + omit` (the single ban under the three-axis model);
-  admit `clearable + nested` (envelope wraps the compositional
-  inner). Admit `delta.clearable` on every recognised shape:
-  scalar, pointer, struct value, **slice, and map** (E-18 lifts
-  the spec-as-written slice/map ban).
+- [ ] **CL-04: Validate the envelope combination — `Clearable ⟹ Nested`.**
+  Per E-23, the validation reduces to a single predicate: a field with
+  `Clearable` set must have `Kind == TagKindNested` (and `Nested ⟹` composite
+  shape is already gated). Standalone `delta.clearable` (on any shape) is
+  **rejected loudly** with a message steering the author to drop the tag (the
+  field already has tri-state via its delta pointer) or add `delta.nested`.
+  This subsumes the former `clearable + omit` ban.
   - Files: `internal/deltagen/tag.go`,
     `internal/deltagen/parse_fields.go`,
     `internal/deltagen/tag_test.go`.
-  - Tests: `clearable + omit` rejected; `clearable + nested`
-    accepted (combination); each of the five shapes accepts
-    `delta.clearable`; combination matrix audited end-to-end.
+  - Tests: standalone `delta.clearable` rejected on each shape (with the
+    helpful message); `delta.nested + delta.clearable` accepted on
+    struct/map/slice; `delta.clearable + delta.omit`/`delta.retired` rejected;
+    `delta.nested + delta.clearable` on scalar/pointer rejected (via the
+    nested-shape gate).
 
-- [ ] **CL-05: Extend Delta type emission with the tri-state
-  envelope across every shape.** Add the `X FieldDelta[T_inner]`
-  emission to the template, where `T_inner` is:
-    - the field's Go type, when the field is not also `delta.nested`
-      (scalar, pointer, struct value, slice, map);
-    - the compositional inner type emitted by Phase 5, when the
-      field is `delta.nested + delta.clearable` (`TDelta` for struct,
-      a generated `<X>MapDelta` carrying `UpdatedX`/`RemovedX` for
-      map, `<X>SliceDelta` carrying `AddedX`/`RemovedX` for slice).
-  Import `runtime` for `FieldDelta`. Per Errata E-17 / E-18.
+- [ ] **CL-05: Emit the tri-state envelope for `nested + clearable`
+  (compositional only).** Emit `X FieldDelta[T_inner]` where `T_inner` is the
+  compositional inner: `TDelta` for struct (reuses the N-01 companion); a
+  **net-new generated `<X>MapDelta`** carrying `UpdatedX`/`RemovedX` for map;
+  a **net-new generated `<X>SliceDelta`** carrying `AddedX`/`RemovedX` for
+  slice. Generate the map/slice wrapper structs **only** for the combined
+  tag (nested-only output stays byte-identical); home them in
+  `snapshotView.NestedTypes` for forward-reference-safe ordering and dedup
+  (Risk #2 decision). No atomic-clearable emission exists. Import `runtime`
+  for `FieldDelta`. Per E-17 / E-23.
   - Files: `internal/deltagen/template.go`.
-  - Tests: `internal/deltagen/template_test.go` — assert emitted
-    struct shape for `delta.clearable` on each of the five shapes;
-    assert `delta.nested + delta.clearable` on struct / map / slice
-    emits `FieldDelta[<compositional inner>]`.
+  - Tests: `template_test.go` — `nested + clearable` on struct emits
+    `FieldDelta[TDelta]`; on map emits `FieldDelta[<X>MapDelta]` + the wrapper
+    decl; on slice emits `FieldDelta[<X>SliceDelta]` + the wrapper decl;
+    nested-only fixtures unchanged byte-for-byte; standalone clearable never
+    reaches emission (rejected at CL-04).
 
-- [ ] **CL-06: Extend `Apply` emission with the clearable
-  contribution.** Emit `result.X = runtime.ApplyFieldDelta(s.X, d.X)`
-  uniformly for every clearable field, irrespective of inner shape.
-  Per Errata E-17: the `OpRetract` semantics on a compositional
-  inner resets the field to its zero composite (nil map / empty
-  slice / zero struct).
+- [ ] **CL-06: Emit the `Apply` contribution for `nested + clearable`.** Per
+  E-17/E-23, emit a per-field `Op` switch (not a plain `ApplyFieldDelta`):
+  `OpIgnore` → propagate `s.X`; `OpRetract` → reset to the zero composite
+  (nil map / nil slice / zero struct); `OpAssert` → call the field's inner
+  Apply (`ApplyX`/`ApplyU`) on `d.X.Value`, propagating its error.
   - Files: `internal/deltagen/template.go`.
-  - Tests: emitted Apply compiles; behaviour matches the tri-state
-    table for representative scalar / pointer / struct / map / slice
-    and for each compositional combination.
+  - Tests: emitted Apply compiles; behaviour matches the tri-state table for
+    struct/map/slice `nested + clearable` — incl. `OpRetract` yielding the
+    zero composite and `OpAssert` applying the per-element inner delta.
 
-- [ ] **CL-07: Extend `Diff` emission with the tri-state
-  contribution.** Emit the `FieldDelta` construction per
-  delta-gen §5.4 truth-table, generalised to compositional inner
-  shapes (E-17): "equal" / "different" is decided by the
-  inner-shape's equality discipline (scalar `==`, struct via §5.2,
-  map / slice via the compositional delta being empty vs non-empty).
+- [ ] **CL-07: Emit the `Diff` contribution for `nested + clearable`.** Per
+  E-17/E-23/§5.4, emit the three-branch decision: `eq(a,b)` → `OpIgnore`;
+  else `zero(b)` (new value is the zero composite — nil map / nil slice /
+  zero struct) → `OpRetract`; else `OpAssert{Value: innerDiff(a,b)}`. "Equal"
+  for the compositional inner is "the inner delta is empty"
+  (`UpdatedX`/`RemovedX`, resp. `AddedX`/`RemovedX`, both nil; struct per
+  §5.2). Define the "empty" predicate once — a generated `IsEmpty()` on the
+  `<X>MapDelta`/`<X>SliceDelta` wrappers (reused by CL-08 tests) — keeping the
+  Diff template lean (Risk #3 decision).
   - Files: `internal/deltagen/template.go`.
   - Tests: emitted Diff compiles; produces correct
-    `{Op: OpIgnore | OpAssert | OpRetract, Value: …}` for each of
-    the five §5.4 cases across every inner shape.
+    `{Op: OpIgnore | OpAssert | OpRetract}` across the §5.4 cases for
+    struct/map/slice `nested + clearable`; `nil` vs empty `{}`/`[]` handled
+    as decided (cleared ≙ `nil`, not `len == 0`).
 
-- [ ] **CL-08: Conformance — clearable property tests.** Add
-  clearable Snapshot fixtures to the conformance corpus (C-01);
-  extend C-02 / C-03 / C-04 property tests to cover clearable
-  fields; add a dedicated tri-state-Diff test asserting the §5.4
-  truth-table.
+- [ ] **CL-08: Conformance — `nested + clearable` property tests.** Add
+  `nested + clearable` Snapshot fixtures (struct / map / slice) to the
+  conformance corpus (C-01); extend C-02 / C-03 / C-04 property tests to
+  cover them; add a dedicated tri-state-Diff test asserting the §5.4
+  truth-table over the compositional inner shapes (per E-23, there are no
+  atomic-clearable cases to cover).
   - Files: `internal/deltagen/testdata/*`,
     `internal/deltagen/conformance_test.go`.
   - Tests: round-trip / identity-diff / coalesce-as-fold all hold
-    when clearable fields are present; tri-state-Diff truth-table
-    test passes.
+    when `nested + clearable` fields are present; tri-state-Diff truth-table
+    test passes for struct / map / slice inners.
 
-- [ ] **CL-09: Cross-generator integration round-trip with clearable
+- [ ] **CL-09: Cross-generator integration round-trip with `nested + clearable`
   (V-model INT step).** Extend the C-06 cross-generator integration
-  test with a fixture containing clearable fields. Run delta-gen,
+  test with a fixture containing `nested + clearable` fields. Run delta-gen,
   arrow-writer-gen, and arrow-reader-gen against the same package;
-  marshal a Delta exhibiting all three clearable Op states
+  marshal a Delta exhibiting all three Op states
   (`OpIgnore` / `OpAssert` / `OpRetract`) to an Arrow record;
   read it back and assert lossless equality. Verifies that
-  `FieldDelta[T]` as a generic field type marshals correctly
-  through arrow-writer-gen and arrow-reader-gen (gated by
+  `FieldDelta[T_inner]` — where `T_inner` is a generated compositional delta
+  (`TDelta` / `<X>MapDelta` / `<X>SliceDelta`, itself carrying slices/maps) —
+  marshals correctly through arrow-writer-gen and arrow-reader-gen (gated by
   `PR-01` / `PR-02`).
   - Files: `internal/deltagen/integration_arrow_test.go` (extend),
     `internal/deltagen/testdata/arrow_roundtrip_clearable/*`.
@@ -1579,11 +1642,18 @@ and are not separately listed.
       compositional (per-element). Admitted on composite shapes
       (struct value, slice, map); rejected on scalar / pointer.
     - **Envelope axis** — `delta.clearable` (default: implicit). Wraps
-      the field in a tri-state `FieldDelta[T_inner]` envelope where
-      `T_inner` is whatever the granularity axis produced (atomic
-      value or compositional delta). Admitted on every shape.
-    - The single combination ban is `delta.omit + delta.clearable`
-      (retracting a field that isn't in the Delta is meaningless).
+      the field in a tri-state `FieldDelta[T_inner]` envelope. **Revised by
+      E-23:** the envelope is *not* freely orthogonal — it requires the
+      granularity axis (`delta.nested`), because every atomic field already
+      carries an implicit tri-state via its baseline pointer-wrap, leaving
+      nothing for an explicit envelope to add. The only legal form is
+      `delta.nested + delta.clearable`, where `T_inner` is the compositional
+      delta (struct `TDelta`, map `<X>MapDelta`, slice `<X>SliceDelta`).
+      Standalone `delta.clearable` is rejected.
+    - Combination rule (revised by E-23): `Clearable ⟹ Nested`. This
+      subsumes the former standalone `delta.omit + delta.clearable` ban — a
+      clearable field is necessarily nested, and a nested field is
+      necessarily present, so omit and clearable can never co-occur.
     - `delta.commutative` is reserved (orthogonal; v1 generators
       accept without semantic effect).
 - **Subsumes:** none of the existing E-NN entries; sits alongside
@@ -1624,10 +1694,12 @@ and are not separately listed.
     - `[]T` tagged `delta.nested` emits `AddedX []T`, `RemovedX []T`
       with the existing §5.3 set-difference semantics. Element
       equality follows §5.2.
-    - `[]T` tagged `delta.clearable` emits `FieldDelta[[]T]` (E-18).
+    - `[]T` tagged `delta.clearable` *alone* is rejected (E-23): the
+      atomic `SetX *[]T` form already distinguishes ignore / set-nil /
+      set-value, so a standalone envelope adds nothing.
     - `[]T` tagged `delta.nested + delta.clearable` emits
       `FieldDelta[<XSliceDelta>]` where `XSliceDelta` carries the
-      set-diff inner (E-17).
+      set-diff inner (E-17) — the only legal clearable form for a slice.
 - **Proposed amendment:**
     - §3.2 shape row: drop the "only with `delta.omit`" qualifier
       for maps (E-16) and clarify slice's untagged-default is
@@ -1675,11 +1747,12 @@ and are not separately listed.
       discipline).
     - `map[K]V` tagged `delta.omit` / `delta.retired` follow the
       presence-axis rules as for any field (E-14).
-    - `map[K]V` tagged `delta.clearable` emits `FieldDelta[map[K]V]`
-      (E-18).
+    - `map[K]V` tagged `delta.clearable` *alone* is rejected (E-23):
+      the atomic `SetX *map[K]V` form already distinguishes ignore /
+      set-nil / replace, so a standalone envelope adds nothing.
     - `map[K]V` tagged `delta.nested + delta.clearable` emits
       `FieldDelta[<XMapDelta>]` carrying the upsert / remove inner
-      (E-17).
+      (E-17) — the only legal clearable form for a map.
 - **Proposed amendment:**
     - §3.2: drop the "only with `eddt:delta.omit`" restriction on
       maps; fix the §3.3.4 → §3.3.3 cross-reference; note maps
@@ -1697,12 +1770,13 @@ and are not separately listed.
   rules); §5.1 (emission table); §5.4 (tri-state diff truth table);
   §6.3 (`FieldDelta[T]` type); §6.6 (`ApplyFieldDelta`).
 - **Nature:** Combination ban lifted. The spec-as-written rejects
-  `delta.clearable + delta.nested` outright. Under the harmonised
-  three-axis model (E-14), envelope (`clearable`) and granularity
-  (`nested`) are orthogonal axes that compose freely.
+  `delta.clearable + delta.nested` outright. Under the revised model
+  (E-14 as amended by E-23), this is the **only** legal clearable form:
+  envelope (`clearable`) requires granularity (`nested`), because atomic
+  fields already carry an implicit tri-state via their pointer-wrap.
 - **Source:** Own analysis. The combination is meaningful
   whenever a Snapshot field is *both* compositional *and* nilable /
-  retractable — e.g. a `*map[K]V` whose entries change individually
+  retractable — e.g. a `map[K]V` whose entries change individually
   but which may also be retracted wholesale.
 - **Working assumption:**
     - When both tags apply, the Delta-side type is
@@ -1715,13 +1789,19 @@ and are not separately listed.
       delta (struct: recurse Apply; map: merge upserts / remove
       keys; slice: set-diff).
     - `OpRetract` resets the field to its zero composite — nil map
-      / empty slice / zero struct. This is the natural compositional
+      / nil slice / zero struct. This is the natural compositional
       analogue of scalar "set to zero value".
     - `OpIgnore` propagates the prior value unchanged.
     - The §5.4 truth-table generalises: "equal" / "different" is
-      decided by the inner shape's equality discipline (scalar
-      `==`; struct per §5.2; map / slice by the compositional
-      delta being empty).
+      decided by the inner shape's equality discipline (struct per §5.2;
+      map / slice by the compositional delta being empty —
+      `UpdatedX`/`RemovedX` (resp. `AddedX`/`RemovedX`) both nil).
+    - **Type-parameter consequence:** because `T_inner` is a *delta*
+      type distinct from the Snapshot field type, a single-type-parameter
+      generic `ApplyFieldDelta[T](prior T, d FieldDelta[T]) T` cannot apply
+      the field (prior and `Value` differ in type). The generated `Apply`
+      emits a per-field `Op` switch whose `OpAssert` arm calls the field's
+      inner Apply; see CL-02 / CL-06.
 - **Proposed amendment:**
     - §3.3 combination rules: replace the `clearable + nested` ban
       with the harmonised "single ban is `clearable + omit`" rule.
@@ -1733,37 +1813,41 @@ and are not separately listed.
     - §6.3 / §6.6: note that `T` in `FieldDelta[T]` may be a
       generated compositional delta type.
 
-### E-18 — Admit `delta.clearable` on slice and map shapes
+### E-18 — Clearable on slice and map: admitted only via `delta.nested` (revised by E-23)
 
 - **Spec location:** `eddt-delta-gen-spec.md` §3.3.1 (clearable
   field-shape validation); §5.1 (emission table); §9.1 (clearable
   use cases).
-- **Nature:** Shape restriction lifted. The spec-as-written
-  rejects `delta.clearable` on slice and map fields. Under the
-  harmonised three-axis model (E-14), envelope (`clearable`) is
-  shape-agnostic — any field can carry a tri-state envelope.
-- **Source:** Own analysis. The spec's reasoning (slice / map have
-  no natural "unset" because zero value is `nil` slice / `nil`
-  map) conflates the *envelope* axis with the *inner-value
-  encoding* axis. Under the harmonised model, `OpRetract` resets
-  the field to its zero composite (nil map, nil slice) and that
-  *is* the "unset" state.
-- **Source:** Own analysis.
-- **Working assumption:**
-    - `delta.clearable` on `map[K]V` emits `FieldDelta[map[K]V]`.
-      `OpAssert(Value: m)` replaces the whole map; `OpRetract`
-      resets to `nil`; `OpIgnore` propagates.
-    - `delta.clearable` on `[]T` emits `FieldDelta[[]T]` with
-      analogous semantics.
-    - The compositional + envelope combination
-      (`delta.nested + delta.clearable`) is governed by E-17.
+- **Nature:** Shape restriction lifted, then re-narrowed. The
+  spec-as-written rejects `delta.clearable` on slice and map fields
+  outright. E-18 originally lifted that ban entirely (clearable on every
+  shape). **E-23 re-narrows it:** clearable on a slice or map is admitted
+  *only* in combination with `delta.nested`; standalone `delta.clearable`
+  on an (atomic) slice or map is rejected.
+- **Source:** Own analysis. The spec's blanket reasoning (slice / map
+  have no natural "unset") was wrong, but so was the original blanket
+  lift. The correct line (E-23): an *atomic* slice/map already gets
+  tri-state from its `SetX *[]T` / `SetX *map[K]V` pointer-wrap (nil ptr =
+  ignore, `&nil` = reset, `&v` = replace), so a standalone envelope is
+  redundant. The envelope is only needed for a *compositional* (nested)
+  slice/map, which has no pointer-wrap to carry the reset bit.
+- **Working assumption (as revised by E-23):**
+    - `delta.clearable` *alone* on `map[K]V` or `[]T` → **rejected**
+      (use the atomic form for wholesale clear, or add `delta.nested`).
+    - `delta.nested + delta.clearable` on `map[K]V` →
+      `FieldDelta[<X>MapDelta]`; on `[]T` → `FieldDelta[<X>SliceDelta]`.
+      Governed by E-17. `OpRetract` resets to `nil`; `OpAssert` applies the
+      inner upsert/remove (map) or set-diff (slice); `OpIgnore` propagates.
 - **Proposed amendment:**
-    - §3.3.1: remove the slice / map exclusion from `clearable`
-      shape validation.
-    - §5.1: add `delta.clearable` rows for slice and map.
-    - §9.1: extend the use-cases discussion to cover collection
-      retraction (GDPR-style wholesale erasure of a map / slice
-      field).
+    - §3.3.1: `delta.clearable` requires `delta.nested` (per E-23); the
+      flat slice/map exclusion is replaced by the `Clearable ⟹ Nested`
+      rule, not a blanket admission.
+    - §5.1: the only clearable rows for slice/map are the
+      `delta.nested + delta.clearable` rows.
+    - §9.1: collection retraction (GDPR-style wholesale erasure) is served
+      by the atomic form (`SetX *[]T` / `SetX *map[K]V` set to `&nil`) when
+      no per-element tracking is needed, and by `delta.nested + delta.clearable`
+      when it is.
 
 ---
 
@@ -1861,6 +1945,79 @@ and are not separately listed.
     - §7.3: `Coalesce` returns `(T, error)`.
     - §8.3's pure-function and fold-property constraints continue to apply
       (no I/O, no clock, no global state — errors are pure return values).
+
+### E-23 — Tri-state is the implicit norm; `delta.clearable` requires `delta.nested`
+
+- **Spec location:** `eddt-delta-gen-spec.md` §3.3 / §3.3.1 (clearable
+  field-shape and combination validation); §5.1 (emission table); §5.4
+  (tri-state diff truth table); §6.3 / §6.6 (`FieldDelta[T]` /
+  `ApplyFieldDelta`). Revises E-14, E-17, E-18.
+- **Nature:** Model correction. E-14/E-18 modelled the envelope axis
+  (`delta.clearable`) as freely orthogonal — admissible on every shape. That
+  is *expressively redundant* on atomic shapes and should be rejected.
+- **Source:** Own analysis (session of 2026-05-27), reasoning one shape at a
+  time from "what does tri-state actually distinguish?"
+- **Working assumption (the correction in full):**
+    - **Every atomic field already carries tri-state semantics via its
+      baseline pointer-wrap.** The Delta-side `SetX *T` (and `**T`,
+      `*map[K]V`, `*[]T`) distinguishes three states: **ignore** (nil
+      pointer), **reset** to the zero/nil value (non-nil pointer to that
+      value), and **assert** (non-nil pointer to any other value). `Diff`
+      already emits the reset case (a non-nil pointer to a zero value) when a
+      field changes to zero, distinct from the nil pointer it emits when
+      nothing changed.
+    - Therefore `delta.clearable` adds **no representable state** on a
+      scalar, pointer, struct value, atomic map, or atomic slice. On a
+      pointer field it is worse than redundant: `OpRetract` and
+      `OpAssert{nil}` collapse to the same outcome.
+    - The one shape class with **no implicit envelope** is a *compositional*
+      (`delta.nested`) field: its Delta is the inline per-element form
+      (`TDelta`, or `UpdatedX`/`RemovedX`, or `AddedX`/`RemovedX`) with no
+      enclosing pointer to carry the ignore-vs-reset bit. `delta.clearable`
+      is the *explicit* opt-in that supplies it.
+    - **Rule:** `delta.clearable` requires `delta.nested`. Standalone
+      `delta.clearable` is **rejected loudly** at generation time, with a
+      message steering the author to either drop the tag (the field already
+      has tri-state via its delta pointer) or add `delta.nested` (for
+      per-element tracking plus wholesale reset). The validation predicate is
+      `Clearable ⟹ Nested`; combined with the existing `Nested ⟹` composite
+      gate, clearable is therefore valid only on struct/map/slice + nested.
+    - This subsumes the former `delta.omit + delta.clearable` ban (E-14): a
+      clearable field is necessarily nested, hence necessarily present.
+    - **Decision-tree for any composite field:** wholesale replace / clear
+      only → atomic (pointer-wrap); per-element tracking only →
+      `delta.nested`; per-element tracking *and* wholesale reset →
+      `delta.nested + delta.clearable`. No intent maps to standalone
+      clearable; nothing expressible today is lost.
+    - **Type-parameter consequence (see E-17):** since the only clearable
+      form is compositional, `T` in `FieldDelta[T]` is always an inner
+      *delta* type, distinct from the Snapshot field type. A
+      single-type-parameter `ApplyFieldDelta[T](prior T, d FieldDelta[T]) T`
+      cannot apply such a field; the generated `Apply` emits a per-field
+      `Op` switch whose `OpAssert` arm calls the field's inner Apply (CL-06).
+- **Supersedes / revises:**
+    - **E-14:** the envelope axis is not freely orthogonal; it requires the
+      granularity axis. The single-ban statement (`omit + clearable`) is
+      replaced by `Clearable ⟹ Nested`.
+    - **E-17:** unchanged in substance — it is now the *only* legal clearable
+      form rather than one of several.
+    - **E-18:** reversed — the blanket admission of standalone clearable on
+      slice/map is withdrawn; slice/map clearable is legal only via
+      `delta.nested`.
+- **Proposed amendment:**
+    - §3.3.1: state `Clearable ⟹ Nested`; reject standalone clearable on all
+      shapes (replacing both the spec-as-written's flat slice/map ban and
+      E-18's flat admission).
+    - §5.1: the standalone `delta.clearable` column is rejected for every
+      shape; only the `delta.nested + delta.clearable` column carries
+      `FieldDelta[...]`.
+    - §5.4: the tri-state truth table applies only to compositional inner
+      shapes; "equal" is "inner delta empty", "reset" is "new value is the
+      zero composite".
+    - §6.6: `ApplyFieldDelta`'s single-type-parameter form does not fit the
+      compositional case; the runtime surface is `FieldDelta[T]` +
+      `FieldDeltaOp` + the `Op*` constants, with per-field Apply emitted by
+      the generator.
 
 ---
 
