@@ -10,8 +10,9 @@ package deltagen
 //   - T-03: migrate all callers to ParsedTag.Kind; consolidate entity.key
 //     and delta.* tag handling onto the same parsed-tag code path.
 //
-// delta.clearable is not recognised in the baseline generator; it is added
-// in Phase 7 (CL-03) alongside the runtime FieldDelta[T] support.
+// delta.clearable is recognised as a secondary tag (CL-03, Phase 7): it sets
+// ParsedTag.Clearable and never occupies ParsedTag.Kind. The Clearable ⟹
+// Nested semantic constraint is enforced in CL-04.
 
 import (
 	"fmt"
@@ -53,9 +54,17 @@ const (
 	// (delta-gen spec §9.5).
 	TagKindCommutative
 
-	// TagKindClearable (delta.clearable) is deferred to Phase 7 (CL-03).
-	// parseTag returns an error for this tag value in the baseline generator.
+	// TagKindClearable corresponds to eddt:"delta.clearable". It is a SECONDARY
+	// tag: it never occupies ParsedTag.Kind (which holds the single primary tag)
+	// — instead it sets ParsedTag.Clearable. Per Errata E-23 it is admissible
+	// only combined with delta.nested; that constraint is enforced in CL-04.
+	TagKindClearable
 )
+
+// IsSecondary reports whether k is a secondary (modifier) tag that combines
+// with a primary tag rather than occupying ParsedTag.Kind. delta.clearable is
+// the only secondary kind.
+func (k TagKind) IsSecondary() bool { return k == TagKindClearable }
 
 // ParsedTag is the structured result of parsing a single eddt: tag value.
 // It carries the recognised TagKind and any comma-separated key=value options
@@ -63,6 +72,12 @@ const (
 // acting on them (Errata E-07).
 type ParsedTag struct {
 	Kind TagKind
+
+	// Clearable is true when the comma-separated tag list included the
+	// secondary delta.clearable modifier. Per E-23 it is meaningful only
+	// alongside delta.nested (Kind == TagKindNested); CL-04 enforces that
+	// and CL-05 emits the FieldDelta[T] envelope.
+	Clearable bool
 
 	// Options holds the key=value pairs from the comma-separated option list
 	// (e.g. since=2026-01-15 for delta.retired). Unknown keys are preserved.
@@ -77,18 +92,22 @@ type ParsedTag struct {
 
 // parseTag parses the raw value of an eddt: struct tag. The raw string is the
 // value returned by reflect.StructTag.Get("eddt") — e.g. "delta.nested",
-// "delta.retired,since=2026-01-15", or "" for an absent tag.
+// "delta.retired,since=2026-01-15", "delta.nested,delta.clearable", or ""
+// for an absent tag.
 //
-// Grammar (Errata E-07): <tagvalue>[,<key>=<value>[,<key>=<value>...]]
+// Each comma-separated part is classified by form:
+//   - Contains "=" → a key=value option (unknown keys preserved per E-07).
+//   - No "="  → a tag token (looked up via tagKindFor).
+//     Secondary tokens (IsSecondary) set ParsedTag.Clearable (or the
+//     appropriate bool for future secondaries). Primary tokens set Kind;
+//     a second primary is an error.
 //
 // Rules:
 //   - An empty raw string produces TagKindNone with no options.
-//   - Recognised tag values: "entity.key", "delta.nested", "delta.omit",
-//     "delta.retired", "delta.commutative". Anything else, including
-//     "delta.clearable" (deferred to CL-03), is an error.
-//   - Options are comma-separated key=value pairs. Unknown keys are
-//     preserved in Options without acting on them.
-//   - A bare option with no "=" separator is an error.
+//   - Recognised primary tags: "entity.key", "delta.nested", "delta.omit",
+//     "delta.retired", "delta.commutative". Anything else is an error.
+//   - Recognised secondary tags: "delta.clearable" (CL-03).
+//   - Two primary tokens in one tag value is an error.
 //   - An empty key (e.g. "=value") is an error.
 //   - An empty value (e.g. "k=") is accepted; the key maps to "".
 func parseTag(raw string) (ParsedTag, error) {
@@ -96,32 +115,43 @@ func parseTag(raw string) (ParsedTag, error) {
 		return ParsedTag{Kind: TagKindNone, Raw: raw}, nil
 	}
 
-	parts := strings.Split(raw, ",")
-	tagVal := parts[0]
+	result := ParsedTag{Kind: TagKindNone, Raw: raw}
+	primarySet := false
 
-	kind, err := tagKindFor(tagVal)
-	if err != nil {
-		return ParsedTag{}, err
-	}
-
-	if len(parts) == 1 {
-		return ParsedTag{Kind: kind, Raw: raw}, nil
-	}
-
-	opts := make(map[string]string, len(parts)-1)
-	for _, opt := range parts[1:] {
-		idx := strings.Index(opt, "=")
-		if idx < 0 {
-			return ParsedTag{}, fmt.Errorf("malformed eddt: tag option %q: expected key=value format", opt)
+	for _, part := range strings.Split(raw, ",") {
+		if idx := strings.Index(part, "="); idx >= 0 {
+			key := part[:idx]
+			if key == "" {
+				return ParsedTag{}, fmt.Errorf("malformed eddt: tag option %q: key must not be empty", part)
+			}
+			if result.Options == nil {
+				result.Options = make(map[string]string)
+			}
+			result.Options[key] = part[idx+1:]
+			continue
 		}
-		key := opt[:idx]
-		if key == "" {
-			return ParsedTag{}, fmt.Errorf("malformed eddt: tag option %q: key must not be empty", opt)
+
+		kind, err := tagKindFor(part)
+		if err != nil {
+			return ParsedTag{}, err
 		}
-		opts[key] = opt[idx+1:]
+
+		if kind.IsSecondary() {
+			switch kind {
+			case TagKindClearable:
+				result.Clearable = true
+			}
+			continue
+		}
+
+		if primarySet {
+			return ParsedTag{}, fmt.Errorf("multiple primary eddt: tags in %q: %v and %v", raw, result.Kind, kind)
+		}
+		result.Kind = kind
+		primarySet = true
 	}
 
-	return ParsedTag{Kind: kind, Options: opts, Raw: raw}, nil
+	return result, nil
 }
 
 // validateTagShape returns an error if a tag is incompatible with a field
@@ -180,6 +210,8 @@ func tagKindFor(tagVal string) (TagKind, error) {
 		return TagKindRetired, nil
 	case "delta.commutative":
 		return TagKindCommutative, nil
+	case "delta.clearable":
+		return TagKindClearable, nil
 	default:
 		return TagKindNone, fmt.Errorf("unrecognised eddt: tag value %q", tagVal)
 	}

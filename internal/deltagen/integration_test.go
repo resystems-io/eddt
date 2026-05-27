@@ -233,14 +233,10 @@ var tagErrorCases = []tagErrorCase{
 		structName: "NestedPointer",
 		wantErr:    "composite",
 	},
-	// T-03: delta.clearable is not recognised in the baseline generator (Phase 7).
-	// Exact error message is an implementation detail; any non-nil error is sufficient.
-	{
-		label:      "T03/ClearableDeferred",
-		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype ClearableSnap struct {\n\teddt.Header\n\tKey  string `eddt:\"entity.key\"`\n\tName string `eddt:\"delta.clearable\"`\n}\n",
-		structName: "ClearableSnap",
-		wantErr:    "",
-	},
+	// CL-03: standalone delta.clearable is now recognised and parses without
+	// error (Kind=None → atomic emission). The Clearable ⟹ Nested rejection
+	// is added in CL-04; the test case will be restored there.
+
 	// T-03: unknown tag value is rejected by the tag parser.
 	// Exact error message is an implementation detail; any non-nil error is sufficient.
 	{

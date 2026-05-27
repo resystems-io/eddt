@@ -12,15 +12,16 @@ import (
 // Covers: R-15 (partial), E-07
 func TestParseTag(t *testing.T) {
 	cases := []struct {
-		name        string
-		input       string
-		wantKind    TagKind
-		wantNilOpts bool              // assert Options == nil
-		wantOpts    map[string]string // assert each entry present with exact value
-		wantOptsLen int               // >0: assert len(Options) == this
-		wantRaw     string            // non-empty: assert Raw == this value
-		wantErr     bool
-		wantErrHas  []string // substrings that must appear in error
+		name          string
+		input         string
+		wantKind      TagKind
+		wantClearable bool              // assert Clearable == this
+		wantNilOpts   bool              // assert Options == nil
+		wantOpts      map[string]string // assert each entry present with exact value
+		wantOptsLen   int               // >0: assert len(Options) == this
+		wantRaw       string            // non-empty: assert Raw == this value
+		wantErr       bool
+		wantErrHas    []string // substrings that must appear in error
 	}{
 		{name: "T01_Empty", input: "", wantKind: TagKindNone, wantNilOpts: true},
 		{name: "T02_EntityKey", input: "entity.key", wantKind: TagKindEntityKey, wantNilOpts: true},
@@ -69,18 +70,21 @@ func TestParseTag(t *testing.T) {
 			wantOpts: map[string]string{"k": ""},
 		},
 		{
-			// Bare option with no "=" separator is malformed.
-			name:       "T13_BareOption",
+			// A bare unrecognised token is a tag lookup, not a malformed option.
+			// Error now comes from tagKindFor (unrecognised tag) not the option parser.
+			name:       "T13_BareUnrecognised",
 			input:      "delta.nested,novalue",
 			wantErr:    true,
-			wantErrHas: []string{"novalue", "key=value"},
+			wantErrHas: []string{"novalue", "unrecognised"},
 		},
 		{
-			// delta.clearable is deferred to Phase 7 (CL-03).
-			name:       "T14_Clearable",
-			input:      "delta.clearable",
-			wantErr:    true,
-			wantErrHas: []string{"delta.clearable"},
+			// delta.clearable alone → secondary tag recognised, Kind stays None.
+			// Semantic validation (Clearable ⟹ Nested) is enforced in CL-04.
+			name:          "T14_ClearableAlone",
+			input:         "delta.clearable",
+			wantKind:      TagKindNone,
+			wantClearable: true,
+			wantNilOpts:   true,
 		},
 		{
 			name:       "T15_Unknown",
@@ -95,6 +99,46 @@ func TestParseTag(t *testing.T) {
 			wantKind: TagKindRetired,
 			wantOpts: map[string]string{"since": "2026-01-15"},
 			wantRaw:  "delta.retired,since=2026-01-15",
+		},
+		// CL-03 cases
+		{
+			// Primary + secondary: standard combined clearable tag.
+			name:          "T17_NestedClearable",
+			input:         "delta.nested,delta.clearable",
+			wantKind:      TagKindNested,
+			wantClearable: true,
+			wantNilOpts:   true,
+		},
+		{
+			// Order must not matter: secondary before primary parses identically.
+			name:          "T18_ClearableNestedReverse",
+			input:         "delta.clearable,delta.nested",
+			wantKind:      TagKindNested,
+			wantClearable: true,
+			wantNilOpts:   true,
+		},
+		{
+			// Primary + secondary + option: all three parts coexist.
+			name:          "T19_NestedClearableOption",
+			input:         "delta.nested,delta.clearable,extra=foo",
+			wantKind:      TagKindNested,
+			wantClearable: true,
+			wantOpts:      map[string]string{"extra": "foo"},
+		},
+		{
+			// Regression: primary + option without secondary still works (Clearable false).
+			name:          "T20_RetiredOptionNoClearable",
+			input:         "delta.retired,since=2026-01-15",
+			wantKind:      TagKindRetired,
+			wantClearable: false,
+			wantOpts:      map[string]string{"since": "2026-01-15"},
+		},
+		{
+			// Two primaries in one tag value is an error.
+			name:       "T21_TwoPrimaries",
+			input:      "delta.nested,delta.omit",
+			wantErr:    true,
+			wantErrHas: []string{"multiple primary"},
 		},
 	}
 
@@ -117,6 +161,9 @@ func TestParseTag(t *testing.T) {
 			}
 			if pt.Kind != tc.wantKind {
 				t.Errorf("Kind: got %v, want %v", pt.Kind, tc.wantKind)
+			}
+			if pt.Clearable != tc.wantClearable {
+				t.Errorf("Clearable: got %v, want %v", pt.Clearable, tc.wantClearable)
 			}
 			if tc.wantNilOpts && pt.Options != nil {
 				t.Errorf("Options: got %v, want nil", pt.Options)
@@ -187,6 +234,27 @@ func TestValidateTagCombination(t *testing.T) {
 	} {
 		if err := validateTagCombination(ParsedTag{Kind: k}); err != nil {
 			t.Errorf("kind %v: got error %v, want nil (baseline no-op)", k, err)
+		}
+	}
+}
+
+// TestTagKindIsSecondary locks the IsSecondary classifier: only
+// TagKindClearable is secondary; every other kind is primary.
+// Covers: CL-03 (R-03 secondary-tag invariant — Kind never holds clearable).
+func TestTagKindIsSecondary(t *testing.T) {
+	secondary := []TagKind{TagKindClearable}
+	for _, k := range secondary {
+		if !k.IsSecondary() {
+			t.Errorf("kind %v: IsSecondary() = false, want true", k)
+		}
+	}
+	primary := []TagKind{
+		TagKindNone, TagKindEntityKey, TagKindNested,
+		TagKindOmit, TagKindRetired, TagKindCommutative,
+	}
+	for _, k := range primary {
+		if k.IsSecondary() {
+			t.Errorf("kind %v: IsSecondary() = true, want false", k)
 		}
 	}
 }
