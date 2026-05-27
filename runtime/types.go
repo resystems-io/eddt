@@ -3,8 +3,10 @@
 // specified in eddt-delta-gen-spec.md §6 and eddt-chain-lifecycle-spec.md §3.
 //
 // Scope: this package delivers the baseline (Phases 1–6) types and functions.
-// The tri-state clearable extension — FieldDelta[T], FieldDeltaOp, the three
-// Op* constants, and ApplyFieldDelta — is added in Phase 7 (CL-01/CL-02).
+// The tri-state clearable extension — FieldDelta[T], FieldDeltaOp, and the
+// three Op* constants — is added in Phase 7 (CL-01). The single-type-parameter
+// ApplyFieldDelta from the spec is superseded (E-23); the per-field Apply
+// switch is generator-emitted (CL-06).
 package runtime
 
 import "time"
@@ -99,4 +101,24 @@ type Provenance struct {
 // used in Provenance.Gaps to record skipped positions in a source chain.
 type SequenceRange struct {
 	Start, End uint64 // inclusive
+}
+
+// FieldDeltaOp tags the operation carried by a FieldDelta on a clearable
+// Delta field (delta-gen-spec §6.3). OpIgnore is the zero value, so a
+// zero-valued FieldDelta is an explicit no-op.
+type FieldDeltaOp uint8
+
+const (
+	OpIgnore  FieldDeltaOp = 0 // leave the field unchanged
+	OpAssert  FieldDeltaOp = 1 // set the field to Value
+	OpRetract FieldDeltaOp = 2 // reset the field to its zero value
+)
+
+// FieldDelta is the tri-state carrier for a clearable Delta field
+// (delta-gen-spec §6.3 / chain-lifecycle §3.3). Per Errata E-23 the only
+// clearable form is compositional, so T is always a generated inner *delta*
+// type, never the Snapshot field type.
+type FieldDelta[T any] struct {
+	Op    FieldDeltaOp
+	Value T // valid only when Op == OpAssert; ignored otherwise
 }

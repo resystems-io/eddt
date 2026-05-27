@@ -93,6 +93,67 @@ func TestSequenceRange(t *testing.T) {
 	}
 }
 
+// TestFieldDeltaOpValues locks the wire-encoding order of the Op constants and
+// confirms that OpIgnore is the zero value of FieldDeltaOp.
+func TestFieldDeltaOpValues(t *testing.T) {
+	// Covers: R-03, delta-gen-spec §6.3
+	if OpIgnore != 0 {
+		t.Errorf("OpIgnore must be 0 (zero value), got %d", OpIgnore)
+	}
+	if OpAssert != 1 {
+		t.Errorf("OpAssert must be 1, got %d", OpAssert)
+	}
+	if OpRetract != 2 {
+		t.Errorf("OpRetract must be 2, got %d", OpRetract)
+	}
+	var z FieldDeltaOp
+	if z != OpIgnore {
+		t.Error("zero FieldDeltaOp must equal OpIgnore")
+	}
+}
+
+// TestFieldDeltaZeroValue confirms that a zero-valued FieldDelta is an explicit
+// no-op (Op == OpIgnore, Value is the zero of T).
+func TestFieldDeltaZeroValue(t *testing.T) {
+	// Covers: R-03
+	var fd FieldDelta[int32]
+	if fd.Op != OpIgnore {
+		t.Errorf("zero FieldDelta.Op must be OpIgnore, got %d", fd.Op)
+	}
+	if fd.Value != 0 {
+		t.Errorf("zero FieldDelta[int32].Value must be 0, got %d", fd.Value)
+	}
+}
+
+// TestFieldDeltaEquality confirms that FieldDelta[T] is comparable when T is
+// comparable, and that Op and Value are both considered by ==.
+func TestFieldDeltaEquality(t *testing.T) {
+	// Covers: R-03
+	a := FieldDelta[int32]{Op: OpAssert, Value: 7}
+	b := FieldDelta[int32]{Op: OpAssert, Value: 7}
+	if a != b {
+		t.Error("identical FieldDelta[int32] must compare equal")
+	}
+
+	diffOp := FieldDelta[int32]{Op: OpRetract, Value: 7}
+	if a == diffOp {
+		t.Error("FieldDelta with different Op must not compare equal")
+	}
+
+	diffVal := FieldDelta[int32]{Op: OpAssert, Value: 8}
+	if a == diffVal {
+		t.Error("FieldDelta with different Value must not compare equal")
+	}
+
+	// Instantiation breadth: ensure the generic compiles for pointer inner types
+	// (the form Phase 7 uses for compositional clearable fields).
+	_ = FieldDelta[*int32]{Op: OpIgnore}
+	pfd := FieldDelta[*int32]{Op: OpAssert}
+	if pfd.Op != OpAssert {
+		t.Error("FieldDelta[*int32] Op must round-trip")
+	}
+}
+
 // TestHeaderProvenanceAccumulation verifies that appending to Provenance
 // preserves source order (the append-only contract from chain-lifecycle §3.2.1).
 func TestHeaderProvenanceAccumulation(t *testing.T) {
