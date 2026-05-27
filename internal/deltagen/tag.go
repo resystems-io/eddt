@@ -12,7 +12,7 @@ package deltagen
 //
 // delta.clearable is recognised as a secondary tag (CL-03, Phase 7): it sets
 // ParsedTag.Clearable and never occupies ParsedTag.Kind. The Clearable ⟹
-// Nested semantic constraint is enforced in CL-04.
+// Nested semantic constraint is enforced by validateTagCombination (CL-04).
 
 import (
 	"fmt"
@@ -184,16 +184,28 @@ func validateTagShape(tag ParsedTag, shape FieldShape) error {
 	return nil
 }
 
-// validateTagCombination returns an error if a parsed tag exhibits a
-// disallowed combination under the harmonised three-axis model
-// (refinements §1.6.3; Errata E-14). The single forbidden combination
-// is delta.omit + delta.clearable.
+// validateTagCombination enforces the envelope-axis constraint from Errata
+// E-23: a field carrying the secondary delta.clearable modifier MUST also
+// carry the primary delta.nested tag. Tri-state is the implicit norm for
+// every other field shape — atomic, pointer, and struct-value fields already
+// distinguish ignore / reset / assert through their generated delta pointer —
+// so delta.clearable is meaningful (and admissible) only on a compositional
+// (delta.nested) field. This single predicate subsumes the former
+// delta.clearable + delta.omit ban: omit/retired occupy Kind with a non-Nested
+// primary and so fail the same check.
 //
-// In the baseline, multi-tag syntax for that combination is not defined,
-// and parseTag yields a single TagKind per field, so this function is a
-// no-op. CL-04 (Phase 7) extends it once the nested + clearable syntax
-// lands.
+// The orthogonal "delta.nested requires a composite shape" rule is enforced
+// separately by validateTagShape, so delta.nested,delta.clearable on a
+// scalar/pointer is rejected by that gate before this predicate is reached.
 func validateTagCombination(tag ParsedTag) error {
+	if tag.Clearable && tag.Kind != TagKindNested {
+		return fmt.Errorf(
+			"eddt:\"delta.clearable\" requires eddt:\"delta.nested\": the " +
+				"clearable envelope applies only to compositional fields; " +
+				"drop delta.clearable (atomic, pointer, and struct-value " +
+				"fields already carry tri-state via their delta pointer) or " +
+				"add delta.nested")
+	}
 	return nil
 }
 

@@ -221,20 +221,49 @@ func TestValidateTagShape(t *testing.T) {
 	}
 }
 
-// TestValidateTagCombination smoke-tests the harmonised combination stub.
-// Covers: R-16 (E-14)
+// TestValidateTagCombination exercises the E-23 envelope-axis predicate:
+// Clearable ⟹ Kind == TagKindNested.
+// Covers: CL-04 (E-23)
 func TestValidateTagCombination(t *testing.T) {
-	// In the baseline, every TagKind is a no-op: parseTag yields one
-	// kind per field, and the single forbidden combination
-	// (delta.omit + delta.clearable) is not expressible via single-tag
-	// Go struct syntax. CL-04 (Phase 7) extends this function.
-	for _, k := range []TagKind{
-		TagKindNone, TagKindEntityKey, TagKindNested,
-		TagKindOmit, TagKindRetired, TagKindCommutative,
-	} {
-		if err := validateTagCombination(ParsedTag{Kind: k}); err != nil {
-			t.Errorf("kind %v: got error %v, want nil (baseline no-op)", k, err)
-		}
+	cases := []struct {
+		name      string
+		tag       ParsedTag
+		wantErr   bool
+		wantErrHas string // substring that must appear in error
+	}{
+		// Accept: canonical combined form.
+		{"NestedClearable", ParsedTag{Kind: TagKindNested, Clearable: true}, false, ""},
+		// Accept: every primary alone (Clearable false).
+		{"NoneOnly", ParsedTag{Kind: TagKindNone}, false, ""},
+		{"EntityKeyOnly", ParsedTag{Kind: TagKindEntityKey}, false, ""},
+		{"NestedOnly", ParsedTag{Kind: TagKindNested}, false, ""},
+		{"OmitOnly", ParsedTag{Kind: TagKindOmit}, false, ""},
+		{"RetiredOnly", ParsedTag{Kind: TagKindRetired}, false, ""},
+		{"CommutativeOnly", ParsedTag{Kind: TagKindCommutative}, false, ""},
+		// Reject: standalone clearable (Kind stays None — atomic field).
+		{"StandaloneClearable", ParsedTag{Kind: TagKindNone, Clearable: true}, true, "delta.nested"},
+		// Reject: clearable alongside non-nested primaries (subsumes old omit+clearable ban).
+		{"OmitClearable", ParsedTag{Kind: TagKindOmit, Clearable: true}, true, "delta.nested"},
+		{"RetiredClearable", ParsedTag{Kind: TagKindRetired, Clearable: true}, true, "delta.nested"},
+		{"CommutativeClearable", ParsedTag{Kind: TagKindCommutative, Clearable: true}, true, "delta.nested"},
+		{"EntityKeyClearable", ParsedTag{Kind: TagKindEntityKey, Clearable: true}, true, "delta.nested"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTagCombination(tc.tag)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.wantErrHas != "" && !strings.Contains(err.Error(), tc.wantErrHas) {
+					t.Errorf("error should contain %q, got: %v", tc.wantErrHas, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
 	}
 }
 

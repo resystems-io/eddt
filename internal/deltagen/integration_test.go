@@ -233,9 +233,33 @@ var tagErrorCases = []tagErrorCase{
 		structName: "NestedPointer",
 		wantErr:    "composite",
 	},
-	// CL-03: standalone delta.clearable is now recognised and parses without
-	// error (Kind=None → atomic emission). The Clearable ⟹ Nested rejection
-	// is added in CL-04; the test case will be restored there.
+	// CL-04 / E-23: standalone delta.clearable is rejected (Clearable ⟹ Nested).
+	{
+		label:      "T04/StandaloneClearableScalar",
+		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype StandaloneClearableScalar struct {\n\teddt.Header\n\tKey  string `eddt:\"entity.key\"`\n\tName string `eddt:\"delta.clearable\"`\n}\n",
+		structName: "StandaloneClearableScalar",
+		wantErr:    "delta.nested",
+	},
+	{
+		label:      "T04/StandaloneClearablePointer",
+		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype StandaloneClearablePointer struct {\n\teddt.Header\n\tKey      string `eddt:\"entity.key\"`\n\tPriority *int32 `eddt:\"delta.clearable\"`\n}\n",
+		structName: "StandaloneClearablePointer",
+		wantErr:    "delta.nested",
+	},
+	{
+		label:      "T04/ClearablePlusOmit",
+		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype ClearablePlusOmit struct {\n\teddt.Header\n\tKey  string `eddt:\"entity.key\"`\n\tName string `eddt:\"delta.omit,delta.clearable\"`\n}\n",
+		structName: "ClearablePlusOmit",
+		wantErr:    "delta.nested",
+	},
+	{
+		// delta.nested,delta.clearable on a scalar: validateTagShape rejects
+		// first ("composite"), before the combination predicate is reached.
+		label:      "T04/ClearableOnScalarWithNested",
+		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype ClearableOnScalarWithNested struct {\n\teddt.Header\n\tKey  string `eddt:\"entity.key\"`\n\tName string `eddt:\"delta.nested,delta.clearable\"`\n}\n",
+		structName: "ClearableOnScalarWithNested",
+		wantErr:    "composite",
+	},
 
 	// T-03: unknown tag value is rejected by the tag parser.
 	// Exact error message is an implementation detail; any non-nil error is sufficient.
