@@ -226,9 +226,9 @@ func TestValidateTagShape(t *testing.T) {
 // Covers: CL-04 (E-23)
 func TestValidateTagCombination(t *testing.T) {
 	cases := []struct {
-		name      string
-		tag       ParsedTag
-		wantErr   bool
+		name       string
+		tag        ParsedTag
+		wantErr    bool
 		wantErrHas string // substring that must appear in error
 	}{
 		// Accept: canonical combined form.

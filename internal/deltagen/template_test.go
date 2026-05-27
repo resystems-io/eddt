@@ -47,6 +47,29 @@ package deltagen
 //   - compileCheckEmitNestedSlice: isolated-module compile-and-run for N-04;
 //     covers add/remove elements, simultaneous add+remove, round-trip on Names
 //     and Tags, and atomic-field coexistence (E-15 set-diff semantics).
+//   - TestEmitTemplate_Clearable_Struct_SamePkg: asserts CL-05..07 struct shape —
+//     FieldDelta[AddressDelta] field, AddressDelta companion emitted via N-01
+//     dedup, ApplyAddress/DiffAddress present, Op-switch in Apply, three-branch
+//     in Diff, no reflect import (Address is comparable); backed by
+//     compileCheckEmitClearableStruct tri-state truth table.
+//   - TestEmitTemplate_Clearable_Map_SamePkg: asserts CL-05..07 map shape —
+//     FieldDelta[TagsMapDelta] field, TagsMapDelta wrapper with UpdatedTags/
+//     RemovedTags, IsEmpty/ApplyTagsMapDelta/DiffTagsMapDelta emitted, no reflect;
+//     backed by compileCheckEmitClearableMap.
+//   - TestEmitTemplate_Clearable_Slice_SamePkg: asserts CL-05..07 slice shape —
+//     FieldDelta[GroupsSliceDelta] field, GroupsSliceDelta wrapper with
+//     AddedGroups/RemovedGroups, IsEmpty/ApplyGroupsSliceDelta/DiffGroupsSliceDelta,
+//     no reflect; backed by compileCheckEmitClearableSlice.
+//   - TestEmitTemplate_Clearable_Map_Reflect_SamePkg: asserts reflect import
+//     present when map value type is non-comparable (Bag contains a slice).
+//   - TestEmitTemplate_Clearable_Slice_Reflect_SamePkg: asserts reflect import
+//     present when slice element type is non-comparable ([]byte).
+//   - TestEmitTemplate_NestedOnly_NoFieldDelta: regression guard — nested_map and
+//     nested_slice output must not contain runtime.FieldDelta or IsEmpty tokens
+//     (byte-identical guarantee for CL-05..07).
+//   - compileCheckEmitClearableStruct/Map/Slice: isolated-module compile-and-run
+//     covering the tri-state truth table (OpIgnore/OpRetract/OpAssert via
+//     Diff+Apply) plus round-trip and atomic-field coexistence.
 
 import (
 	"bytes"
@@ -4200,4 +4223,868 @@ func findMethodDecl(f *ast.File, recvType, methodName string) *ast.FuncDecl {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// CL-05..07 clearable-envelope template tests
+// ---------------------------------------------------------------------------
+
+func TestEmitTemplate_Clearable_Struct_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_struct_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_struct"},
+		TargetStructs: []string{"ClearableStructSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// ClearableStructSnapshotDelta must carry Location as runtime.FieldDelta[AddressDelta].
+	if !strings.Contains(srcStr, "runtime.FieldDelta[AddressDelta]") {
+		t.Error("expected runtime.FieldDelta[AddressDelta] in generated output")
+	}
+
+	// AddressDelta companion must be emitted (N-01 reuse path).
+	if findStructDecl(f, "AddressDelta") == nil {
+		t.Error("AddressDelta companion struct must be emitted")
+	}
+
+	// No map or slice wrapper: Location is struct-typed, not a container.
+	if findStructDecl(f, "LocationMapDelta") != nil {
+		t.Error("LocationMapDelta must not be emitted for a struct-typed clearable field")
+	}
+	if findStructDecl(f, "LocationSliceDelta") != nil {
+		t.Error("LocationSliceDelta must not be emitted for a struct-typed clearable field")
+	}
+
+	// ApplyAddress / DiffAddress must be emitted.
+	if findFuncDecl(f, "ApplyAddress") == nil {
+		t.Error("ApplyAddress function must be emitted")
+	}
+	if findFuncDecl(f, "DiffAddress") == nil {
+		t.Error("DiffAddress function must be emitted")
+	}
+
+	// Apply body must contain the Op-switch for Location.
+	for _, frag := range []string{"OpRetract", "OpAssert", "ApplyAddress"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Apply body missing %q fragment", frag)
+		}
+	}
+
+	// Diff body must contain the three-branch predicate.
+	for _, frag := range []string{"DiffAddress", "OpRetract"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Diff body missing %q reference", frag)
+		}
+	}
+
+	// No reflect import: Address is comparable (all-scalar fields).
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`unexpected "reflect" import: Address is comparable`)
+	}
+
+	// Method wrappers must be present in same-package mode.
+	if findMethodDecl(f, "ClearableStructSnapshot", "Apply") == nil {
+		t.Error("Apply method wrapper not found (expected in same-package mode)")
+	}
+	if findMethodDecl(f, "ClearableStructSnapshot", "Diff") == nil {
+		t.Error("Diff method wrapper not found (expected in same-package mode)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitClearableStruct(t, src)
+	})
+}
+
+func TestEmitTemplate_Clearable_Map_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_map_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_map"},
+		TargetStructs: []string{"ClearableMapSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// ClearableMapSnapshotDelta must carry Tags as runtime.FieldDelta[TagsMapDelta].
+	if !strings.Contains(srcStr, "runtime.FieldDelta[TagsMapDelta]") {
+		t.Error("expected runtime.FieldDelta[TagsMapDelta] in generated output")
+	}
+
+	// TagsMapDelta wrapper struct must be emitted with the correct fields.
+	wrapperDecl := findStructDecl(f, "TagsMapDelta")
+	if wrapperDecl == nil {
+		t.Fatal("TagsMapDelta wrapper struct must be emitted")
+	}
+	wrapperFields := structFieldNames(wrapperDecl)
+	for _, want := range []string{"UpdatedTags", "RemovedTags"} {
+		if !contains(wrapperFields, want) {
+			t.Errorf("TagsMapDelta missing field %q; fields: %v", want, wrapperFields)
+		}
+	}
+
+	// IsEmpty method and Apply/Diff helpers must be emitted.
+	if findMethodDecl(f, "TagsMapDelta", "IsEmpty") == nil {
+		t.Error("TagsMapDelta.IsEmpty method must be emitted")
+	}
+	if findFuncDecl(f, "ApplyTagsMapDelta") == nil {
+		t.Error("ApplyTagsMapDelta function must be emitted")
+	}
+	if findFuncDecl(f, "DiffTagsMapDelta") == nil {
+		t.Error("DiffTagsMapDelta function must be emitted")
+	}
+
+	// Apply body must contain the Op-switch for Tags.
+	for _, frag := range []string{"OpRetract", "OpAssert", "ApplyTagsMapDelta"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Apply body missing %q fragment", frag)
+		}
+	}
+
+	// Diff body must contain the three-branch predicate.
+	for _, frag := range []string{"IsEmpty", "DiffTagsMapDelta", "OpRetract"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Diff body missing %q reference", frag)
+		}
+	}
+
+	// No reflect import: map[string]string value type is comparable.
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`unexpected "reflect" import: string value type is comparable`)
+	}
+
+	// Method wrappers must be present in same-package mode.
+	if findMethodDecl(f, "ClearableMapSnapshot", "Apply") == nil {
+		t.Error("Apply method wrapper not found (expected in same-package mode)")
+	}
+	if findMethodDecl(f, "ClearableMapSnapshot", "Diff") == nil {
+		t.Error("Diff method wrapper not found (expected in same-package mode)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitClearableMap(t, src)
+	})
+}
+
+func TestEmitTemplate_Clearable_Slice_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_slice_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_slice"},
+		TargetStructs: []string{"ClearableSliceSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// ClearableSliceSnapshotDelta must carry Groups as runtime.FieldDelta[GroupsSliceDelta].
+	if !strings.Contains(srcStr, "runtime.FieldDelta[GroupsSliceDelta]") {
+		t.Error("expected runtime.FieldDelta[GroupsSliceDelta] in generated output")
+	}
+
+	// GroupsSliceDelta wrapper struct must be emitted with the correct fields.
+	wrapperDecl := findStructDecl(f, "GroupsSliceDelta")
+	if wrapperDecl == nil {
+		t.Fatal("GroupsSliceDelta wrapper struct must be emitted")
+	}
+	wrapperFields := structFieldNames(wrapperDecl)
+	for _, want := range []string{"AddedGroups", "RemovedGroups"} {
+		if !contains(wrapperFields, want) {
+			t.Errorf("GroupsSliceDelta missing field %q; fields: %v", want, wrapperFields)
+		}
+	}
+
+	// IsEmpty method and Apply/Diff helpers must be emitted.
+	if findMethodDecl(f, "GroupsSliceDelta", "IsEmpty") == nil {
+		t.Error("GroupsSliceDelta.IsEmpty method must be emitted")
+	}
+	if findFuncDecl(f, "ApplyGroupsSliceDelta") == nil {
+		t.Error("ApplyGroupsSliceDelta function must be emitted")
+	}
+	if findFuncDecl(f, "DiffGroupsSliceDelta") == nil {
+		t.Error("DiffGroupsSliceDelta function must be emitted")
+	}
+
+	// Apply body must contain the Op-switch for Groups.
+	for _, frag := range []string{"OpRetract", "OpAssert", "ApplyGroupsSliceDelta"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Apply body missing %q fragment", frag)
+		}
+	}
+
+	// Diff body must contain the three-branch predicate.
+	for _, frag := range []string{"IsEmpty", "DiffGroupsSliceDelta", "OpRetract"} {
+		if !strings.Contains(srcStr, frag) {
+			t.Errorf("Diff body missing %q reference", frag)
+		}
+	}
+
+	// No reflect import: string element type is comparable.
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`unexpected "reflect" import: string element type is comparable`)
+	}
+
+	// Method wrappers must be present in same-package mode.
+	if findMethodDecl(f, "ClearableSliceSnapshot", "Apply") == nil {
+		t.Error("Apply method wrapper not found (expected in same-package mode)")
+	}
+	if findMethodDecl(f, "ClearableSliceSnapshot", "Diff") == nil {
+		t.Error("Diff method wrapper not found (expected in same-package mode)")
+	}
+
+	t.Run("CompileCheck", func(t *testing.T) {
+		compileCheckEmitClearableSlice(t, src)
+	})
+}
+
+func TestEmitTemplate_Clearable_Map_Reflect_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_map_reflect_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_map_reflect"},
+		TargetStructs: []string{"ClearableMapReflectSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	// reflect import must be present: Bag contains a slice → non-comparable value type.
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`"reflect" import must be present: Bag is non-comparable (contains a slice)`)
+	}
+	if !strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Error("reflect.DeepEqual must appear in DiffTagsMapDelta for non-comparable value type")
+	}
+}
+
+func TestEmitTemplate_Clearable_Slice_Reflect_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_slice_reflect_delta.go")
+
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_slice_reflect"},
+		TargetStructs: []string{"ClearableSliceReflectSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	// reflect import must be present: []byte element is non-comparable.
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`"reflect" import must be present: []byte is non-comparable`)
+	}
+	if !strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Error("reflect.DeepEqual must appear in DiffBlobsSliceDelta for non-comparable element type")
+	}
+}
+
+func TestEmitTemplate_NestedOnly_NoFieldDelta(t *testing.T) {
+	cases := []struct {
+		name   string
+		pkg    string
+		target string
+	}{
+		{"nested_map", "./testdata/emit/nested_map", "NestedMapSnapshot"},
+		{"nested_slice", "./testdata/emit/nested_slice", "NestedSliceSnapshot"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outPath := filepath.Join(t.TempDir(), "delta.go")
+			cfg := Config{
+				InputPkgs:     []string{tc.pkg},
+				TargetStructs: []string{tc.target},
+				OutPath:       outPath,
+			}
+			if err := New(cfg).Run(); err != nil {
+				t.Fatalf("Run() failed: %v", err)
+			}
+			src, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("reading output: %v", err)
+			}
+			srcStr := string(src)
+			for _, tok := range []string{"runtime.FieldDelta", "IsEmpty"} {
+				if strings.Contains(srcStr, tok) {
+					t.Errorf("nested-only output must not contain %q (byte-identical regression)", tok)
+				}
+			}
+		})
+	}
+}
+
+func compileCheckEmitClearableStruct(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package clearable_struct
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type Address struct {
+	Street string
+	City   string
+}
+
+type ClearableStructSnapshot struct {
+	eddt.Header
+	Key      string  ` + "`eddt:\"entity.key\"`" + `
+	Location Address ` + "`eddt:\"delta.nested,delta.clearable\"`" + `
+	Count    int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package clearable_struct_test
+
+import (
+	"testing"
+	"time"
+
+	"clearable_struct"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrCS(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+var (
+	addrA = clearable_struct.Address{Street: "1 Main St", City: "Springfield"}
+	addrB = clearable_struct.Address{Street: "2 Oak Ave", City: "Shelbyville"}
+)
+
+// TestClearableStruct_OpIgnore: equal Location → Diff produces OpIgnore → Apply propagates it.
+func TestClearableStruct_OpIgnore(t *testing.T) {
+	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA, Count: 3}
+	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: addrA, Count: 3}
+	d, err := clearable_struct.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Location.Op != eddt.OpIgnore {
+		t.Errorf("equal Location must yield OpIgnore; got %v", d.Location.Op)
+	}
+	result, err := clearable_struct.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Location != addrA {
+		t.Errorf("OpIgnore: Location must propagate unchanged; got %v", result.Location)
+	}
+}
+
+// TestClearableStruct_OpRetract: non-zero→zero Location → Diff produces OpRetract → Apply resets to Address{}.
+func TestClearableStruct_OpRetract(t *testing.T) {
+	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA}
+	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: clearable_struct.Address{}}
+	d, err := clearable_struct.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Location.Op != eddt.OpRetract {
+		t.Errorf("non-zero to zero Location must yield OpRetract; got %v", d.Location.Op)
+	}
+	result, err := clearable_struct.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Location != (clearable_struct.Address{}) {
+		t.Errorf("OpRetract: Location must be zero Address{}; got %v", result.Location)
+	}
+}
+
+// TestClearableStruct_OpAssert: different non-zero locations → Diff produces OpAssert → Apply sets to b.Location.
+func TestClearableStruct_OpAssert(t *testing.T) {
+	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA}
+	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: addrB}
+	d, err := clearable_struct.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Location.Op != eddt.OpAssert {
+		t.Errorf("changed Location must yield OpAssert; got %v", d.Location.Op)
+	}
+	result, err := clearable_struct.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Location != addrB {
+		t.Errorf("OpAssert: Location must equal addrB; got %v", result.Location)
+	}
+}
+
+// TestClearableStruct_RoundTrip: Apply(a, Diff(a,b)).Location == b.Location for all three Op cases.
+func TestClearableStruct_RoundTrip(t *testing.T) {
+	base := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA, Count: 5}
+	targets := []clearable_struct.ClearableStructSnapshot{
+		{Header: hdrCS(2), Key: "k", Location: addrA, Count: 5},
+		{Header: hdrCS(2), Key: "k", Location: clearable_struct.Address{}, Count: 5},
+		{Header: hdrCS(2), Key: "k", Location: addrB, Count: 7},
+	}
+	for _, target := range targets {
+		d, err := clearable_struct.Diff(base, target)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		result, err := clearable_struct.Apply(base, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if result.Location != target.Location {
+			t.Errorf("round-trip Location: got %v want %v", result.Location, target.Location)
+		}
+		if result.Count != target.Count {
+			t.Errorf("round-trip Count: got %d want %d", result.Count, target.Count)
+		}
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_struct_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write clearable_struct_test.go: %v", err)
+	}
+
+	modContent := "module clearable_struct\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+func compileCheckEmitClearableMap(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package clearable_map
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type ClearableMapSnapshot struct {
+	eddt.Header
+	Key   string            ` + "`eddt:\"entity.key\"`" + `
+	Tags  map[string]string ` + "`eddt:\"delta.nested,delta.clearable\"`" + `
+	Count int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package clearable_map_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"clearable_map"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrCM(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// TestClearableMap_OpIgnore: equal Tags → Diff produces OpIgnore → Apply propagates Tags.
+func TestClearableMap_OpIgnore(t *testing.T) {
+	tags := map[string]string{"x": "1"}
+	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: tags}
+	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1"}}
+	d, err := clearable_map.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Tags.Op != eddt.OpIgnore {
+		t.Errorf("equal Tags must yield OpIgnore; got %v", d.Tags.Op)
+	}
+	result, err := clearable_map.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Tags, tags) {
+		t.Errorf("OpIgnore: Tags must propagate unchanged; got %v", result.Tags)
+	}
+}
+
+// TestClearableMap_OpRetract: non-empty → nil Tags → Diff produces OpRetract → Apply sets to nil.
+func TestClearableMap_OpRetract(t *testing.T) {
+	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: map[string]string{"x": "1"}}
+	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: nil}
+	d, err := clearable_map.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Tags.Op != eddt.OpRetract {
+		t.Errorf("non-empty to nil Tags must yield OpRetract; got %v", d.Tags.Op)
+	}
+	result, err := clearable_map.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Tags != nil {
+		t.Errorf("OpRetract: Tags must be nil; got %v", result.Tags)
+	}
+}
+
+// TestClearableMap_OpAssert: different non-empty Tags → Diff produces OpAssert → Apply applies inner delta.
+func TestClearableMap_OpAssert(t *testing.T) {
+	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
+	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1", "z": "3"}}
+	d, err := clearable_map.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Tags.Op != eddt.OpAssert {
+		t.Errorf("changed Tags must yield OpAssert; got %v", d.Tags.Op)
+	}
+	result, err := clearable_map.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Tags, b.Tags) {
+		t.Errorf("OpAssert: Tags must match b; got %v want %v", result.Tags, b.Tags)
+	}
+}
+
+// TestClearableMap_RoundTrip: Apply(a, Diff(a,b)).Tags == b.Tags for all three Op cases.
+func TestClearableMap_RoundTrip(t *testing.T) {
+	base := clearable_map.ClearableMapSnapshot{
+		Header: hdrCM(1), Key: "k",
+		Tags:   map[string]string{"keep": "v", "drop": "gone"},
+		Count:  2,
+	}
+	targets := []clearable_map.ClearableMapSnapshot{
+		{Header: hdrCM(2), Key: "k", Tags: map[string]string{"keep": "v", "drop": "gone"}, Count: 2},
+		{Header: hdrCM(2), Key: "k", Tags: nil, Count: 2},
+		{Header: hdrCM(2), Key: "k", Tags: map[string]string{"keep": "v", "added": "new"}, Count: 5},
+	}
+	for _, target := range targets {
+		d, err := clearable_map.Diff(base, target)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		result, err := clearable_map.Apply(base, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(result.Tags, target.Tags) {
+			t.Errorf("round-trip Tags: got %v want %v", result.Tags, target.Tags)
+		}
+		if result.Count != target.Count {
+			t.Errorf("round-trip Count: got %d want %d", result.Count, target.Count)
+		}
+	}
+}
+
+// TestClearableMap_AtomicCoexistence: Count-only change yields SetCount with no Tags change.
+func TestClearableMap_AtomicCoexistence(t *testing.T) {
+	tags := map[string]string{"x": "1"}
+	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: tags, Count: 1}
+	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1"}, Count: 2}
+	d, err := clearable_map.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.SetCount == nil || *d.SetCount != 2 {
+		t.Errorf("SetCount must be 2; got %v", d.SetCount)
+	}
+	if d.Tags.Op != eddt.OpIgnore {
+		t.Errorf("Tags must be OpIgnore when unchanged; got %v", d.Tags.Op)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_map_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write clearable_map_test.go: %v", err)
+	}
+
+	modContent := "module clearable_map\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+}
+
+func compileCheckEmitClearableSlice(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	srcCode := `package clearable_slice
+
+import eddt "go.resystems.io/eddt/runtime"
+
+var _ eddt.Header
+
+type ClearableSliceSnapshot struct {
+	eddt.Header
+	Key    string   ` + "`eddt:\"entity.key\"`" + `
+	Groups []string ` + "`eddt:\"delta.nested,delta.clearable\"`" + `
+	Count  int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
+		t.Fatalf("write snapshot.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
+
+	testCode := `package clearable_slice_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"clearable_slice"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrCSl(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// TestClearableSlice_OpIgnore: equal Groups → Diff produces OpIgnore → Apply propagates Groups.
+func TestClearableSlice_OpIgnore(t *testing.T) {
+	groups := []string{"a", "b"}
+	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: groups}
+	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"a", "b"}}
+	d, err := clearable_slice.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Groups.Op != eddt.OpIgnore {
+		t.Errorf("equal Groups must yield OpIgnore; got %v", d.Groups.Op)
+	}
+	result, err := clearable_slice.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Groups, groups) {
+		t.Errorf("OpIgnore: Groups must propagate unchanged; got %v", result.Groups)
+	}
+}
+
+// TestClearableSlice_OpRetract: non-empty → nil Groups → Diff produces OpRetract → Apply sets to nil.
+func TestClearableSlice_OpRetract(t *testing.T) {
+	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: []string{"a", "b"}}
+	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: nil}
+	d, err := clearable_slice.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Groups.Op != eddt.OpRetract {
+		t.Errorf("non-empty to nil Groups must yield OpRetract; got %v", d.Groups.Op)
+	}
+	result, err := clearable_slice.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Groups != nil {
+		t.Errorf("OpRetract: Groups must be nil; got %v", result.Groups)
+	}
+}
+
+// TestClearableSlice_OpAssert: different non-empty Groups → Diff produces OpAssert → Apply applies inner delta.
+func TestClearableSlice_OpAssert(t *testing.T) {
+	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: []string{"a", "b"}}
+	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"a", "c"}}
+	d, err := clearable_slice.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Groups.Op != eddt.OpAssert {
+		t.Errorf("changed Groups must yield OpAssert; got %v", d.Groups.Op)
+	}
+	result, err := clearable_slice.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	found := make(map[string]bool, len(result.Groups))
+	for _, g := range result.Groups {
+		found[g] = true
+	}
+	if !found["a"] {
+		t.Error("OpAssert: Groups must contain a")
+	}
+	if !found["c"] {
+		t.Error("OpAssert: Groups must contain c")
+	}
+	if found["b"] {
+		t.Error("OpAssert: Groups must not contain b (removed)")
+	}
+}
+
+// TestClearableSlice_RoundTrip_EmptyToNonEmpty: nil → non-empty asserts correctly.
+func TestClearableSlice_RoundTrip_EmptyToNonEmpty(t *testing.T) {
+	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: nil}
+	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"new"}}
+	d, err := clearable_slice.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Groups.Op != eddt.OpAssert {
+		t.Errorf("nil to non-empty must yield OpAssert; got %v", d.Groups.Op)
+	}
+	result, err := clearable_slice.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Groups, b.Groups) {
+		t.Errorf("RoundTrip: got %v want %v", result.Groups, b.Groups)
+	}
+}
+
+// TestClearableSlice_AtomicCoexistence: Count-only change yields SetCount with no Groups change.
+func TestClearableSlice_AtomicCoexistence(t *testing.T) {
+	groups := []string{"x", "y"}
+	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: groups, Count: 1}
+	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"x", "y"}, Count: 2}
+	d, err := clearable_slice.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.SetCount == nil || *d.SetCount != 2 {
+		t.Errorf("SetCount must be 2; got %v", d.SetCount)
+	}
+	if d.Groups.Op != eddt.OpIgnore {
+		t.Errorf("Groups must be OpIgnore when unchanged; got %v", d.Groups.Op)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_slice_test.go"), []byte(testCode), 0644); err != nil {
+		t.Fatalf("write clearable_slice_test.go: %v", err)
+	}
+
+	modContent := "module clearable_slice\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read eddt go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
 }

@@ -80,6 +80,19 @@ type importSpec struct {
 
 // nestedTypeView is the template's view for one delta.nested companion type.
 // Emitted before the parent snapshotView's TDelta declaration.
+// nestedKind distinguishes between struct-companion types (nestedKindStruct,
+// the default) and the net-new map/slice wrapper types introduced for CL-05..07
+// clearable emission (nestedKindMapWrapper, nestedKindSliceWrapper). The zero
+// value (nestedKindStruct) preserves byte-identical emission for all existing
+// nested struct companions.
+type nestedKind int
+
+const (
+	nestedKindStruct       nestedKind = iota // existing N-01 struct companion
+	nestedKindMapWrapper                     // CL-05: <X>MapDelta wrapper for clearable map field
+	nestedKindSliceWrapper                   // CL-05: <X>SliceDelta wrapper for clearable slice field
+)
+
 type nestedTypeView struct {
 	// Name is the source type name (e.g. "Inner").
 	Name string
@@ -105,6 +118,34 @@ type nestedTypeView struct {
 
 	// EmitMethod is true in same-package mode; gates method wrapper emission.
 	EmitMethod bool
+
+	// Kind discriminates struct companions (default 0) from clearable wrappers.
+	// Non-zero kinds skip the struct-companion Apply/Diff func templates.
+	Kind nestedKind
+
+	// IsMapWrapper / IsSliceWrapper are derived from Kind for use in templates.
+	IsMapWrapper   bool
+	IsSliceWrapper bool
+
+	// Wrapper payload fields: populated only for nestedKindMapWrapper and
+	// nestedKindSliceWrapper (CL-05..07). The algorithm mirrors the existing
+	// applyMapField / diffMapField (and applySliceField / diffSliceField) logic
+	// but parameterised over the wrapper struct rather than the parent's sibling fields.
+
+	// WrapperUpdatedName is "Updated<Field>" (map) or "Added<Field>" (slice).
+	WrapperUpdatedName string
+	// WrapperRemovedName is "Removed<Field>" in both shapes.
+	WrapperRemovedName string
+	// WrapperMapType is the rendered map type string (e.g. "map[string]string").
+	WrapperMapType string
+	// WrapperMapKeyType is the rendered map key type string (e.g. "string").
+	WrapperMapKeyType string
+	// WrapperSliceType is the rendered slice type string (e.g. "[]string").
+	WrapperSliceType string
+	// WrapperSliceElem is the rendered element type string (e.g. "string").
+	WrapperSliceElem string
+	// WrapperUseReflectEq is true when the map value / slice elem is not comparable.
+	WrapperUseReflectEq bool
 }
 
 // snapshotView is the template's per-Snapshot view.
@@ -258,6 +299,37 @@ type fieldView struct {
 	// (§5.2) and the O(n²) reflect.DeepEqual fallback must be used instead of the
 	// O(n) map[T]struct{} set path. Set by !types.Comparable(sliceT.Elem()). Only when IsSliceNested.
 	SliceElemUseReflectEq bool
+
+	// ── Clearable-envelope fields (CL-05..07, E-17/E-23) ─────────────────────
+	//
+	// IsClearable is true for delta.nested+delta.clearable fields. When true
+	// the parent Delta carries `X runtime.FieldDelta[ClearableInner]` (single
+	// field, no sibling fields). IsNested / IsMapNested / IsSliceNested are false.
+	IsClearable bool
+
+	// ClearableInner is the T_inner type name used in runtime.FieldDelta[T_inner]:
+	// "FooDelta" for struct, "<X>MapDelta" for map, "<X>SliceDelta" for slice.
+	ClearableInner string
+
+	// ClearableIsStruct is true when the inner shape is a named struct type.
+	// Drives the Diff template's equality and zero-composite predicates.
+	ClearableIsStruct bool
+
+	// ClearableZeroComposite is the Go expression for the zero value of the
+	// composite field: qualified struct literal (e.g. "Foo{}" / "model.Foo{}")
+	// for struct; "nil" for map and slice.
+	ClearableZeroComposite string
+
+	// ClearableApplyFunc / ClearableDiffFunc are the package-level function
+	// names for the inner Apply/Diff (always func form, both modes, so the
+	// Op-switch template is mode-agnostic).
+	ClearableApplyFunc string
+	ClearableDiffFunc  string
+
+	// ClearableStructEqReflect is true when the struct type is not comparable
+	// (e.g. it contains a slice/map), so the Diff predicate must use
+	// reflect.DeepEqual instead of == for equality and zero-composite detection.
+	ClearableStructEqReflect bool
 }
 
 // ── Template ─────────────────────────────────────────────────────────────────
@@ -305,7 +377,7 @@ import (
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
-{{range .Snapshots}}{{range .NestedTypes}}{{template "nestedTypeDecl" .}}{{template "nestedApplyFunc" .}}{{if .EmitMethod}}{{template "nestedApplyMethod" .}}{{end}}{{template "nestedDiffFunc" .}}{{if .EmitMethod}}{{template "nestedDiffMethod" .}}{{end}}
+{{range .Snapshots}}{{range .NestedTypes}}{{if .IsMapWrapper}}{{template "mapWrapper" .}}{{else if .IsSliceWrapper}}{{template "sliceWrapper" .}}{{else}}{{template "nestedTypeDecl" .}}{{template "nestedApplyFunc" .}}{{if .EmitMethod}}{{template "nestedApplyMethod" .}}{{end}}{{template "nestedDiffFunc" .}}{{if .EmitMethod}}{{template "nestedDiffMethod" .}}{{end}}{{end}}
 {{end}}
 // {{.DeltaName}} is the Delta companion type for {{.Qualifier}}{{.Name}}.
 // Each payload field is expressed as an optional pointer: a nil value means
@@ -350,7 +422,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 }
 {{end -}}
 
-{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsSliceNested}}{{template "applySliceField" .}}{{else if .IsMapNested}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsClearable}}{{template "applyClearableField" .}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsSliceNested}}{{template "applySliceField" .}}{{else if .IsMapNested}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
@@ -376,7 +448,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 }
 {{end -}}
 
-{{define "diffField"}}{{if .IsSliceNested}}{{template "diffSliceField" .}}{{else if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .IsPointer}}if !((a.{{.Name}} == nil && b.{{.Name}} == nil) || (a.{{.Name}} != nil && b.{{.Name}} != nil && {{if .PointeeUseReflectEq}}reflect.DeepEqual(*a.{{.Name}}, *b.{{.Name}}){{else}}*a.{{.Name}} == *b.{{.Name}}{{end}})) { d.{{.DeltaName}} = &b.{{.Name}} }{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+{{define "diffField"}}{{if .IsClearable}}{{template "diffClearableField" .}}{{else if .IsSliceNested}}{{template "diffSliceField" .}}{{else if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .IsPointer}}if !((a.{{.Name}} == nil && b.{{.Name}} == nil) || (a.{{.Name}} != nil && b.{{.Name}} != nil && {{if .PointeeUseReflectEq}}reflect.DeepEqual(*a.{{.Name}}, *b.{{.Name}}){{else}}*a.{{.Name}} == *b.{{.Name}}{{end}})) { d.{{.DeltaName}} = &b.{{.Name}} }{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
@@ -642,7 +714,157 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 	}
 	if len(__removed) > 0 { d.{{.SliceRemovedName}} = __removed }
 }
-{{- end}}{{end -}}`
+{{- end}}{{end -}}
+
+{{define "applyClearableField"}}switch d.{{.DeltaName}}.Op {
+case runtime.OpRetract:
+	result.{{.Name}} = {{.ClearableZeroComposite}}
+case runtime.OpAssert:
+	result.{{.Name}} = {{.ClearableApplyFunc}}(s.{{.Name}}, d.{{.DeltaName}}.Value)
+default:
+	result.{{.Name}} = s.{{.Name}}
+}{{end -}}
+
+{{define "diffClearableField"}}{{if .ClearableIsStruct}}if {{if .ClearableStructEqReflect}}!reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}){{else}}a.{{.Name}} != b.{{.Name}}{{end}} {
+	if {{if .ClearableStructEqReflect}}reflect.DeepEqual(b.{{.Name}}, {{.ClearableZeroComposite}}){{else}}b.{{.Name}} == ({{.ClearableZeroComposite}}){{end}} {
+		d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpRetract}
+	} else {
+		d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpAssert, Value: {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})}
+	}
+}{{else}}{
+	__inner := {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})
+	if !__inner.IsEmpty() {
+		if len(b.{{.Name}}) == 0 {
+			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpRetract}
+		} else {
+			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpAssert, Value: __inner}
+		}
+	}
+}{{end}}{{end -}}
+
+{{define "mapWrapper"}}
+// {{.DeltaName}} is the clearable-envelope inner type for a delta.nested+delta.clearable
+// map field. It carries the per-entry upsert/remove delta (E-16/E-17).
+type {{.DeltaName}} struct {
+	// {{.WrapperUpdatedName}} contains entries to upsert (add or overwrite).
+	{{.WrapperUpdatedName}} {{.WrapperMapType}}
+	// {{.WrapperRemovedName}} contains keys to delete.
+	{{.WrapperRemovedName}} []{{.WrapperMapKeyType}}
+}
+
+// IsEmpty reports whether the delta has no changes.
+// Used by the Diff three-branch predicate to decide between OpIgnore and OpAssert/OpRetract.
+func (w {{.DeltaName}}) IsEmpty() bool {
+	return len(w.{{.WrapperUpdatedName}}) == 0 && len(w.{{.WrapperRemovedName}}) == 0
+}
+
+// {{.ApplyFuncName}} applies w to prior, returning the resulting map (N-03).
+func {{.ApplyFuncName}}(prior {{.WrapperMapType}}, w {{.DeltaName}}) {{.WrapperMapType}} {
+	__m := make({{.WrapperMapType}}, len(prior))
+	for __k, __v := range prior { __m[__k] = __v }
+	for _, __k := range w.{{.WrapperRemovedName}} { delete(__m, __k) }
+	for __k, __v := range w.{{.WrapperUpdatedName}} { __m[__k] = __v }
+	return __m
+}
+
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) value-equals b (N-03, E-16).
+func {{.DiffFuncName}}(a, b {{.WrapperMapType}}) {{.DeltaName}} {
+	var w {{.DeltaName}}
+	for __k := range a {
+		if _, __ok := b[__k]; !__ok {
+			w.{{.WrapperRemovedName}} = append(w.{{.WrapperRemovedName}}, __k)
+		}
+	}
+	for __k, __v := range b {
+		if __av, __ok := a[__k]; !__ok || {{if .WrapperUseReflectEq}}!reflect.DeepEqual(__av, __v){{else}}__av != __v{{end}} {
+			if w.{{.WrapperUpdatedName}} == nil { w.{{.WrapperUpdatedName}} = make({{.WrapperMapType}}) }
+			w.{{.WrapperUpdatedName}}[__k] = __v
+		}
+	}
+	return w
+}
+{{end -}}
+
+{{define "sliceWrapper"}}
+// {{.DeltaName}} is the clearable-envelope inner type for a delta.nested+delta.clearable
+// slice field. It carries the set-difference delta (E-15/E-17).
+type {{.DeltaName}} struct {
+	// {{.WrapperUpdatedName}} contains elements to add (present in b, absent in a).
+	{{.WrapperUpdatedName}} {{.WrapperSliceType}}
+	// {{.WrapperRemovedName}} contains elements to remove (present in a, absent in b).
+	{{.WrapperRemovedName}} {{.WrapperSliceType}}
+}
+
+// IsEmpty reports whether the delta has no changes.
+func (w {{.DeltaName}}) IsEmpty() bool {
+	return len(w.{{.WrapperUpdatedName}}) == 0 && len(w.{{.WrapperRemovedName}}) == 0
+}
+{{if .WrapperUseReflectEq}}// {{.ApplyFuncName}} applies w to prior (N-04, E-15); O(n²) reflect.DeepEqual fallback (§5.2).
+func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.WrapperSliceType}} {
+	__src := prior
+	if len(w.{{.WrapperRemovedName}}) > 0 {
+		__out := make({{.WrapperSliceType}}, 0, len(__src))
+		for _, __v := range __src {
+			__keep := true
+			for _, __r := range w.{{.WrapperRemovedName}} {
+				if reflect.DeepEqual(__r, __v) { __keep = false; break }
+			}
+			if __keep { __out = append(__out, __v) }
+		}
+		__src = __out
+	}
+	return append(__src, w.{{.WrapperUpdatedName}}...)
+}
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (N-04, E-15); O(n²).
+func {{.DiffFuncName}}(a, b {{.WrapperSliceType}}) {{.DeltaName}} {
+	var w {{.DeltaName}}
+	for _, __v := range b {
+		__found := false
+		for _, __av := range a {
+			if reflect.DeepEqual(__av, __v) { __found = true; break }
+		}
+		if !__found { w.{{.WrapperUpdatedName}} = append(w.{{.WrapperUpdatedName}}, __v) }
+	}
+	for _, __v := range a {
+		__found := false
+		for _, __bv := range b {
+			if reflect.DeepEqual(__bv, __v) { __found = true; break }
+		}
+		if !__found { w.{{.WrapperRemovedName}} = append(w.{{.WrapperRemovedName}}, __v) }
+	}
+	return w
+}
+{{- else}}// {{.ApplyFuncName}} applies w to prior (N-04, E-15); O(n) map[T]struct{} membership set.
+func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.WrapperSliceType}} {
+	__src := prior
+	if len(w.{{.WrapperRemovedName}}) > 0 {
+		__rem := make(map[{{.WrapperSliceElem}}]struct{}, len(w.{{.WrapperRemovedName}}))
+		for _, __r := range w.{{.WrapperRemovedName}} { __rem[__r] = struct{}{} }
+		__out := make({{.WrapperSliceType}}, 0, len(__src))
+		for _, __v := range __src {
+			if _, __ok := __rem[__v]; !__ok { __out = append(__out, __v) }
+		}
+		__src = __out
+	}
+	return append(__src, w.{{.WrapperUpdatedName}}...)
+}
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (N-04, E-15); O(n).
+func {{.DiffFuncName}}(a, b {{.WrapperSliceType}}) {{.DeltaName}} {
+	var w {{.DeltaName}}
+	__aset := make(map[{{.WrapperSliceElem}}]struct{}, len(a))
+	for _, __v := range a { __aset[__v] = struct{}{} }
+	for _, __v := range b {
+		if _, __ok := __aset[__v]; !__ok { w.{{.WrapperUpdatedName}} = append(w.{{.WrapperUpdatedName}}, __v) }
+	}
+	__bset := make(map[{{.WrapperSliceElem}}]struct{}, len(b))
+	for _, __v := range b { __bset[__v] = struct{}{} }
+	for _, __v := range a {
+		if _, __ok := __bset[__v]; !__ok { w.{{.WrapperRemovedName}} = append(w.{{.WrapperRemovedName}}, __v) }
+	}
+	return w
+}
+{{- end}}
+{{end -}}`
 
 // deltaTemplate is the parsed and compiled template; compiled once at init.
 var deltaTemplate = template.Must(
@@ -846,6 +1068,11 @@ func buildNestedTypeView(
 		}
 
 		if tag.Kind == TagKindNested {
+			if tag.Clearable {
+				return nestedTypeView{}, nil, fmt.Errorf(
+					"nested type %s field %s: eddt:\"delta.clearable\" inside a delta.nested type is not yet supported",
+					typeName, field.Name())
+			}
 			if shape == ShapeSlice {
 				goType := field.Type()
 				sliceT := goType.Underlying().(*types.Slice)
@@ -961,13 +1188,152 @@ func buildNestedTypeView(
 	return nv, additional, nil
 }
 
+// buildClearableFieldView handles the delta.nested+delta.clearable case (CL-05..07,
+// E-17/E-23). It mutates sv in place, appending to sv.Fields, sv.DiffFields, and
+// sv.NestedTypes as appropriate. The three shapes diverge in inner type and wrapper:
+//   - struct: inner = <SubType>Delta; reuses N-01 recursion for dedup.
+//   - map: inner = <FieldName>MapDelta; appends a nestedKindMapWrapper view.
+//   - slice: inner = <FieldName>SliceDelta; appends a nestedKindSliceWrapper view.
+//
+// Validation (Clearable ⟹ Nested, Nested ⟹ composite) is already done upstream.
+func buildClearableFieldView(
+	f ParsedField,
+	sv *snapshotView,
+	qualifier types.Qualifier,
+	emitMethod bool,
+	visited map[string]bool,
+	inPath map[string]bool,
+) error {
+	switch f.Shape {
+	case ShapeSlice:
+		sliceT := f.GoType.Underlying().(*types.Slice)
+		sliceStr := types.TypeString(f.GoType, qualifier)
+		elemStr := types.TypeString(sliceT.Elem(), qualifier)
+		useReflect := !types.Comparable(sliceT.Elem())
+		innerName := f.Name + "SliceDelta"
+		fv := fieldView{
+			Name:                   f.Name,
+			DeltaName:              f.Name,
+			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
+			IsClearable:            true,
+			ClearableInner:         innerName,
+			ClearableIsStruct:      false,
+			ClearableZeroComposite: "nil",
+			ClearableApplyFunc:     "Apply" + innerName,
+			ClearableDiffFunc:      "Diff" + innerName,
+		}
+		sv.Fields = append(sv.Fields, fv)
+		sv.DiffFields = append(sv.DiffFields, fv)
+		if useReflect {
+			sv.NeedsReflect = true
+		}
+		sv.NestedTypes = append(sv.NestedTypes, nestedTypeView{
+			Kind:                nestedKindSliceWrapper,
+			IsSliceWrapper:      true,
+			DeltaName:           innerName,
+			ApplyFuncName:       "Apply" + innerName,
+			DiffFuncName:        "Diff" + innerName,
+			WrapperUpdatedName:  "Added" + f.Name,
+			WrapperRemovedName:  "Removed" + f.Name,
+			WrapperSliceType:    sliceStr,
+			WrapperSliceElem:    elemStr,
+			WrapperUseReflectEq: useReflect,
+		})
+
+	case ShapeMap:
+		mapT := f.GoType.Underlying().(*types.Map)
+		keyStr := types.TypeString(mapT.Key(), qualifier)
+		mapStr := types.TypeString(f.GoType, qualifier)
+		useReflect := !types.Comparable(mapT.Elem())
+		innerName := f.Name + "MapDelta"
+		fv := fieldView{
+			Name:                   f.Name,
+			DeltaName:              f.Name,
+			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
+			IsClearable:            true,
+			ClearableInner:         innerName,
+			ClearableIsStruct:      false,
+			ClearableZeroComposite: "nil",
+			ClearableApplyFunc:     "Apply" + innerName,
+			ClearableDiffFunc:      "Diff" + innerName,
+		}
+		sv.Fields = append(sv.Fields, fv)
+		sv.DiffFields = append(sv.DiffFields, fv)
+		if useReflect {
+			sv.NeedsReflect = true
+		}
+		sv.NestedTypes = append(sv.NestedTypes, nestedTypeView{
+			Kind:                nestedKindMapWrapper,
+			IsMapWrapper:        true,
+			DeltaName:           innerName,
+			ApplyFuncName:       "Apply" + innerName,
+			DiffFuncName:        "Diff" + innerName,
+			WrapperUpdatedName:  "Updated" + f.Name,
+			WrapperRemovedName:  "Removed" + f.Name,
+			WrapperMapType:      mapStr,
+			WrapperMapKeyType:   keyStr,
+			WrapperUseReflectEq: useReflect,
+		})
+
+	default: // struct-value shape
+		named, ok := f.GoType.(*types.Named)
+		if !ok {
+			return fmt.Errorf(
+				"field %s: delta.nested+delta.clearable requires a named struct type", f.Name)
+		}
+		subTypeName := named.Obj().Name()
+		qualifiedSub := types.TypeString(named, qualifier)
+		eqReflect := !types.Comparable(f.GoType)
+		fv := fieldView{
+			Name:                     f.Name,
+			DeltaName:                f.Name,
+			DeltaType:                "runtime.FieldDelta[" + subTypeName + "Delta]",
+			IsClearable:              true,
+			ClearableInner:           subTypeName + "Delta",
+			ClearableIsStruct:        true,
+			ClearableZeroComposite:   qualifiedSub + "{}",
+			ClearableApplyFunc:       "Apply" + subTypeName,
+			ClearableDiffFunc:        "Diff" + subTypeName,
+			ClearableStructEqReflect: eqReflect,
+		}
+		sv.Fields = append(sv.Fields, fv)
+		sv.DiffFields = append(sv.DiffFields, fv)
+		if eqReflect {
+			sv.NeedsReflect = true
+		}
+		// Funnel through N-01 recursion so FooDelta/ApplyFoo/DiffFoo are emitted
+		// exactly once (deduped vs any plain delta.nested use of the same type).
+		if inPath[subTypeName] {
+			return fmt.Errorf(
+				"field %s: delta.nested+delta.clearable type chain forms a cycle at %s (§3.3.2)",
+				f.Name, subTypeName)
+		}
+		if !visited[subTypeName] {
+			visited[subTypeName] = true
+			inPath[subTypeName] = true
+			subSt, _ := named.Underlying().(*types.Struct)
+			subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSub, subSt, qualifier, emitMethod, visited, inPath)
+			delete(inPath, subTypeName)
+			if err != nil {
+				return fmt.Errorf("field %s: %w", f.Name, err)
+			}
+			if subView.NeedsReflect {
+				sv.NeedsReflect = true
+			}
+			sv.NestedTypes = append(sv.NestedTypes, subExtra...)
+			sv.NestedTypes = append(sv.NestedTypes, subView)
+		}
+	}
+	return nil
+}
+
 // buildSnapshotView constructs the template view for one ParsedSnapshot.
 //
 // delta.nested on struct-value shapes triggers N-01 compositional emission:
 // a companion UDelta type + ApplyU/DiffU functions are collected in
 // sv.NestedTypes (bottom-up order). delta.nested on slice/map shapes
 // returns a sentinel error referencing N-03/N-04. (delta.clearable is
-// rejected upstream by T-01.)
+// handled in buildClearableFieldView, CL-05..07.)
 //
 // emitMethod gates same-package method wrappers (E-12): pass true for
 // same-package output, false for cross-package.
@@ -1021,7 +1387,14 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 
 		// N-01/N-03/N-04: delta.nested struct-value → companion type (N-01);
 		// map → UpdatedX/RemovedX encoding (N-03); slice → AddedX/RemovedX set-diff (N-04).
+		// CL-05..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
 		if f.Tag.Kind == TagKindNested {
+			if f.Tag.Clearable {
+				if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath); err != nil {
+					return snapshotView{}, err
+				}
+				continue
+			}
 			if f.Shape == ShapeSlice {
 				sliceT := f.GoType.Underlying().(*types.Slice)
 				sliceStr := types.TypeString(f.GoType, qualifier)
