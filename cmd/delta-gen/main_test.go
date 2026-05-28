@@ -364,6 +364,47 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	}
 }
 
+// ── CG-02: positional args ────────────────────────────────────────────────────
+
+// TestCLI_PositionalStructArg verifies that struct names passed as positional
+// arguments (without --type) are accepted and generate correctly.
+// Covers: CG-02
+func TestCLI_PositionalStructArg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "../../internal/deltagen/testdata/parse/valid",
+		"--out", outPath,
+		"ValidSnapshot", // positional
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("positional struct arg: expected success, got: %v", err)
+	}
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
+}
+
+// TestCLI_PositionalAndTypeMerge verifies that --type and positional args are
+// unioned: a struct passed via --type is merged with one passed as a positional
+// arg, and both are available as targets.  Uses a single package with two
+// snapshot types so both resolve in the same type universe.
+// Covers: CG-02
+func TestCLI_PositionalAndTypeMerge(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "delta.go")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "./testdata/multi",
+		"--out", outPath,
+		"FirstSnapshot",            // positional
+		"--type", "SecondSnapshot", // flag
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("positional + --type merge: expected success, got: %v", err)
+	}
+	// Both deltas should appear in the bundled output file.
+	assertDeltaFile(t, outPath, "FirstSnapshotDelta")
+	assertDeltaFile(t, outPath, "SecondSnapshotDelta")
+}
+
 // ── CG-01: --type flag + -t short alias ──────────────────────────────────────
 
 // TestCLI_TypeFlag verifies that --type is accepted as the replacement for

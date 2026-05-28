@@ -23,15 +23,20 @@ func newRootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "delta-gen",
+		Use:   "delta-gen [StructName ...]",
 		Short: "Generate Apply, Diff, Coalesce, and EntityID from an annotated Snapshot struct",
 		Long: `A code generation tool that reads an EDDT Snapshot struct annotated with
 eddt:"entity.key" and delta.* struct tags and emits the companion Delta type
 together with Apply, Diff, Coalesce, and EntityID methods.
 
+Struct names may be passed as positional arguments or via --type (-t).
+
 Example usage:
   # Generate for a single Snapshot struct (explicit output file)
   delta-gen --pkg ./internal/model --type UESnapshot --out ue_snapshot_delta.go
+
+  # Positional struct name
+  delta-gen --pkg ./internal/model UESnapshot --out ue_snapshot_delta.go
 
   # Multiple input packages (structs from pkg2 resolved natively)
   delta-gen --pkg ./internal/model --pkg ./internal/types --type UESnapshot --out ue_delta.go
@@ -40,10 +45,13 @@ Example usage:
   delta-gen --pkg github.com/user/repo/model --type UESnapshot --out ue_delta.go
 
   # Alias a package to avoid name collisions (key is the full Go import path)
-  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes --type UESnapshot --out ue_delta.go`,
+  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes UESnapshot --out ue_delta.go`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			targetStructs = append(targetStructs, args...)
 			if len(targetStructs) == 0 {
-				return fmt.Errorf("at least one target struct must be specified")
+				return fmt.Errorf("at least one target struct must be specified " +
+					"(as a positional argument or via --type)")
 			}
 
 			keyFields, err := parseKeyFields(keyFieldValues, targetStructs)
