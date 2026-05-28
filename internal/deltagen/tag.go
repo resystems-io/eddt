@@ -61,6 +61,28 @@ const (
 	TagKindClearable
 )
 
+// String returns the canonical eddt: tag string for k, e.g. "delta.nested".
+// The zero value returns "none". Used in error messages so callers see readable
+// tag names rather than raw integers.
+func (k TagKind) String() string {
+	switch k {
+	case TagKindEntityKey:
+		return "entity.key"
+	case TagKindNested:
+		return "delta.nested"
+	case TagKindOmit:
+		return "delta.omit"
+	case TagKindRetired:
+		return "delta.retired"
+	case TagKindCommutative:
+		return "delta.commutative"
+	case TagKindClearable:
+		return "delta.clearable"
+	default:
+		return "none"
+	}
+}
+
 // IsSecondary reports whether k is a secondary (modifier) tag that combines
 // with a primary tag rather than occupying ParsedTag.Kind. delta.clearable is
 // the only secondary kind.
@@ -118,16 +140,15 @@ func parseTag(raw string) (ParsedTag, error) {
 	result := ParsedTag{Kind: TagKindNone, Raw: raw}
 	primarySet := false
 
-	for _, part := range strings.Split(raw, ",") {
-		if idx := strings.Index(part, "="); idx >= 0 {
-			key := part[:idx]
+	for part := range strings.SplitSeq(raw, ",") {
+		if key, val, ok := strings.Cut(part, "="); ok {
 			if key == "" {
 				return ParsedTag{}, fmt.Errorf("malformed eddt: tag option %q: key must not be empty", part)
 			}
 			if result.Options == nil {
 				result.Options = make(map[string]string)
 			}
-			result.Options[key] = part[idx+1:]
+			result.Options[key] = val
 			continue
 		}
 
@@ -145,7 +166,7 @@ func parseTag(raw string) (ParsedTag, error) {
 		}
 
 		if primarySet {
-			return ParsedTag{}, fmt.Errorf("multiple primary eddt: tags in %q: %v and %v", raw, result.Kind, kind)
+			return ParsedTag{}, fmt.Errorf("multiple primary eddt: tags in %q: %s and %s", raw, result.Kind, kind)
 		}
 		result.Kind = kind
 		primarySet = true
@@ -225,6 +246,8 @@ func tagKindFor(tagVal string) (TagKind, error) {
 	case "delta.clearable":
 		return TagKindClearable, nil
 	default:
-		return TagKindNone, fmt.Errorf("unrecognised eddt: tag value %q", tagVal)
+		return TagKindNone, fmt.Errorf(
+			"unrecognised eddt: tag value %q; valid primary tags: entity.key, delta.nested, delta.omit, delta.retired, delta.commutative; secondary: delta.clearable",
+			tagVal)
 	}
 }
