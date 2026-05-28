@@ -74,10 +74,10 @@ var conformanceAxes = map[string]conformanceAxis{
 		testFile:   "roundtrip_test.go",
 		runPattern: "TestRoundTrip_Property",
 		srcs: map[string]string{
-			"baseline":              baselineRoundTripTest,
-			"clearable_composite":   clearableCompositeRoundTripTest,
-			"composite":             compositeRoundTripTest,
-			"struct_key":            structKeyRoundTripTest,
+			"baseline":             baselineRoundTripTest,
+			"clearable_composite":  clearableCompositeRoundTripTest,
+			"composite":            compositeRoundTripTest,
+			"struct_key":           structKeyRoundTripTest,
 			"struct_key_clearable": structKeyClearableRoundTripTest,
 		},
 	},
@@ -85,10 +85,10 @@ var conformanceAxes = map[string]conformanceAxis{
 		testFile:   "identity_test.go",
 		runPattern: "TestIdentity_Property",
 		srcs: map[string]string{
-			"baseline":              baselineIdentityTest,
-			"clearable_composite":   clearableCompositeIdentityTest,
-			"composite":             compositeIdentityTest,
-			"struct_key":            structKeyIdentityTest,
+			"baseline":             baselineIdentityTest,
+			"clearable_composite":  clearableCompositeIdentityTest,
+			"composite":            compositeIdentityTest,
+			"struct_key":           structKeyIdentityTest,
 			"struct_key_clearable": structKeyClearableIdentityTest,
 		},
 	},
@@ -96,10 +96,10 @@ var conformanceAxes = map[string]conformanceAxis{
 		testFile:   "coalesce_test.go",
 		runPattern: "TestCoalesce_Property",
 		srcs: map[string]string{
-			"baseline":              baselineCoalesceTest,
-			"clearable_composite":   clearableCompositeCoalesceTest,
-			"composite":             compositeCoalesceTest,
-			"struct_key":            structKeyCoalesceTest,
+			"baseline":             baselineCoalesceTest,
+			"clearable_composite":  clearableCompositeCoalesceTest,
+			"composite":            compositeCoalesceTest,
+			"struct_key":           structKeyCoalesceTest,
 			"struct_key_clearable": structKeyClearableCoalesceTest,
 		},
 	},
@@ -1468,11 +1468,24 @@ func toSortedUnique(ss []string) []string {
 	return out
 }
 
+// normMap normalizes an empty-but-non-nil map to nil for comparison.
+//
+// The coalesce seed s0 has nil Labels.  When all deltas in the fold carry
+// OpIgnore for Labels (nil→{}→{}→{} chains), the coalesced result preserves
+// nil while sN.Labels is an empty-but-non-nil map from testing/quick.
+// nil and {} are semantically equivalent per E-17.
+func normMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
 func snapshotEqual(got, b struct_key_clearable.StructKeyClearableSnapshot) bool {
 	return reflect.DeepEqual(got.Header, b.Header) &&
 		got.Key == b.Key &&
 		got.Home == b.Home &&
-		reflect.DeepEqual(got.Labels, b.Labels) &&
+		reflect.DeepEqual(normMap(got.Labels), normMap(b.Labels)) &&
 		reflect.DeepEqual(toSortedUnique(got.Tags), toSortedUnique(b.Tags)) &&
 		got.Score == b.Score
 }
