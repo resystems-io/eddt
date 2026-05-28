@@ -49,6 +49,18 @@ import (
 // Always included in the generated file's import block (embedded Header).
 const runtimeImportPath = "go.resystems.io/eddt/runtime"
 
+// Prefix / suffix constants for generated field and function names. Using these
+// ensures every site agrees on spelling and makes mechanical renames safe.
+const (
+	prefixSet     = "Set"
+	prefixAdded   = "Added"
+	prefixUpdated = "Updated"
+	prefixRemoved = "Removed"
+	prefixApply   = "Apply"
+	prefixDiff    = "Diff"
+	suffixDelta   = "Delta"
+)
+
 // ── View types ────────────────────────────────────────────────────────────────
 
 // templateData is the top-level input to the delta template. Fields are stable
@@ -1075,9 +1087,9 @@ func buildNestedTypeView(
 ) (nestedTypeView, []nestedTypeView, error) {
 	nv := nestedTypeView{
 		Name:          qualifiedTypeName, // qualified in cross-package mode (E-12)
-		DeltaName:     typeName + "Delta",
-		ApplyFuncName: "Apply" + typeName,
-		DiffFuncName:  "Diff" + typeName,
+		DeltaName:     typeName + suffixDelta,
+		ApplyFuncName: prefixApply + typeName,
+		DiffFuncName:  prefixDiff + typeName,
 		EmitMethod:    emitMethod,
 	}
 
@@ -1123,10 +1135,10 @@ func buildNestedTypeView(
 				elemStr := types.TypeString(sliceT.Elem(), qualifier)
 				fv := fieldView{
 					Name:                  field.Name(),
-					DeltaName:             "Added" + field.Name(),
+					DeltaName:             prefixAdded + field.Name(),
 					DeltaType:             sliceStr,
 					IsSliceNested:         true,
-					SliceRemovedName:      "Removed" + field.Name(),
+					SliceRemovedName:      prefixRemoved + field.Name(),
 					SliceElemType:         elemStr,
 					SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
 					SourceTypeStr:         sliceStr,
@@ -1144,10 +1156,10 @@ func buildNestedTypeView(
 				mapStr := types.TypeString(field.Type(), qualifier)
 				fv := fieldView{
 					Name:                 field.Name(),
-					DeltaName:            "Updated" + field.Name(),
+					DeltaName:            prefixUpdated + field.Name(),
 					DeltaType:            mapStr,
 					IsMapNested:          true,
-					MapRemovedName:       "Removed" + field.Name(),
+					MapRemovedName:       prefixRemoved + field.Name(),
 					MapKeyType:           keyStr,
 					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
 					SourceTypeStr:        mapStr,
@@ -1169,13 +1181,13 @@ func buildNestedTypeView(
 			qualifiedSubTypeName := types.TypeString(named, qualifier)
 			nestedFuncName, nestedDiffFuncName := "", ""
 			if !emitMethod {
-				nestedFuncName = "Apply" + subTypeName
-				nestedDiffFuncName = "Diff" + subTypeName
+				nestedFuncName = prefixApply + subTypeName
+				nestedDiffFuncName = prefixDiff + subTypeName
 			}
 			fv := fieldView{
 				Name:               field.Name(),
 				DeltaName:          field.Name(),
-				DeltaType:          subTypeName + "Delta",
+				DeltaType:          subTypeName + suffixDelta,
 				IsNested:           true,
 				NestedFuncName:     nestedFuncName,
 				NestedDiffFuncName: nestedDiffFuncName,
@@ -1210,7 +1222,7 @@ func buildNestedTypeView(
 		deltaType := types.TypeString(types.NewPointer(field.Type()), qualifier)
 		fv := fieldView{
 			Name:          field.Name(),
-			DeltaName:     "Set" + field.Name(),
+			DeltaName:     prefixSet + field.Name(),
 			DeltaType:     deltaType,
 			SourceTypeStr: types.TypeString(field.Type(), qualifier),
 		}
@@ -1257,7 +1269,7 @@ func buildClearableFieldView(
 		sliceStr := types.TypeString(f.GoType, qualifier)
 		elemStr := types.TypeString(sliceT.Elem(), qualifier)
 		useReflect := !types.Comparable(sliceT.Elem())
-		innerName := f.Name + "SliceDelta"
+		innerName := f.Name + "Slice" + suffixDelta
 		fv := fieldView{
 			Name:                   f.Name,
 			DeltaName:              f.Name,
@@ -1266,8 +1278,8 @@ func buildClearableFieldView(
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
-			ClearableApplyFunc:     "Apply" + innerName,
-			ClearableDiffFunc:      "Diff" + innerName,
+			ClearableApplyFunc:     prefixApply + innerName,
+			ClearableDiffFunc:      prefixDiff + innerName,
 			SourceTypeStr:          sliceStr,
 		}
 		sv.Fields = append(sv.Fields, fv)
@@ -1279,10 +1291,10 @@ func buildClearableFieldView(
 			Kind:                nestedKindSliceWrapper,
 			IsSliceWrapper:      true,
 			DeltaName:           innerName,
-			ApplyFuncName:       "Apply" + innerName,
-			DiffFuncName:        "Diff" + innerName,
-			WrapperUpdatedName:  "Added" + f.Name,
-			WrapperRemovedName:  "Removed" + f.Name,
+			ApplyFuncName:       prefixApply + innerName,
+			DiffFuncName:        prefixDiff + innerName,
+			WrapperUpdatedName:  prefixAdded + f.Name,
+			WrapperRemovedName:  prefixRemoved + f.Name,
 			WrapperSliceType:    sliceStr,
 			WrapperSliceElem:    elemStr,
 			WrapperUseReflectEq: useReflect,
@@ -1295,7 +1307,7 @@ func buildClearableFieldView(
 		keyStr := types.TypeString(mapT.Key(), qualifier)
 		mapStr := types.TypeString(f.GoType, qualifier)
 		useReflect := !types.Comparable(mapT.Elem())
-		innerName := f.Name + "MapDelta"
+		innerName := f.Name + "Map" + suffixDelta
 		fv := fieldView{
 			Name:                   f.Name,
 			DeltaName:              f.Name,
@@ -1304,8 +1316,8 @@ func buildClearableFieldView(
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
-			ClearableApplyFunc:     "Apply" + innerName,
-			ClearableDiffFunc:      "Diff" + innerName,
+			ClearableApplyFunc:     prefixApply + innerName,
+			ClearableDiffFunc:      prefixDiff + innerName,
 			SourceTypeStr:          mapStr,
 		}
 		sv.Fields = append(sv.Fields, fv)
@@ -1317,10 +1329,10 @@ func buildClearableFieldView(
 			Kind:                nestedKindMapWrapper,
 			IsMapWrapper:        true,
 			DeltaName:           innerName,
-			ApplyFuncName:       "Apply" + innerName,
-			DiffFuncName:        "Diff" + innerName,
-			WrapperUpdatedName:  "Updated" + f.Name,
-			WrapperRemovedName:  "Removed" + f.Name,
+			ApplyFuncName:       prefixApply + innerName,
+			DiffFuncName:        prefixDiff + innerName,
+			WrapperUpdatedName:  prefixUpdated + f.Name,
+			WrapperRemovedName:  prefixRemoved + f.Name,
 			WrapperMapType:      mapStr,
 			WrapperMapKeyType:   keyStr,
 			WrapperUseReflectEq: useReflect,
@@ -1340,13 +1352,13 @@ func buildClearableFieldView(
 		fv := fieldView{
 			Name:                     f.Name,
 			DeltaName:                f.Name,
-			DeltaType:                "runtime.FieldDelta[" + subTypeName + "Delta]",
+			DeltaType:                "runtime.FieldDelta[" + subTypeName + suffixDelta + "]",
 			IsClearable:              true,
-			ClearableInner:           subTypeName + "Delta",
+			ClearableInner:           subTypeName + suffixDelta,
 			ClearableIsStruct:        true,
 			ClearableZeroComposite:   qualifiedSub + "{}",
-			ClearableApplyFunc:       "Apply" + subTypeName,
-			ClearableDiffFunc:        "Diff" + subTypeName,
+			ClearableApplyFunc:       prefixApply + subTypeName,
+			ClearableDiffFunc:        prefixDiff + subTypeName,
 			ClearableStructEqReflect: eqReflect,
 			SourceTypeStr:            qualifiedSub,
 		}
@@ -1411,7 +1423,7 @@ func buildClearableFieldView(
 func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod bool) (snapshotView, error) {
 	sv := snapshotView{
 		Name:      ps.Name,
-		DeltaName: ps.Name + "Delta",
+		DeltaName: ps.Name + suffixDelta,
 		KeyName:   ps.KeyVar.Name(),
 	}
 
@@ -1455,10 +1467,10 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 				elemStr := types.TypeString(sliceT.Elem(), qualifier)
 				fv := fieldView{
 					Name:                  f.Name,
-					DeltaName:             "Added" + f.Name,
+					DeltaName:             prefixAdded + f.Name,
 					DeltaType:             sliceStr,
 					IsSliceNested:         true,
-					SliceRemovedName:      "Removed" + f.Name,
+					SliceRemovedName:      prefixRemoved + f.Name,
 					SliceElemType:         elemStr,
 					SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
 					SourceTypeStr:         sliceStr,
@@ -1476,10 +1488,10 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 				mapStr := types.TypeString(f.GoType, qualifier)
 				fv := fieldView{
 					Name:                 f.Name,
-					DeltaName:            "Updated" + f.Name,
+					DeltaName:            prefixUpdated + f.Name,
 					DeltaType:            mapStr,
 					IsMapNested:          true,
-					MapRemovedName:       "Removed" + f.Name,
+					MapRemovedName:       prefixRemoved + f.Name,
 					MapKeyType:           keyStr,
 					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
 					SourceTypeStr:        mapStr,
@@ -1501,13 +1513,13 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			qualifiedSubTypeName := types.TypeString(named, qualifier)
 			nestedFuncName, nestedDiffFuncName := "", ""
 			if !emitMethod {
-				nestedFuncName = "Apply" + subTypeName
-				nestedDiffFuncName = "Diff" + subTypeName
+				nestedFuncName = prefixApply + subTypeName
+				nestedDiffFuncName = prefixDiff + subTypeName
 			}
 			fv := fieldView{
 				Name:               f.Name,
 				DeltaName:          f.Name,
-				DeltaType:          subTypeName + "Delta",
+				DeltaType:          subTypeName + suffixDelta,
 				IsNested:           true,
 				NestedFuncName:     nestedFuncName,
 				NestedDiffFuncName: nestedDiffFuncName,
@@ -1546,7 +1558,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 
 		fv := fieldView{
 			Name:          f.Name,
-			DeltaName:     "Set" + f.Name,
+			DeltaName:     prefixSet + f.Name,
 			DeltaType:     deltaType,
 			SourceTypeStr: sourceTypeStr,
 		}
