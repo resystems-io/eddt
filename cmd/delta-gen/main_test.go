@@ -405,6 +405,108 @@ func TestCLI_PositionalAndTypeMerge(t *testing.T) {
 	assertDeltaFile(t, outPath, "SecondSnapshotDelta")
 }
 
+// ── CG-03: auto-derived output paths ─────────────────────────────────────────
+
+// TestCLI_AutoDerivedOutPath verifies that omitting --out causes the output
+// filename to be auto-derived as <snake_case_struct>_delta.go in the current
+// working directory.
+// Covers: CG-03
+func TestCLI_AutoDerivedOutPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir) //nolint:errcheck
+
+	// Use absolute --pkg path since we changed directory.
+	pkgPath := filepath.Join(origDir, "../../internal/deltagen/testdata/parse/valid")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"--pkg", pkgPath, "ValidSnapshot"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("auto-derive out path: expected success, got: %v", err)
+	}
+	assertDeltaFile(t, filepath.Join(tmpDir, "valid_snapshot_delta.go"), "ValidSnapshotDelta")
+}
+
+// TestCLI_MultiTypeAutoDerivedSplit verifies that when multiple struct names
+// are passed without --out, each struct is written to its own auto-derived file.
+// Covers: CG-03
+func TestCLI_MultiTypeAutoDerivedSplit(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir) //nolint:errcheck
+
+	// Use a single package with two snapshot types so both resolve in the same
+	// type universe (loadPackages makes one packages.Load call per filesystem path).
+	multiPath := filepath.Join(origDir, "testdata/multi")
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", multiPath,
+		"FirstSnapshot", "SecondSnapshot", // two structs, no --out
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("multi-type auto-derive split: expected success, got: %v", err)
+	}
+	assertDeltaFile(t, filepath.Join(tmpDir, "first_snapshot_delta.go"), "FirstSnapshotDelta")
+	assertDeltaFile(t, filepath.Join(tmpDir, "second_snapshot_delta.go"), "SecondSnapshotDelta")
+}
+
+// TestCLI_ExplicitOutOverridesAutoDerive verifies that when --out is given,
+// the named file is used (not an auto-derived name), even for a single struct.
+// Covers: CG-03
+func TestCLI_ExplicitOutOverridesAutoDerive(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "custom_name.go")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "../../internal/deltagen/testdata/parse/valid",
+		"--out", outPath,
+		"ValidSnapshot",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("explicit --out: expected success, got: %v", err)
+	}
+	// The auto-derived name must NOT have been written; only outPath should exist.
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
+}
+
+// ── CG-03: deriveOutPath unit tests ──────────────────────────────────────────
+
+// TestDeriveOutPath_Cases exercises the snake_case derivation helper across
+// representative struct names including acronyms, digit boundaries, and
+// short names.
+// Covers: CG-03
+func TestDeriveOutPath_Cases(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"UESnapshot", "ue_snapshot_delta.go"},
+		{"SessionSnapshot", "session_snapshot_delta.go"},
+		{"HTTPHandler", "http_handler_delta.go"},
+		{"IDValue", "id_value_delta.go"},
+		{"V1Snapshot", "v1_snapshot_delta.go"},
+		{"Snapshot", "snapshot_delta.go"},
+		{"S", "s_delta.go"},
+		{"AB", "ab_delta.go"},
+		{"AbC", "ab_c_delta.go"},
+	}
+	for _, tc := range cases {
+		got := deriveOutPath(tc.in)
+		if got != tc.want {
+			t.Errorf("deriveOutPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // ── CG-01: --type flag + -t short alias ──────────────────────────────────────
 
 // TestCLI_TypeFlag verifies that --type is accepted as the replacement for

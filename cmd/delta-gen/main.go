@@ -32,20 +32,23 @@ together with Apply, Diff, Coalesce, and EntityID methods.
 Struct names may be passed as positional arguments or via --type (-t).
 
 Example usage:
-  # Generate for a single Snapshot struct (explicit output file)
-  delta-gen --pkg ./internal/model --type UESnapshot --out ue_snapshot_delta.go
+  # Single struct — output auto-derived as ue_snapshot_delta.go
+  delta-gen UESnapshot
 
-  # Positional struct name
-  delta-gen --pkg ./internal/model UESnapshot --out ue_snapshot_delta.go
+  # Multiple structs — writes one auto-derived file per struct
+  delta-gen UESnapshot SessionSnapshot
 
-  # Multiple input packages (structs from pkg2 resolved natively)
-  delta-gen --pkg ./internal/model --pkg ./internal/types --type UESnapshot --out ue_delta.go
+  # Multiple structs into a single explicit output file
+  delta-gen UESnapshot SessionSnapshot --out combined_delta.go
+
+  # Explicit package path
+  delta-gen --pkg ./internal/model UESnapshot
 
   # Package from go.mod (import path — requires 'go get' first)
-  delta-gen --pkg github.com/user/repo/model --type UESnapshot --out ue_delta.go
+  delta-gen --pkg github.com/user/repo/model --type UESnapshot
 
   # Alias a package to avoid name collisions (key is the full Go import path)
-  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes UESnapshot --out ue_delta.go`,
+  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes UESnapshot`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetStructs = append(targetStructs, args...)
@@ -64,25 +67,51 @@ Example usage:
 				level = slog.LevelInfo
 			}
 			log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-			log.Info("generating delta types", "structs", targetStructs, "packages", inputPkgs, "out", outPath)
 			if outPkgName != "" {
 				log.Info("output package override", "pkg_name", outPkgName)
 			}
 
-			gen := deltagen.New(deltagen.Config{
-				InputPkgs:          inputPkgs,
-				TargetStructs:      targetStructs,
-				OutPath:            outPath,
-				PkgAliases:         pkgAliases,
-				Version:            vcsRevision(),
-				KeyFields:          keyFields,
-				Log:                log,
-				OutPkgNameOverride: outPkgName,
-			})
-			if err := gen.Run(); err != nil {
-				return err
+			rev := vcsRevision()
+
+			if outPath != "" {
+				// Explicit --out: bundle all targets into one file.
+				log.Info("generating delta types", "structs", targetStructs, "packages", inputPkgs, "out", outPath)
+				gen := deltagen.New(deltagen.Config{
+					InputPkgs:          inputPkgs,
+					TargetStructs:      targetStructs,
+					OutPath:            outPath,
+					PkgAliases:         pkgAliases,
+					Version:            rev,
+					KeyFields:          keyFields,
+					Log:                log,
+					OutPkgNameOverride: outPkgName,
+				})
+				if err := gen.Run(); err != nil {
+					return err
+				}
+				fmt.Printf("Successfully generated %s\n", outPath)
+				return nil
 			}
-			fmt.Printf("Successfully generated %s\n", outPath)
+
+			// No --out: auto-derive one file per target struct.
+			for _, name := range targetStructs {
+				derived := deriveOutPath(name)
+				log.Info("generating delta type", "struct", name, "packages", inputPkgs, "out", derived)
+				gen := deltagen.New(deltagen.Config{
+					InputPkgs:          inputPkgs,
+					TargetStructs:      []string{name},
+					OutPath:            derived,
+					PkgAliases:         pkgAliases,
+					Version:            rev,
+					KeyFields:          keyFields,
+					Log:                log,
+					OutPkgNameOverride: outPkgName,
+				})
+				if err := gen.Run(); err != nil {
+					return fmt.Errorf("generating %s: %w", name, err)
+				}
+				fmt.Printf("Successfully generated %s\n", derived)
+			}
 			return nil
 		},
 	}
@@ -90,8 +119,8 @@ Example usage:
 	cmd.Flags().StringSliceVarP(&inputPkgs, "pkg", "p", []string{"."}, "Input packages: filesystem paths (./internal/model) or Go import paths (github.com/user/repo/pkg). Import paths must be in your go.mod; run 'go get <pkg>' first if needed.")
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
 	cmd.Flags().StringSliceVarP(&pkgAliases, "pkg-alias", "a", nil, "Aliases for imported packages in 'importpath=alias' format (e.g. go.example.com/pkg=mypkg)")
-	cmd.Flags().StringSliceVarP(&targetStructs, "type", "t", nil, "Snapshot struct(s) to generate delta types for. Repeatable or comma-separated.")
-	cmd.Flags().StringVarP(&outPath, "out", "o", "delta-gen.go", "Output file path")
+	cmd.Flags().StringSliceVarP(&targetStructs, "type", "t", nil, "Snapshot struct(s) to generate delta types for. Repeatable or comma-separated. May also be passed as positional args.")
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "Output file path. If omitted, each struct is written to its own auto-derived <snake_struct>_delta.go file. If set, all structs are bundled into the named file.")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringSliceVar(&keyFieldValues, "key-field", nil,
 		"Entity-key field override: bare 'FieldName' applies to all --type targets; "+
@@ -171,6 +200,41 @@ func parseKeyFields(values []string, targetStructs []string) (map[string]string,
 
 	return result, nil
 }
+
+// deriveOutPath returns "<snake_case_struct>_delta.go".
+//
+// Snake-case rule (Go stringer convention): a "_" is inserted before an
+// uppercase rune when it is either preceded by a lowercase/digit rune, or
+// preceded by an uppercase rune that is itself followed by a lowercase rune
+// (handles acronym boundaries like "UESnapshot" → "ue_snapshot" and
+// "HTTPHandler" → "http_handler").  The result is lowercased.
+func deriveOutPath(structName string) string {
+	runes := []rune(structName)
+	var b strings.Builder
+	for i, r := range runes {
+		if i == 0 {
+			b.WriteRune(r)
+			continue
+		}
+		prev := runes[i-1]
+		next := rune(0)
+		if i+1 < len(runes) {
+			next = runes[i+1]
+		}
+		// Insert "_" before an uppercase rune when:
+		//   (a) the previous rune is lowercase or a digit, OR
+		//   (b) the previous rune is uppercase and the next is lowercase.
+		if isUpper(r) && (isLowerOrDigit(prev) || (isUpper(prev) && isLower(next))) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String()) + "_delta.go"
+}
+
+func isUpper(r rune) bool        { return r >= 'A' && r <= 'Z' }
+func isLower(r rune) bool        { return r >= 'a' && r <= 'z' }
+func isLowerOrDigit(r rune) bool { return isLower(r) || (r >= '0' && r <= '9') }
 
 func vcsRevision() string {
 	info, ok := debug.ReadBuildInfo()
