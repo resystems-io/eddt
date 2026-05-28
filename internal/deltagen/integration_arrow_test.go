@@ -56,26 +56,27 @@ func TestIntegration_ArrowRoundTrip(t *testing.T) {
 	})
 }
 
-// arrowRoundTripCheck sets up an isolated temp module, runs delta-gen followed
-// by arrow-writer-gen and arrow-reader-gen against the arrowroundtrip fixture,
-// writes an inner go test that round-trips an ARSnapshotDelta value through an
-// Arrow record, and executes it via go test.
-//
-// Module layout:
-//
-//	tmpDir/go.mod          — module arrowroundtrip; replace go.resystems.io/eddt
-//	tmpDir/go.sum          — copied from the eddt module root
-//	tmpDir/snapshot.go     — corpus fixture (ARSnapshot + ARMeta)
-//	tmpDir/delta.go        — delta-gen output
-//	tmpDir/arrow_writer.go — arrow-writer-gen output
-//	tmpDir/arrow_reader.go — arrow-reader-gen output
-//	tmpDir/roundtrip_test.go — inner test executed by go test
+// arrowPipelineOpts configures a single cross-generator (delta-gen +
+// arrow-writer-gen + arrow-reader-gen) pipeline run.
+type arrowPipelineOpts struct {
+	fixtures      []string // files to copy from testdata/arrow_roundtrip/
+	deltaTarget   string   // struct name for delta-gen TargetStructs
+	writerTargets []string // struct names for arrow-writer-gen / arrow-reader-gen
+	innerTestFile string   // filename for the injected inner test
+	innerTestSrc  string   // source of the injected inner test
+	runPattern    string   // -run pattern for go test
+	withDuckDB    bool     // fetch the DuckDB dep before running the inner test
+}
+
+// runArrowPipeline sets up an isolated temp module, runs delta-gen followed by
+// arrow-writer-gen and arrow-reader-gen, writes the injected inner test, and
+// executes go test.  All three arrow subtests share this implementation and
+// differ only in their arrowPipelineOpts.
 //
 // GOFLAGS=-mod=mod is set so that go/packages accepts the minimal go.mod.
 // go.resystems.io/eddt/runtime is passed as a second input package to the arrow
-// generators so that resolveEmbeddedFields can find the runtime.Header AST and
-// promote its fields into the generated Arrow code.
-func arrowRoundTripCheck(t *testing.T) {
+// generators so that resolveEmbeddedFields can find the runtime.Header AST.
+func runArrowPipeline(t *testing.T, opts arrowPipelineOpts) {
 	t.Helper()
 	t.Setenv("GOFLAGS", "-mod=mod")
 
@@ -86,12 +87,9 @@ func arrowRoundTripCheck(t *testing.T) {
 	}
 	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
-	// Write go.mod before any generator call so go/packages resolves imports
-	// relative to this module, not the eddt module root.
-	modName := "arrowroundtrip"
 	modContent := fmt.Sprintf(
 		"module %s\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => %s\n",
-		modName, moduleRoot,
+		"arrowroundtrip", moduleRoot,
 	)
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -104,8 +102,7 @@ func arrowRoundTripCheck(t *testing.T) {
 		t.Fatalf("write go.sum: %v", err)
 	}
 
-	// Copy the fixture (both files must be in the same package).
-	for _, name := range []string{"snapshot.go", "snapshot_extended.go"} {
+	for _, name := range opts.fixtures {
 		src, err := os.ReadFile(filepath.Join("testdata", "arrow_roundtrip", name))
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", name, err)
@@ -115,45 +112,61 @@ func arrowRoundTripCheck(t *testing.T) {
 		}
 	}
 
-	// Step 1: run delta-gen to produce delta.go.
 	deltaPath := filepath.Join(tmpDir, "delta.go")
 	if err := New(Config{
 		InputPkgs:     []string{tmpDir},
-		TargetStructs: []string{"ARSnapshot"},
+		TargetStructs: []string{opts.deltaTarget},
 		OutPath:       deltaPath,
 	}).Run(); err != nil {
 		t.Fatalf("delta-gen Run(): %v", err)
 	}
 	assertGofmtClean(t, deltaPath)
 
-	// Step 2: fetch the Arrow dependency so packages.Load can resolve imports in
-	// the arrow-gen output files.
 	runBuildCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
 
-	// inputPkgs for the arrow generators: the temp module plus the eddt runtime
-	// package.  Passing the runtime import path ensures go.resystems.io/eddt/runtime
-	// is in allPkgs so that resolveEmbeddedFields can walk runtime.Header's fields.
 	arrowInputPkgs := []string{tmpDir, "go.resystems.io/eddt/runtime"}
-	targets := []string{"ARSnapshot", "ARSnapshotDelta"}
 
-	// Step 3: run arrow-writer-gen.
 	writerPath := filepath.Join(tmpDir, "arrow_writer.go")
-	wg := writergen.NewGenerator(arrowInputPkgs, targets, writerPath, false, nil)
+	wg := writergen.NewGenerator(arrowInputPkgs, opts.writerTargets, writerPath, false, nil)
 	if err := wg.Run(""); err != nil {
 		t.Fatalf("arrow-writer-gen Run(): %v", err)
 	}
 	assertGofmtClean(t, writerPath)
 
-	// Step 4: run arrow-reader-gen.
 	readerPath := filepath.Join(tmpDir, "arrow_reader.go")
-	rg := readergen.NewGenerator(arrowInputPkgs, targets, readerPath, false, nil)
+	rg := readergen.NewGenerator(arrowInputPkgs, opts.writerTargets, readerPath, false, nil)
 	if err := rg.Run(""); err != nil {
 		t.Fatalf("arrow-reader-gen Run(): %v", err)
 	}
 	assertGofmtClean(t, readerPath)
 
-	// Step 5: write the inner test.
-	innerTest := `package arrowroundtrip
+	if opts.withDuckDB {
+		runBuildCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, opts.innerTestFile), []byte(opts.innerTestSrc), 0644); err != nil {
+		t.Fatalf("write %s: %v", opts.innerTestFile, err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "mod", "tidy")
+	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", opts.runPattern, ".")
+}
+
+// arrowRoundTripCheck runs the C-06 ARSnapshot pipeline: delta-gen + arrow gens
+// + Arrow round-trip inner test.
+func arrowRoundTripCheck(t *testing.T) {
+	t.Helper()
+	runArrowPipeline(t, arrowPipelineOpts{
+		fixtures:      []string{"snapshot.go", "snapshot_extended.go"},
+		deltaTarget:   "ARSnapshot",
+		writerTargets: []string{"ARSnapshot", "ARSnapshotDelta"},
+		innerTestFile: "roundtrip_test.go",
+		innerTestSrc:  arrowSnapshotInnerTest,
+		runPattern:    "TestARSnapshotDeltaRoundTrip",
+	})
+}
+
+const arrowSnapshotInnerTest = `package arrowroundtrip
 
 import (
 	"testing"
@@ -215,96 +228,23 @@ func TestARSnapshotDeltaRoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "roundtrip_test.go"), []byte(innerTest), 0644); err != nil {
-		t.Fatalf("write roundtrip_test.go: %v", err)
-	}
 
-	// Step 6: tidy and run.
-	runBuildCmd(t, tmpDir, "go", "mod", "tidy")
-	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", "TestARSnapshotDeltaRoundTrip", ".")
-}
-
-// arrowExtendedRoundTripCheck sets up an isolated temp module, runs delta-gen
-// followed by arrow-writer-gen and arrow-reader-gen against ARExtended, writes
-// an inner go test that round-trips an ARExtendedDelta through an Arrow record
-// and verifies NULL vs value via DuckDB, and executes it via go test.
-//
-// All three subtests (ShapePointer, ShapeSliceAtomic, ShapeMapAtomic) call this
-// helper because ARExtendedDelta carries all three field shapes (**int32,
-// *[]string, *map[string]string) in a single struct.
+// arrowExtendedRoundTripCheck runs the C-08 ARExtended pipeline: delta-gen +
+// arrow gens + Arrow round-trip + DuckDB Parquet verification.
 func arrowExtendedRoundTripCheck(t *testing.T) {
 	t.Helper()
-	t.Setenv("GOFLAGS", "-mod=mod")
+	runArrowPipeline(t, arrowPipelineOpts{
+		fixtures:      []string{"snapshot.go", "snapshot_extended.go"},
+		deltaTarget:   "ARExtended",
+		writerTargets: []string{"ARExtended", "ARExtendedDelta"},
+		innerTestFile: "roundtrip_extended_test.go",
+		innerTestSrc:  arrowExtendedInnerTest,
+		runPattern:    "TestARExtendedDeltaRoundTrip",
+		withDuckDB:    true,
+	})
+}
 
-	tmpDir := t.TempDir()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	modContent := fmt.Sprintf(
-		"module %s\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => %s\n",
-		"arrowroundtrip", moduleRoot,
-	)
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	for _, name := range []string{"snapshot.go", "snapshot_extended.go"} {
-		src, err := os.ReadFile(filepath.Join("testdata", "arrow_roundtrip", name))
-		if err != nil {
-			t.Fatalf("read fixture %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(tmpDir, name), src, 0644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	// Step 1: delta-gen → ARExtendedDelta.
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := New(Config{
-		InputPkgs:     []string{tmpDir},
-		TargetStructs: []string{"ARExtended"},
-		OutPath:       deltaPath,
-	}).Run(); err != nil {
-		t.Fatalf("delta-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	// Step 2: fetch Arrow dependency before packages.Load runs inside the generators.
-	runBuildCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-
-	arrowInputPkgs := []string{tmpDir, "go.resystems.io/eddt/runtime"}
-	targets := []string{"ARExtended", "ARExtendedDelta"}
-
-	// Step 3: arrow-writer-gen.
-	writerPath := filepath.Join(tmpDir, "arrow_writer.go")
-	wg := writergen.NewGenerator(arrowInputPkgs, targets, writerPath, false, nil)
-	if err := wg.Run(""); err != nil {
-		t.Fatalf("arrow-writer-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, writerPath)
-
-	// Step 4: arrow-reader-gen.
-	readerPath := filepath.Join(tmpDir, "arrow_reader.go")
-	rg := readergen.NewGenerator(arrowInputPkgs, targets, readerPath, false, nil)
-	if err := rg.Run(""); err != nil {
-		t.Fatalf("arrow-reader-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, readerPath)
-
-	// Step 5: fetch DuckDB dependency for the inner test, write the inner test.
-	runBuildCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
-
-	innerTest := `package arrowroundtrip
+const arrowExtendedInnerTest = `package arrowroundtrip
 
 import (
 	"database/sql"
@@ -440,98 +380,24 @@ func TestARExtendedDeltaRoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "roundtrip_extended_test.go"), []byte(innerTest), 0644); err != nil {
-		t.Fatalf("write roundtrip_extended_test.go: %v", err)
-	}
 
-	// Step 6: tidy and run.
-	runBuildCmd(t, tmpDir, "go", "mod", "tidy")
-	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", "TestARExtendedDeltaRoundTrip", ".")
-}
-
-// arrowClearableRoundTripCheck sets up an isolated temp module, runs delta-gen
-// followed by arrow-writer-gen and arrow-reader-gen against ARClearable, writes
-// an inner go test that round-trips all three Op states (OpIgnore / OpAssert /
-// OpRetract) across all three clearable inner shapes (struct / map / slice)
-// through an Arrow record and verifies structural fields via DuckDB Parquet.
-//
-// This is the CL-09 V-model INT step: the first end-to-end data round-trip for
-// runtime.FieldDelta[T] envelopes including MapDelta and SliceDelta wrappers.
+// arrowClearableRoundTripCheck runs the CL-09 ARClearable pipeline: delta-gen +
+// arrow gens + Arrow round-trip + DuckDB Parquet verification for all three
+// Op states across struct / map / slice clearable shapes.
 func arrowClearableRoundTripCheck(t *testing.T) {
 	t.Helper()
-	t.Setenv("GOFLAGS", "-mod=mod")
+	runArrowPipeline(t, arrowPipelineOpts{
+		fixtures:      []string{"snapshot.go", "snapshot_extended.go", "snapshot_clearable.go"},
+		deltaTarget:   "ARClearable",
+		writerTargets: []string{"ARClearable", "ARClearableDelta"},
+		innerTestFile: "roundtrip_clearable_test.go",
+		innerTestSrc:  arrowClearableInnerTest,
+		runPattern:    "TestARClearableDeltaRoundTrip",
+		withDuckDB:    true,
+	})
+}
 
-	tmpDir := t.TempDir()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	modContent := fmt.Sprintf(
-		"module %s\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => %s\n",
-		"arrowroundtrip", moduleRoot,
-	)
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	// Copy all three fixture files — all are package arrowroundtrip.
-	// Existing helpers' hardcoded copy lists are unaffected by the third file.
-	for _, name := range []string{"snapshot.go", "snapshot_extended.go", "snapshot_clearable.go"} {
-		src, err := os.ReadFile(filepath.Join("testdata", "arrow_roundtrip", name))
-		if err != nil {
-			t.Fatalf("read fixture %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(tmpDir, name), src, 0644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	// Step 1: delta-gen → ARClearableDelta (+ ARAddressDelta, TagsMapDelta, GroupsSliceDelta).
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := New(Config{
-		InputPkgs:     []string{tmpDir},
-		TargetStructs: []string{"ARClearable"},
-		OutPath:       deltaPath,
-	}).Run(); err != nil {
-		t.Fatalf("delta-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	// Step 2: fetch Arrow dependency before packages.Load runs inside the generators.
-	runBuildCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-
-	arrowInputPkgs := []string{tmpDir, "go.resystems.io/eddt/runtime"}
-	targets := []string{"ARClearable", "ARClearableDelta"}
-
-	// Step 3: arrow-writer-gen.
-	writerPath := filepath.Join(tmpDir, "arrow_writer.go")
-	wg := writergen.NewGenerator(arrowInputPkgs, targets, writerPath, false, nil)
-	if err := wg.Run(""); err != nil {
-		t.Fatalf("arrow-writer-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, writerPath)
-
-	// Step 4: arrow-reader-gen.
-	readerPath := filepath.Join(tmpDir, "arrow_reader.go")
-	rg := readergen.NewGenerator(arrowInputPkgs, targets, readerPath, false, nil)
-	if err := rg.Run(""); err != nil {
-		t.Fatalf("arrow-reader-gen Run(): %v", err)
-	}
-	assertGofmtClean(t, readerPath)
-
-	// Step 5: fetch DuckDB dependency for the inner test, then write it.
-	runBuildCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
-
-	innerTest := `package arrowroundtrip
+const arrowClearableInnerTest = `package arrowroundtrip
 
 import (
 	"database/sql"
@@ -763,11 +629,3 @@ func TestARClearableDeltaRoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "roundtrip_clearable_test.go"), []byte(innerTest), 0644); err != nil {
-		t.Fatalf("write roundtrip_clearable_test.go: %v", err)
-	}
-
-	// Step 6: tidy and run.
-	runBuildCmd(t, tmpDir, "go", "mod", "tidy")
-	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", "TestARClearableDeltaRoundTrip", ".")
-}
