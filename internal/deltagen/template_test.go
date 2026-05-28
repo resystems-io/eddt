@@ -171,8 +171,8 @@ func TestBuildSnapshotView(t *testing.T) {
 			if fv.UseReflectEq != tc.useReflectEq {
 				t.Errorf("UseReflectEq: got %v, want %v", fv.UseReflectEq, tc.useReflectEq)
 			}
-			if fv.IsPointer != tc.isPointer {
-				t.Errorf("IsPointer: got %v, want %v", fv.IsPointer, tc.isPointer)
+			if (fv.Shape == fieldShapePointer) != tc.isPointer {
+				t.Errorf("Shape==fieldShapePointer: got %v, want %v", fv.Shape == fieldShapePointer, tc.isPointer)
 			}
 			if fv.PointeeUseReflectEq != tc.pointeeUseReflectEq {
 				t.Errorf("PointeeUseReflectEq: got %v, want %v", fv.PointeeUseReflectEq, tc.pointeeUseReflectEq)

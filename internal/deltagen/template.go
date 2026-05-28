@@ -61,6 +61,22 @@ const (
 	suffixDelta   = "Delta"
 )
 
+// fieldViewShape is a discriminator for the five mutually exclusive rendering
+// paths on a fieldView. Using a single typed constant instead of five parallel
+// booleans (IsClearable/IsSliceNested/IsMapNested/IsNested/IsPointer) eliminates
+// the invalid "two trues at once" state and collapses parallel template ladders
+// to a single {{if eq .Shape "..."}} chain.
+type fieldViewShape string
+
+const (
+	fieldShapeAtomic    fieldViewShape = "atomic"    // untagged / commutative; SetX *T field
+	fieldShapePointer   fieldViewShape = "pointer"   // *T atomic; nil-equivalence + deref comparison
+	fieldShapeNested    fieldViewShape = "nested"     // delta.nested struct companion
+	fieldShapeSlice     fieldViewShape = "sliceNested" // delta.nested []T set-diff
+	fieldShapeMap       fieldViewShape = "mapNested"   // delta.nested map[K]V upsert/remove
+	fieldShapeClearable fieldViewShape = "clearable"   // delta.nested+delta.clearable FieldDelta[T]
+)
+
 // ── View types ────────────────────────────────────────────────────────────────
 
 // templateData is the top-level input to the delta template. Fields are stable
@@ -248,6 +264,11 @@ type fieldView struct {
 	// Empty when Suppressed is true.
 	DeltaType string
 
+	// Shape is the discriminator for the five mutually exclusive rendering paths.
+	// The zero value (empty string) applies to suppressed fields where the shape
+	// is irrelevant (gated out by {{if not .Suppressed}} in all templates).
+	Shape fieldViewShape
+
 	// Suppressed is true for delta.omit and delta.retired fields. The
 	// Delta-side field is absent from TDelta but Apply still propagates the
 	// source value via result.F = s.F (EM-02). Suppressed fields are excluded
@@ -257,76 +278,54 @@ type fieldView struct {
 	// UseReflectEq is true when the Diff template must use reflect.DeepEqual
 	// because the field's Go type is not comparable (e.g. slice, map, or a struct
 	// containing a slice/map). Scalars and simple structs use != directly.
-	// Pointer fields (*T) are handled separately via IsPointer regardless of
-	// types.Comparable — they always use nil-equivalence + dereferenced comparison.
+	// Pointer fields (*T) are handled separately via Shape==fieldShapePointer regardless
+	// of types.Comparable — they always use nil-equivalence + dereferenced comparison.
 	UseReflectEq bool
-
-	// IsPointer is true for ShapePointer (*T) fields. Diff emits a
-	// nil-equivalence + dereferenced-value comparison rather than pointer identity
-	// (implements R-27, resolves E-02). PointeeUseReflectEq controls whether the
-	// pointee comparison uses == or reflect.DeepEqual.
-	IsPointer bool
 
 	// PointeeUseReflectEq is true when the pointee type T of a *T field is not
 	// comparable (e.g. a struct containing a slice), so the deref comparison must
-	// use reflect.DeepEqual(*a.X, *b.X). Only meaningful when IsPointer is true.
+	// use reflect.DeepEqual(*a.X, *b.X). Only meaningful when Shape==fieldShapePointer.
 	PointeeUseReflectEq bool
-
-	// IsNested is true for delta.nested struct-value fields (N-01). When true,
-	// DeltaName equals the source field name (no "Set" prefix), DeltaType is the
-	// companion Delta type name (e.g. "InnerDelta"), and no pointer-wrap is used.
-	IsNested bool
 
 	// NestedFuncName is the package-level Apply function to call for cross-package
 	// nested fields (e.g. "ApplyInner"). Empty in same-package mode, where the
-	// method wrapper is used instead (s.F.Apply(d.F)).
+	// method wrapper is used instead (s.F.Apply(d.F)). Only when Shape==fieldShapeNested.
 	NestedFuncName string
 
 	// NestedDiffFuncName is the package-level Diff function for cross-package
-	// nested fields (e.g. "DiffInner"). Empty in same-package mode.
+	// nested fields (e.g. "DiffInner"). Empty in same-package mode. Only when Shape==fieldShapeNested.
 	NestedDiffFuncName string
 
-	// IsMapNested is true for delta.nested map[K]V fields (N-03). When true,
-	// DeltaName = "Updated"+Name, DeltaType = rendered map type (no pointer wrap),
-	// MapRemovedName = "Removed"+Name, MapKeyType = rendered K type.
-	IsMapNested bool
-
 	// MapRemovedName is the Delta-side field name for the removed-keys slice
-	// (e.g. "RemovedTags" for a source field named Tags). Only set when IsMapNested.
+	// (e.g. "RemovedTags" for a source field named Tags). Only when Shape==fieldShapeMap.
 	MapRemovedName string
 
 	// MapKeyType is the rendered Go type string for the map key K
-	// (e.g. "string"). Used to declare the RemovedX []K field. Only when IsMapNested.
+	// (e.g. "string"). Used to declare the RemovedX []K field. Only when Shape==fieldShapeMap.
 	MapKeyType string
 
 	// MapValueUseReflectEq is true when the map value type V is not comparable
 	// (e.g. a struct containing a slice/map) and Diff must use reflect.DeepEqual
-	// for value comparison. Set by !types.Comparable(mapT.Elem()). Only when IsMapNested.
+	// for value comparison. Set by !types.Comparable(mapT.Elem()). Only when Shape==fieldShapeMap.
 	MapValueUseReflectEq bool
 
-	// IsSliceNested is true for delta.nested []T fields (N-04, E-15 set-diff semantics).
-	// DeltaName = "Added"+Name, SliceRemovedName = "Removed"+Name, DeltaType = []T.
-	IsSliceNested bool
-
 	// SliceRemovedName is the Delta-side field name for removed elements
-	// (e.g. "RemovedNames" for a source field named Names). Only when IsSliceNested.
+	// (e.g. "RemovedNames" for a source field named Names). Only when Shape==fieldShapeSlice.
 	SliceRemovedName string
 
 	// SliceElemType is the rendered Go element type string (e.g. "string", "Tag").
-	// Used as the map key type in the O(n) comparable-element path. Only when IsSliceNested.
+	// Used as the map key type in the O(n) comparable-element path. Only when Shape==fieldShapeSlice.
 	SliceElemType string
 
 	// SliceElemUseReflectEq is true when the slice element type is not comparable
 	// (§5.2) and the O(n²) reflect.DeepEqual fallback must be used instead of the
-	// O(n) map[T]struct{} set path. Set by !types.Comparable(sliceT.Elem()). Only when IsSliceNested.
+	// O(n) map[T]struct{} set path. Set by !types.Comparable(sliceT.Elem()). Only when Shape==fieldShapeSlice.
 	SliceElemUseReflectEq bool
 
 	// ── Clearable-envelope fields (CL-05..07, E-17/E-23) ─────────────────────
 	//
-	// IsClearable is true for delta.nested+delta.clearable fields. When true
-	// the parent Delta carries `X runtime.FieldDelta[ClearableInner]` (single
-	// field, no sibling fields). IsNested / IsMapNested / IsSliceNested are false.
-	IsClearable bool
+	// The following fields are only meaningful when Shape==fieldShapeClearable.
+	// The parent Delta carries `X runtime.FieldDelta[ClearableInner]` (single field).
 
 	// ClearableInner is the T_inner type name used in runtime.FieldDelta[T_inner]:
 	// "FooDelta" for struct, "<X>MapDelta" for map, "<X>SliceDelta" for slice.
@@ -411,23 +410,23 @@ import (
 type {{.DeltaName}} struct {
 	// Header: chain-lifecycle envelope (ChainID, Sequence, Provenance).
 	runtime.Header
-{{- range .Fields}}{{if not .Suppressed}}{{if .IsClearable}}
+{{- range .Fields}}{{if not .Suppressed}}{{if eq .Shape "clearable"}}
 	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via {{.ClearableApplyFunc}}.
 	{{.DeltaName}} {{.DeltaType}}
-{{- else if .IsSliceNested}}
+{{- else if eq .Shape "sliceNested"}}
 	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional slice delta — elements present in b absent in a.
 	{{.DeltaName}} {{.DeltaType}}
 	// (continues compositional slice delta for {{$snap.Name}}.{{.Name}}) — elements present in a absent in b.
 	{{.SliceRemovedName}} {{.DeltaType}}
-{{- else if .IsMapNested}}
+{{- else if eq .Shape "mapNested"}}
 	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional map delta — entries to upsert (insert or overwrite).
 	{{.DeltaName}} {{.DeltaType}}
 	// (continues compositional map delta for {{$snap.Name}}.{{.Name}}) — keys to delete.
 	{{.MapRemovedName}} []{{.MapKeyType}}
-{{- else if .IsNested}}
+{{- else if eq .Shape "nested"}}
 	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional delta; recursive Apply.
 	{{.DeltaName}} {{.DeltaType}}
-{{- else if .IsPointer}}
+{{- else if eq .Shape "pointer"}}
 	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace of *T; outer nil = no change, inner nil = clear.
 	{{.DeltaName}} {{.DeltaType}}
 {{- else}}
@@ -463,7 +462,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 }
 {{end -}}
 
-{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if .IsClearable}}{{template "applyClearableField" .}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsSliceNested}}{{template "applySliceField" .}}{{else if .IsMapNested}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if eq .Shape "clearable"}}{{template "applyClearableField" .}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "applySliceField" .}}{{else if eq .Shape "mapNested"}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
@@ -489,7 +488,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 }
 {{end -}}
 
-{{define "diffField"}}{{if .IsClearable}}{{template "diffClearableField" .}}{{else if .IsSliceNested}}{{template "diffSliceField" .}}{{else if .IsMapNested}}{{template "diffMapField" .}}{{else if .IsNested}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if .IsPointer}}if !((a.{{.Name}} == nil && b.{{.Name}} == nil) || (a.{{.Name}} != nil && b.{{.Name}} != nil && {{if .PointeeUseReflectEq}}reflect.DeepEqual(*a.{{.Name}}, *b.{{.Name}}){{else}}*a.{{.Name}} == *b.{{.Name}}{{end}})) { d.{{.DeltaName}} = &b.{{.Name}} }{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
+{{define "diffField"}}{{if eq .Shape "clearable"}}{{template "diffClearableField" .}}{{else if eq .Shape "sliceNested"}}{{template "diffSliceField" .}}{{else if eq .Shape "mapNested"}}{{template "diffMapField" .}}{{else if eq .Shape "nested"}}{{if .NestedDiffFuncName}}d.{{.DeltaName}} = {{.NestedDiffFuncName}}(a.{{.Name}}, b.{{.Name}}){{else}}d.{{.DeltaName}} = a.{{.Name}}.Diff(b.{{.Name}}){{end}}{{else if eq .Shape "pointer"}}if !((a.{{.Name}} == nil && b.{{.Name}} == nil) || (a.{{.Name}} != nil && b.{{.Name}} != nil && {{if .PointeeUseReflectEq}}reflect.DeepEqual(*a.{{.Name}}, *b.{{.Name}}){{else}}*a.{{.Name}} == *b.{{.Name}}{{end}})) { d.{{.DeltaName}} = &b.{{.Name}} }{{else if .UseReflectEq}}if !reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}) { d.{{.DeltaName}} = &b.{{.Name}} }{{else}}if a.{{.Name}} != b.{{.Name}} { d.{{.DeltaName}} = &b.{{.Name}} }{{end}}{{end -}}
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
@@ -553,23 +552,23 @@ func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 {{- $nested := .}}// {{.DeltaName}} is the Delta companion type for delta.nested fields of
 // type {{.Name}}. It is generated by delta-gen and must not be edited.
 type {{.DeltaName}} struct {
-{{- range .Fields}}{{if not .Suppressed}}{{if .IsClearable}}
+{{- range .Fields}}{{if not .Suppressed}}{{if eq .Shape "clearable"}}
 	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via {{.ClearableApplyFunc}}.
 	{{.DeltaName}} {{.DeltaType}}
-{{- else if .IsSliceNested}}
+{{- else if eq .Shape "sliceNested"}}
 	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional slice delta — elements present in b absent in a.
 	{{.DeltaName}} {{.DeltaType}}
 	// (continues compositional slice delta for {{$nested.Name}}.{{.Name}}) — elements present in a absent in b.
 	{{.SliceRemovedName}} {{.DeltaType}}
-{{- else if .IsMapNested}}
+{{- else if eq .Shape "mapNested"}}
 	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional map delta — entries to upsert (insert or overwrite).
 	{{.DeltaName}} {{.DeltaType}}
 	// (continues compositional map delta for {{$nested.Name}}.{{.Name}}) — keys to delete.
 	{{.MapRemovedName}} []{{.MapKeyType}}
-{{- else if .IsNested}}
+{{- else if eq .Shape "nested"}}
 	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional delta; recursive Apply.
 	{{.DeltaName}} {{.DeltaType}}
-{{- else if .IsPointer}}
+{{- else if eq .Shape "pointer"}}
 	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace of *T; outer nil = no change, inner nil = clear.
 	{{.DeltaName}} {{.DeltaType}}
 {{- else}}
@@ -594,7 +593,7 @@ func {{.ApplyFuncName}}(u {{.Name}}, d {{.DeltaName}}) {{.Name}} {
 func (u {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} { return {{.ApplyFuncName}}(u, d) }
 {{end -}}
 
-{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if .IsNested}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if .IsSliceNested}}{{template "nestedApplySliceField" .}}{{else if .IsMapNested}}{{template "nestedApplyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
+{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "nestedApplySliceField" .}}{{else if eq .Shape "mapNested"}}{{template "nestedApplyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
 
 {{define "nestedDiffFunc"}}
 // {{.DiffFuncName}} produces the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d)
@@ -1126,10 +1125,10 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 			sliceStr := types.TypeString(src.Typ, ctx.qualifier)
 			elemStr := types.TypeString(sliceT.Elem(), ctx.qualifier)
 			fv := fieldView{
+				Shape:                 fieldShapeSlice,
 				Name:                  src.Name,
 				DeltaName:             prefixAdded + src.Name,
 				DeltaType:             sliceStr,
-				IsSliceNested:         true,
 				SliceRemovedName:      prefixRemoved + src.Name,
 				SliceElemType:         elemStr,
 				SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
@@ -1142,10 +1141,10 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 			keyStr := types.TypeString(mapT.Key(), ctx.qualifier)
 			mapStr := types.TypeString(src.Typ, ctx.qualifier)
 			fv := fieldView{
+				Shape:                fieldShapeMap,
 				Name:                 src.Name,
 				DeltaName:            prefixUpdated + src.Name,
 				DeltaType:            mapStr,
-				IsMapNested:          true,
 				MapRemovedName:       prefixRemoved + src.Name,
 				MapKeyType:           keyStr,
 				MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
@@ -1166,10 +1165,10 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 				nestedDiffFuncName = prefixDiff + subTypeName
 			}
 			fv := fieldView{
+				Shape:              fieldShapeNested,
 				Name:               src.Name,
 				DeltaName:          src.Name,
 				DeltaType:          subTypeName + suffixDelta,
-				IsNested:           true,
 				NestedFuncName:     nestedFuncName,
 				NestedDiffFuncName: nestedDiffFuncName,
 				SourceTypeStr:      qualifiedSub,
@@ -1189,15 +1188,18 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 	needsReflect := false
 	// ShapePointer (*T): nil-equivalence + dereferenced-value comparison (R-27, E-02).
 	if src.Shape == ShapePointer {
-		fv.IsPointer = true
+		fv.Shape = fieldShapePointer
 		pointeeT := src.Typ.Underlying().(*types.Pointer).Elem()
 		if !types.Comparable(pointeeT) {
 			fv.PointeeUseReflectEq = true
 			needsReflect = true
 		}
-	} else if !types.Comparable(src.Typ) {
-		fv.UseReflectEq = true
-		needsReflect = true
+	} else {
+		fv.Shape = fieldShapeAtomic
+		if !types.Comparable(src.Typ) {
+			fv.UseReflectEq = true
+			needsReflect = true
+		}
 	}
 	return fieldBuildResult{FV: fv, NeedsReflect: needsReflect}, nil
 }
@@ -1343,7 +1345,7 @@ func buildClearableFieldView(
 			Name:                   f.Name,
 			DeltaName:              f.Name,
 			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
-			IsClearable:            true,
+			Shape:                  fieldShapeClearable,
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
@@ -1381,7 +1383,7 @@ func buildClearableFieldView(
 			Name:                   f.Name,
 			DeltaName:              f.Name,
 			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
-			IsClearable:            true,
+			Shape:                  fieldShapeClearable,
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
@@ -1422,7 +1424,7 @@ func buildClearableFieldView(
 			Name:                     f.Name,
 			DeltaName:                f.Name,
 			DeltaType:                "runtime.FieldDelta[" + subTypeName + suffixDelta + "]",
-			IsClearable:              true,
+			Shape:                    fieldShapeClearable,
 			ClearableInner:           subTypeName + suffixDelta,
 			ClearableIsStruct:        true,
 			ClearableZeroComposite:   qualifiedSub + "{}",
