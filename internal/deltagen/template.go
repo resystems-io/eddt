@@ -69,9 +69,9 @@ const (
 type fieldViewShape string
 
 const (
-	fieldShapeAtomic    fieldViewShape = "atomic"    // untagged / commutative; SetX *T field
-	fieldShapePointer   fieldViewShape = "pointer"   // *T atomic; nil-equivalence + deref comparison
-	fieldShapeNested    fieldViewShape = "nested"     // delta.nested struct companion
+	fieldShapeAtomic    fieldViewShape = "atomic"      // untagged / commutative; SetX *T field
+	fieldShapePointer   fieldViewShape = "pointer"     // *T atomic; nil-equivalence + deref comparison
+	fieldShapeNested    fieldViewShape = "nested"      // delta.nested struct companion
 	fieldShapeSlice     fieldViewShape = "sliceNested" // delta.nested []T set-diff
 	fieldShapeMap       fieldViewShape = "mapNested"   // delta.nested map[K]V upsert/remove
 	fieldShapeClearable fieldViewShape = "clearable"   // delta.nested+delta.clearable FieldDelta[T]
@@ -404,35 +404,13 @@ import (
 )
 {{range .Snapshots}}{{range .NestedTypes}}{{if .IsMapWrapper}}{{template "mapWrapper" .}}{{else if .IsSliceWrapper}}{{template "sliceWrapper" .}}{{else}}{{template "nestedTypeDecl" .}}{{template "nestedApplyFunc" .}}{{if .EmitMethod}}{{template "nestedApplyMethod" .}}{{end}}{{template "nestedDiffFunc" .}}{{if .EmitMethod}}{{template "nestedDiffMethod" .}}{{end}}{{end}}
 {{end}}
-{{$snap := .}}// {{.DeltaName}} is the Delta companion type for {{.Qualifier}}{{.Name}}.
+// {{.DeltaName}} is the Delta companion type for {{.Qualifier}}{{.Name}}.
 // Each payload field is expressed as an optional pointer: a nil value means
 // "no change" for that field when Apply is called.
 type {{.DeltaName}} struct {
 	// Header: chain-lifecycle envelope (ChainID, Sequence, Provenance).
 	runtime.Header
-{{- range .Fields}}{{if not .Suppressed}}{{if eq .Shape "clearable"}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via {{.ClearableApplyFunc}}.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else if eq .Shape "sliceNested"}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional slice delta — elements present in b absent in a.
-	{{.DeltaName}} {{.DeltaType}}
-	// (continues compositional slice delta for {{$snap.Name}}.{{.Name}}) — elements present in a absent in b.
-	{{.SliceRemovedName}} {{.DeltaType}}
-{{- else if eq .Shape "mapNested"}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional map delta — entries to upsert (insert or overwrite).
-	{{.DeltaName}} {{.DeltaType}}
-	// (continues compositional map delta for {{$snap.Name}}.{{.Name}}) — keys to delete.
-	{{.MapRemovedName}} []{{.MapKeyType}}
-{{- else if eq .Shape "nested"}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional delta; recursive Apply.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else if eq .Shape "pointer"}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace of *T; outer nil = no change, inner nil = clear.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else}}
-	// {{.Name}}: source {{$snap.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace; nil = no change.
-	{{.DeltaName}} {{.DeltaType}}
-{{- end}}{{end}}{{end}}
+{{- template "fieldDeclsRange" dict "Fields" .Fields "ParentName" .Name}}
 }
 {{template "applyFunc" .}}
 {{if .EmitMethod}}{{template "applyMethod" .}}
@@ -462,7 +440,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 }
 {{end -}}
 
-{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if eq .Shape "clearable"}}{{template "applyClearableField" .}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "applySliceField" .}}{{else if eq .Shape "mapNested"}}{{template "applyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
+{{define "applyField"}}{{if .Suppressed}}result.{{.Name}} = s.{{.Name}}{{else if eq .Shape "clearable"}}{{template "applyClearableField" .}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(s.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = s.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "applySliceFieldBody" dict "F" . "Recv" "s"}}{{else if eq .Shape "mapNested"}}{{template "applyMapFieldBody" dict "F" . "Recv" "s"}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = s.{{.Name}} }{{end}}{{end -}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
@@ -552,29 +530,7 @@ func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 {{- $nested := .}}// {{.DeltaName}} is the Delta companion type for delta.nested fields of
 // type {{.Name}}. It is generated by delta-gen and must not be edited.
 type {{.DeltaName}} struct {
-{{- range .Fields}}{{if not .Suppressed}}{{if eq .Shape "clearable"}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via {{.ClearableApplyFunc}}.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else if eq .Shape "sliceNested"}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional slice delta — elements present in b absent in a.
-	{{.DeltaName}} {{.DeltaType}}
-	// (continues compositional slice delta for {{$nested.Name}}.{{.Name}}) — elements present in a absent in b.
-	{{.SliceRemovedName}} {{.DeltaType}}
-{{- else if eq .Shape "mapNested"}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional map delta — entries to upsert (insert or overwrite).
-	{{.DeltaName}} {{.DeltaType}}
-	// (continues compositional map delta for {{$nested.Name}}.{{.Name}}) — keys to delete.
-	{{.MapRemovedName}} []{{.MapKeyType}}
-{{- else if eq .Shape "nested"}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — compositional delta; recursive Apply.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else if eq .Shape "pointer"}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace of *T; outer nil = no change, inner nil = clear.
-	{{.DeltaName}} {{.DeltaType}}
-{{- else}}
-	// {{.Name}}: source {{$nested.Name}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace; nil = no change.
-	{{.DeltaName}} {{.DeltaType}}
-{{- end}}{{end}}{{end}}
+{{- template "fieldDeclsRange" dict "Fields" .Fields "ParentName" .Name}}
 }
 {{end -}}
 
@@ -593,7 +549,7 @@ func {{.ApplyFuncName}}(u {{.Name}}, d {{.DeltaName}}) {{.Name}} {
 func (u {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} { return {{.ApplyFuncName}}(u, d) }
 {{end -}}
 
-{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "nestedApplySliceField" .}}{{else if eq .Shape "mapNested"}}{{template "nestedApplyMapField" .}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
+{{define "nestedApplyField"}}{{if .Suppressed}}result.{{.Name}} = u.{{.Name}}{{else if eq .Shape "nested"}}{{if .NestedFuncName}}result.{{.Name}} = {{.NestedFuncName}}(u.{{.Name}}, d.{{.DeltaName}}){{else}}result.{{.Name}} = u.{{.Name}}.Apply(d.{{.DeltaName}}){{end}}{{else if eq .Shape "sliceNested"}}{{template "applySliceFieldBody" dict "F" . "Recv" "u"}}{{else if eq .Shape "mapNested"}}{{template "applyMapFieldBody" dict "F" . "Recv" "u"}}{{else}}if d.{{.DeltaName}} != nil { result.{{.Name}} = *d.{{.DeltaName}} } else { result.{{.Name}} = u.{{.Name}} }{{end}}{{end -}}
 
 {{define "nestedDiffFunc"}}
 // {{.DiffFuncName}} produces the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d)
@@ -610,26 +566,15 @@ func {{.DiffFuncName}}(a, b {{.Name}}) {{.DeltaName}} {
 func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName}}(u, other) }
 {{end -}}
 
-{{define "applyMapField"}}
-// apply delta.nested map field {{.Name}} (N-03):
+{{define "applyMapFieldBody"}}
+// apply delta.nested map field {{.F.Name}} (N-03):
 // 1. copy source map, 2. delete removed keys, 3. upsert updated entries.
 {
-	__m := make({{.DeltaType}}, len(s.{{.Name}}))
-	for __k, __v := range s.{{.Name}} { __m[__k] = __v }
-	for _, __k := range d.{{.MapRemovedName}} { delete(__m, __k) }
-	for __k, __v := range d.{{.DeltaName}} { __m[__k] = __v }
-	result.{{.Name}} = __m
-}{{end -}}
-
-{{define "nestedApplyMapField"}}
-// apply delta.nested map field {{.Name}} (N-03):
-// 1. copy source map, 2. delete removed keys, 3. upsert updated entries.
-{
-	__m := make({{.DeltaType}}, len(u.{{.Name}}))
-	for __k, __v := range u.{{.Name}} { __m[__k] = __v }
-	for _, __k := range d.{{.MapRemovedName}} { delete(__m, __k) }
-	for __k, __v := range d.{{.DeltaName}} { __m[__k] = __v }
-	result.{{.Name}} = __m
+	__m := make({{.F.DeltaType}}, len({{.Recv}}.{{.F.Name}}))
+	for __k, __v := range {{.Recv}}.{{.F.Name}} { __m[__k] = __v }
+	for _, __k := range d.{{.F.MapRemovedName}} { delete(__m, __k) }
+	for __k, __v := range d.{{.F.DeltaName}} { __m[__k] = __v }
+	result.{{.F.Name}} = __m
 }{{end -}}
 
 {{define "diffMapField"}}
@@ -654,74 +599,40 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 	if __updated != nil { d.{{.DeltaName}} = __updated }
 }{{end -}}
 
-{{define "applySliceField"}}
-// apply delta.nested slice field {{.Name}} (N-04, E-15 set-diff semantics):
+{{define "applySliceFieldBody"}}
+// apply delta.nested slice field {{.F.Name}} (N-04, E-15 set-diff semantics):
 // 1. filter removed elements, 2. append added elements (E-03 survivor order).
-{{- if .SliceElemUseReflectEq}}
+{{- if .F.SliceElemUseReflectEq}}
 // Element type is not comparable: O(n²) reflect.DeepEqual fallback (§5.2).
 {
-	__src := s.{{.Name}}
-	if len(d.{{.SliceRemovedName}}) > 0 {
-		__out := make({{.DeltaType}}, 0, len(__src))
+	__src := {{.Recv}}.{{.F.Name}}
+	if len(d.{{.F.SliceRemovedName}}) > 0 {
+		__out := make({{.F.DeltaType}}, 0, len(__src))
 		for _, __v := range __src {
 			__keep := true
-			for _, __r := range d.{{.SliceRemovedName}} {
+			for _, __r := range d.{{.F.SliceRemovedName}} {
 				if reflect.DeepEqual(__r, __v) { __keep = false; break }
 			}
 			if __keep { __out = append(__out, __v) }
 		}
 		__src = __out
 	}
-	result.{{.Name}} = append(__src, d.{{.DeltaName}}...)
+	result.{{.F.Name}} = append(__src, d.{{.F.DeltaName}}...)
 }
 {{- else}}
 // Element type is comparable: O(n) map[T]struct{} membership set.
 {
-	__src := s.{{.Name}}
-	if len(d.{{.SliceRemovedName}}) > 0 {
-		__rem := make(map[{{.SliceElemType}}]struct{}, len(d.{{.SliceRemovedName}}))
-		for _, __r := range d.{{.SliceRemovedName}} { __rem[__r] = struct{}{} }
-		__out := make({{.DeltaType}}, 0, len(__src))
+	__src := {{.Recv}}.{{.F.Name}}
+	if len(d.{{.F.SliceRemovedName}}) > 0 {
+		__rem := make(map[{{.F.SliceElemType}}]struct{}, len(d.{{.F.SliceRemovedName}}))
+		for _, __r := range d.{{.F.SliceRemovedName}} { __rem[__r] = struct{}{} }
+		__out := make({{.F.DeltaType}}, 0, len(__src))
 		for _, __v := range __src {
 			if _, __ok := __rem[__v]; !__ok { __out = append(__out, __v) }
 		}
 		__src = __out
 	}
-	result.{{.Name}} = append(__src, d.{{.DeltaName}}...)
-}
-{{- end}}{{end -}}
-
-{{define "nestedApplySliceField"}}
-// apply delta.nested slice field {{.Name}} inside a nested type (N-04, E-15):
-{{- if .SliceElemUseReflectEq}}
-{
-	__src := u.{{.Name}}
-	if len(d.{{.SliceRemovedName}}) > 0 {
-		__out := make({{.DeltaType}}, 0, len(__src))
-		for _, __v := range __src {
-			__keep := true
-			for _, __r := range d.{{.SliceRemovedName}} {
-				if reflect.DeepEqual(__r, __v) { __keep = false; break }
-			}
-			if __keep { __out = append(__out, __v) }
-		}
-		__src = __out
-	}
-	result.{{.Name}} = append(__src, d.{{.DeltaName}}...)
-}
-{{- else}}
-{
-	__src := u.{{.Name}}
-	if len(d.{{.SliceRemovedName}}) > 0 {
-		__rem := make(map[{{.SliceElemType}}]struct{}, len(d.{{.SliceRemovedName}}))
-		for _, __r := range d.{{.SliceRemovedName}} { __rem[__r] = struct{}{} }
-		__out := make({{.DeltaType}}, 0, len(__src))
-		for _, __v := range __src {
-			if _, __ok := __rem[__v]; !__ok { __out = append(__out, __v) }
-		}
-		__src = __out
-	}
-	result.{{.Name}} = append(__src, d.{{.DeltaName}}...)
+	result.{{.F.Name}} = append(__src, d.{{.F.DeltaName}}...)
 }
 {{- end}}{{end -}}
 
@@ -769,6 +680,30 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 	if len(__removed) > 0 { d.{{.SliceRemovedName}} = __removed }
 }
 {{- end}}{{end -}}
+
+{{define "fieldDeclsRange"}}{{$p := .ParentName}}{{range .Fields}}{{if not .Suppressed}}{{if eq .Shape "clearable"}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via {{.ClearableApplyFunc}}.
+	{{.DeltaName}} {{.DeltaType}}
+{{- else if eq .Shape "sliceNested"}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — compositional slice delta — elements present in b absent in a.
+	{{.DeltaName}} {{.DeltaType}}
+	// (continues compositional slice delta for {{$p}}.{{.Name}}) — elements present in a absent in b.
+	{{.SliceRemovedName}} {{.DeltaType}}
+{{- else if eq .Shape "mapNested"}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — compositional map delta — entries to upsert (insert or overwrite).
+	{{.DeltaName}} {{.DeltaType}}
+	// (continues compositional map delta for {{$p}}.{{.Name}}) — keys to delete.
+	{{.MapRemovedName}} []{{.MapKeyType}}
+{{- else if eq .Shape "nested"}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — compositional delta; recursive Apply.
+	{{.DeltaName}} {{.DeltaType}}
+{{- else if eq .Shape "pointer"}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace of *T; outer nil = no change, inner nil = clear.
+	{{.DeltaName}} {{.DeltaType}}
+{{- else}}
+	// {{.Name}}: source {{$p}}.{{.Name}} ({{.SourceTypeStr}}) — atomic replace; nil = no change.
+	{{.DeltaName}} {{.DeltaType}}
+{{- end}}{{end}}{{end}}{{end -}}
 
 {{define "applyClearableField"}}switch d.{{.DeltaName}}.Op {
 case runtime.OpRetract:
@@ -1079,9 +1014,9 @@ type fieldSource struct {
 type fieldBuildCtx struct {
 	qualifier  types.Qualifier
 	emitMethod bool
-	parentName string           // enclosing struct name, used in error messages
-	visited    map[string]bool  // N-01 dedup set: prevents duplicate companion emission
-	inPath     map[string]bool  // N-02 cycle-detection: active DFS ancestry chain
+	parentName string          // enclosing struct name, used in error messages
+	visited    map[string]bool // N-01 dedup set: prevents duplicate companion emission
+	inPath     map[string]bool // N-02 cycle-detection: active DFS ancestry chain
 }
 
 // fieldBuildResult is returned by buildFieldView.
