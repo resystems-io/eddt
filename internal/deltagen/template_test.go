@@ -1572,19 +1572,6 @@ type PtrNonComparableSnapshot struct {
 func compileCheckEmit(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-
-	// Locate the eddt module root: two levels above the package directory
-	// (internal/deltagen → internal → module root).
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	// Write the source Snapshot file.  Package must match the generated file
-	// (atomic_all — the fixture package name, same-package mode).
-	// The generated file refers to Inner and other local types defined here.
 	srcCode := `package atomic_all
 
 import eddt "go.resystems.io/eddt/runtime"
@@ -1607,18 +1594,6 @@ type AtomicAllSnapshot struct {
 	Commute int32            ` + "`eddt:\"delta.commutative\"`" + `
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-
-	// Write the generated Delta file.
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-
-	// R-11: the generated delta.go must be gofmt-clean as written.
-	assertGofmtClean(t, deltaPath)
 
 	// Write a behaviour test exercising Apply round-trip (R-20) and
 	// HeaderAfterApply error propagation (E-19). The test is placed in the
@@ -1691,9 +1666,7 @@ func TestApplyHeaderValidationError(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "apply_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write apply_test.go: %v", err)
-	}
+	applyTestCode := testCode
 
 	// Write a behaviour test exercising Diff round-trip (R-28), identity-diff
 	// minimality (R-29 / E-06), partial-diff minimality, and HeaderForDiff
@@ -2004,10 +1977,6 @@ func TestDiffPointerMinimality(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "diff_test.go"), []byte(diffTestCode), 0644); err != nil {
-		t.Fatalf("write diff_test.go: %v", err)
-	}
-
 	// coalesceTestCode exercises the generated Coalesce function against the
 	// atomic_all fixture. makeSnap and other helpers are defined in diff_test.go
 	// (same package atomic_all_test), so they are directly accessible here.
@@ -2335,10 +2304,6 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "coalesce_test.go"), []byte(coalesceTestCode), 0644); err != nil {
-		t.Fatalf("write coalesce_test.go: %v", err)
-	}
-
 	// entityIDTestCode exercises EntityID generation against the atomic_all
 	// fixture (Key string, raw basic). makeSnap is defined in diff_test.go
 	// (same package atomic_all_test).
@@ -2414,32 +2379,18 @@ func TestEntityID_GoldenBytes(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_test.go"), []byte(entityIDTestCode), 0644); err != nil {
-		t.Fatalf("write entity_id_test.go: %v", err)
-	}
-
-	// Write go.mod with a replace directive pointing at the local module root.
-	modContent := "module atomic_all\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	// Copy the eddt module's go.sum so that transitive deps resolve locally
-	// without network access (the replace directive covers the module itself,
-	// but its deps are looked up via go.sum).
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	// go test ./... exercises Apply round-trip and HeaderAfterApply error
-	// propagation. -mod=mod lets the toolchain auto-populate transitive require
-	// entries without network access (the module cache has all eddt deps).
-	// -count=1 disables test caching so the behaviour test always runs.
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "atomic_all",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles: map[string]string{
+			"apply_test.go":     applyTestCode,
+			"diff_test.go":      diffTestCode,
+			"coalesce_test.go":  coalesceTestCode,
+			"entity_id_test.go": entityIDTestCode,
+		},
+		runArgs: []string{"./..."},
+	})
 }
 
 // compileCheckEmitStructKey writes the generated source (plus a matching source
@@ -2449,14 +2400,6 @@ func TestEntityID_GoldenBytes(t *testing.T) {
 // collision avoidance (requirement 11).
 func compileCheckEmitStructKey(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package entityid_struct_key
 
@@ -2475,16 +2418,6 @@ type EntityIDStructKeySnapshot struct {
 	Status int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-
-	assertGofmtClean(t, deltaPath)
 
 	testCode := `package entityid_struct_key_test
 
@@ -2572,24 +2505,13 @@ func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_struct_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write entity_id_struct_test.go: %v", err)
-	}
-
-	modContent := "module entityid_struct_key\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "entityid_struct_key",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"entity_id_struct_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitStructKeyReversed generates EntityID code for a struct key
@@ -2599,14 +2521,6 @@ func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
 // fixture — proving that field declaration order does not affect the hash.
 func compileCheckEmitStructKeyReversed(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	// SubID is declared before IMSI — the opposite of alphabetical order.
 	srcCode := `package entityid_struct_key_reversed
@@ -2626,16 +2540,6 @@ type EntityIDReversedKeySnapshot struct {
 	Status int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-
-	assertGofmtClean(t, deltaPath)
 
 	testCode := `package entityid_struct_key_reversed_test
 
@@ -2680,24 +2584,13 @@ func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "entity_id_reversed_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write entity_id_reversed_test.go: %v", err)
-	}
-
-	modContent := "module entityid_struct_key_reversed\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "entityid_struct_key_reversed",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"entity_id_reversed_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // ── N-01: delta.nested struct-value tests ────────────────────────────────────
@@ -3146,14 +3039,6 @@ func TestBuildSnapshotView_CycleDetected(t *testing.T) {
 func compileCheckEmitNested(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
 	srcCode := `package nested_struct
 
 import eddt "go.resystems.io/eddt/runtime"
@@ -3172,14 +3057,6 @@ type NestedStructSnapshot struct {
 	Label string
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_struct_test
 
@@ -3305,24 +3182,13 @@ func TestNested_Coalesce_Root_Works(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_test.go: %v", err)
-	}
-
-	modContent := "module nested_struct\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_struct",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitNestedDeep verifies the two-level nesting fixture compiles
@@ -3330,14 +3196,6 @@ func TestNested_Coalesce_Root_Works(t *testing.T) {
 // Covers: N-01 req 01 (multi-level at runtime)
 func compileCheckEmitNestedDeep(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package nested_deep
 
@@ -3359,13 +3217,6 @@ type NestedDeepSnapshot struct {
 	Name  string
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_deep_test
 
@@ -3411,24 +3262,13 @@ func TestDeep_RoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_deep_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_deep_test.go: %v", err)
-	}
-
-	modContent := "module nested_deep\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_deep",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_deep_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitNestedTriple verifies the three-level nesting fixture compiles
@@ -3437,14 +3277,6 @@ func TestDeep_RoundTrip(t *testing.T) {
 // Covers: N-02
 func compileCheckEmitNestedTriple(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package nested_triple
 
@@ -3471,13 +3303,6 @@ type NestedTripleSnapshot struct {
 	Name string
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_triple_test
 
@@ -3532,24 +3357,13 @@ func TestTriple_RoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_triple_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_triple_test.go: %v", err)
-	}
-
-	modContent := "module nested_triple\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_triple",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_triple_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitNestedMap verifies that the generated nested_map delta source
@@ -3565,14 +3379,6 @@ func TestTriple_RoundTrip(t *testing.T) {
 // Covers: N-03, E-16
 func compileCheckEmitNestedMap(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	// Inline the fixture source so the isolated module is self-contained.
 	srcCode := `package nested_map
@@ -3596,13 +3402,6 @@ type NestedMapSnapshot struct {
 	Count  int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_map_test
 
@@ -3725,24 +3524,13 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 	if len(d.RemovedTags) != 0 { t.Errorf("RemovedTags must be empty when Tags unchanged; got %v", d.RemovedTags) }
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_map_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_map_test.go: %v", err)
-	}
-
-	modContent := "module nested_map\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_map",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_map_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitNestedSlice verifies that the generated nested_slice delta source
@@ -3758,14 +3546,6 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 // Covers: N-04, E-15
 func compileCheckEmitNestedSlice(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	// Inline the fixture source so the isolated module is self-contained.
 	srcCode := `package nested_slice
@@ -3789,13 +3569,6 @@ type NestedSliceSnapshot struct {
 	Count int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_slice_test
 
@@ -3923,24 +3696,13 @@ func TestSlice_AtomicCoexistence(t *testing.T) {
 	if len(d.RemovedNames) != 0 { t.Errorf("RemovedNames must be empty when Names unchanged; got %v", d.RemovedNames) }
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_slice_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_slice_test.go: %v", err)
-	}
-
-	modContent := "module nested_slice\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_slice",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_slice_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // compileCheckEmitNestedSliceReflect verifies that the generated nested_slice_reflect
@@ -3954,14 +3716,6 @@ func TestSlice_AtomicCoexistence(t *testing.T) {
 // Covers: N-04, §5.2 (non-comparable O(n²) path)
 func compileCheckEmitNestedSliceReflect(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package nested_slice_reflect
 
@@ -3977,13 +3731,6 @@ type NestedSliceReflectSnapshot struct {
 	Blobs [][]byte ` + "`eddt:\"delta.nested\"`" + `
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package nested_slice_reflect_test
 
@@ -4063,24 +3810,13 @@ func TestReflect_RoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "nested_slice_reflect_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write nested_slice_reflect_test.go: %v", err)
-	}
-
-	modContent := "module nested_slice_reflect\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "nested_slice_reflect",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"nested_slice_reflect_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 // runBuildCmd runs a command in dir and fatals with combined output on failure.
@@ -4581,14 +4317,6 @@ func TestEmitTemplate_NestedOnly_NoFieldDelta(t *testing.T) {
 func compileCheckEmitClearableStruct(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
 	srcCode := `package clearable_struct
 
 import eddt "go.resystems.io/eddt/runtime"
@@ -4607,13 +4335,6 @@ type ClearableStructSnapshot struct {
 	Count    int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package clearable_struct_test
 
@@ -4720,36 +4441,17 @@ func TestClearableStruct_RoundTrip(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_struct_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write clearable_struct_test.go: %v", err)
-	}
-
-	modContent := "module clearable_struct\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "clearable_struct",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"clearable_struct_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 func compileCheckEmitClearableMap(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package clearable_map
 
@@ -4764,13 +4466,6 @@ type ClearableMapSnapshot struct {
 	Count int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
 
 	testCode := `package clearable_map_test
 
@@ -4895,36 +4590,17 @@ func TestClearableMap_AtomicCoexistence(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_map_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write clearable_map_test.go: %v", err)
-	}
-
-	modContent := "module clearable_map\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "clearable_map",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"clearable_map_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }
 
 func compileCheckEmitClearableSlice(t *testing.T, generatedSrc []byte) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
 
 	srcCode := `package clearable_slice
 
@@ -4939,14 +4615,6 @@ type ClearableSliceSnapshot struct {
 	Count  int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), []byte(srcCode), 0644); err != nil {
-		t.Fatalf("write snapshot.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "delta.go"), generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, filepath.Join(tmpDir, "delta.go"))
-
 	testCode := `package clearable_slice_test
 
 import (
@@ -5070,22 +4738,11 @@ func TestClearableSlice_AtomicCoexistence(t *testing.T) {
 	}
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "clearable_slice_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("write clearable_slice_test.go: %v", err)
-	}
-
-	modContent := "module clearable_slice\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read eddt go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      "clearable_slice",
+		snapshotSrc:  srcCode,
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"clearable_slice_test.go": testCode},
+		runArgs:      []string{"./..."},
+	})
 }

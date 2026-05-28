@@ -53,7 +53,6 @@ package deltagen
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -151,68 +150,13 @@ func roundTripCheckStructKey(t *testing.T, generatedSrc []byte) {
 //  8. Run go test -mod=mod -count=1 -run TestRoundTrip_Property ./...
 func roundTripCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	// Two levels up: internal/deltagen → internal → module root.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	// Copy the fixture source file as snapshot.go in the temp module.
-	fixtureDir := filepath.Join("testdata", "corpus", dir)
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("readdir %s: %v", fixtureDir, err)
-	}
-	wroteFixture := false
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
-			if err != nil {
-				t.Fatalf("read fixture %s: %v", e.Name(), err)
-			}
-			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
-				t.Fatalf("write snapshot.go: %v", err)
-			}
-			wroteFixture = true
-			break
-		}
-	}
-	if !wroteFixture {
-		t.Fatalf("no .go file found in %s", fixtureDir)
-	}
-
-	// Write the generated delta source and assert it is gofmt-clean.
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	// Write the round-trip property test source.
-	if err := os.WriteFile(filepath.Join(tmpDir, "roundtrip_test.go"), []byte(testSrc), 0644); err != nil {
-		t.Fatalf("write roundtrip_test.go: %v", err)
-	}
-
-	// Write go.mod with a replace directive pointing at the local module root.
-	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	// Copy go.sum so transitive dependencies resolve locally.
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestRoundTrip_Property", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      pkgName,
+		fixtureDir:   filepath.Join("testdata", "corpus", dir),
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"roundtrip_test.go": testSrc},
+		runArgs:      []string{"-run", "TestRoundTrip_Property", "./..."},
+	})
 }
 
 // baselineRoundTripTest is the injected round-trip property test for the baseline
@@ -532,68 +476,13 @@ func identityCheckStructKey(t *testing.T, generatedSrc []byte) {
 // and -run pattern differ.
 func identityCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	// Two levels up: internal/deltagen → internal → module root.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	// Copy the fixture source file as snapshot.go in the temp module.
-	fixtureDir := filepath.Join("testdata", "corpus", dir)
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("readdir %s: %v", fixtureDir, err)
-	}
-	wroteFixture := false
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
-			if err != nil {
-				t.Fatalf("read fixture %s: %v", e.Name(), err)
-			}
-			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
-				t.Fatalf("write snapshot.go: %v", err)
-			}
-			wroteFixture = true
-			break
-		}
-	}
-	if !wroteFixture {
-		t.Fatalf("no .go file found in %s", fixtureDir)
-	}
-
-	// Write the generated delta source and assert it is gofmt-clean.
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	// Write the identity property test source.
-	if err := os.WriteFile(filepath.Join(tmpDir, "identity_test.go"), []byte(testSrc), 0644); err != nil {
-		t.Fatalf("write identity_test.go: %v", err)
-	}
-
-	// Write go.mod with a replace directive pointing at the local module root.
-	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	// Copy go.sum so transitive dependencies resolve locally.
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestIdentity_Property", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      pkgName,
+		fixtureDir:   filepath.Join("testdata", "corpus", dir),
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"identity_test.go": testSrc},
+		runArgs:      []string{"-run", "TestIdentity_Property", "./..."},
+	})
 }
 
 // baselineIdentityTest is the injected identity-diff property test for the
@@ -887,68 +776,13 @@ func coalesceCheckStructKey(t *testing.T, generatedSrc []byte) {
 // and -run pattern differ.
 func coalesceCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	// Two levels up: internal/deltagen → internal → module root.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	// Copy the fixture source file as snapshot.go in the temp module.
-	fixtureDir := filepath.Join("testdata", "corpus", dir)
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("readdir %s: %v", fixtureDir, err)
-	}
-	wroteFixture := false
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
-			if err != nil {
-				t.Fatalf("read fixture %s: %v", e.Name(), err)
-			}
-			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
-				t.Fatalf("write snapshot.go: %v", err)
-			}
-			wroteFixture = true
-			break
-		}
-	}
-	if !wroteFixture {
-		t.Fatalf("no .go file found in %s", fixtureDir)
-	}
-
-	// Write the generated delta source and assert it is gofmt-clean.
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	// Write the coalesce property test source.
-	if err := os.WriteFile(filepath.Join(tmpDir, "coalesce_test.go"), []byte(testSrc), 0644); err != nil {
-		t.Fatalf("write coalesce_test.go: %v", err)
-	}
-
-	// Write go.mod with a replace directive pointing at the local module root.
-	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	// Copy go.sum so transitive dependencies resolve locally.
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestCoalesce_Property", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      pkgName,
+		fixtureDir:   filepath.Join("testdata", "corpus", dir),
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"coalesce_test.go": testSrc},
+		runArgs:      []string{"-run", "TestCoalesce_Property", "./..."},
+	})
 }
 
 // baselineCoalesceTest is the injected coalesce property test for the baseline
@@ -1660,63 +1494,13 @@ func truthTableCheckClearableComposite(t *testing.T, generatedSrc []byte) {
 // and -run pattern differ.
 func truthTableCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	// Two levels up: internal/deltagen → internal → module root.
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
-
-	fixtureDir := filepath.Join("testdata", "corpus", dir)
-	entries, err := os.ReadDir(fixtureDir)
-	if err != nil {
-		t.Fatalf("readdir %s: %v", fixtureDir, err)
-	}
-	wroteFixture := false
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
-			if err != nil {
-				t.Fatalf("read fixture %s: %v", e.Name(), err)
-			}
-			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
-				t.Fatalf("write snapshot.go: %v", err)
-			}
-			wroteFixture = true
-			break
-		}
-	}
-	if !wroteFixture {
-		t.Fatalf("no .go file found in %s", fixtureDir)
-	}
-
-	deltaPath := filepath.Join(tmpDir, "delta.go")
-	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
-		t.Fatalf("write delta.go: %v", err)
-	}
-	assertGofmtClean(t, deltaPath)
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "truthtable_test.go"), []byte(testSrc), 0644); err != nil {
-		t.Fatalf("write truthtable_test.go: %v", err)
-	}
-
-	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
-		t.Fatalf("write go.sum: %v", err)
-	}
-
-	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestTruthTable_All", "./...")
+	runEmittedInModule(t, runOpts{
+		pkgName:      pkgName,
+		fixtureDir:   filepath.Join("testdata", "corpus", dir),
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{"truthtable_test.go": testSrc},
+		runArgs:      []string{"-run", "TestTruthTable_All", "./..."},
+	})
 }
 
 // clearableCompositeTruthTableTest is the injected §5.4 truth-table test for the
