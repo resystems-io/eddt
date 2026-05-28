@@ -952,11 +952,11 @@ type emitOpts struct {
 func parsePkgAliases(raw []string) map[string]string {
 	m := make(map[string]string, len(raw))
 	for _, entry := range raw {
-		idx := strings.Index(entry, "=")
-		if idx < 0 {
+		key, val, ok := strings.Cut(entry, "=")
+		if !ok {
 			continue
 		}
-		m[entry[:idx]] = entry[idx+1:]
+		m[key] = val
 	}
 	return m
 }
