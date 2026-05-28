@@ -74,30 +74,33 @@ var conformanceAxes = map[string]conformanceAxis{
 		testFile:   "roundtrip_test.go",
 		runPattern: "TestRoundTrip_Property",
 		srcs: map[string]string{
-			"baseline":            baselineRoundTripTest,
-			"clearable_composite": clearableCompositeRoundTripTest,
-			"composite":           compositeRoundTripTest,
-			"struct_key":          structKeyRoundTripTest,
+			"baseline":              baselineRoundTripTest,
+			"clearable_composite":   clearableCompositeRoundTripTest,
+			"composite":             compositeRoundTripTest,
+			"struct_key":            structKeyRoundTripTest,
+			"struct_key_clearable": structKeyClearableRoundTripTest,
 		},
 	},
 	"identity": {
 		testFile:   "identity_test.go",
 		runPattern: "TestIdentity_Property",
 		srcs: map[string]string{
-			"baseline":            baselineIdentityTest,
-			"clearable_composite": clearableCompositeIdentityTest,
-			"composite":           compositeIdentityTest,
-			"struct_key":          structKeyIdentityTest,
+			"baseline":              baselineIdentityTest,
+			"clearable_composite":   clearableCompositeIdentityTest,
+			"composite":             compositeIdentityTest,
+			"struct_key":            structKeyIdentityTest,
+			"struct_key_clearable": structKeyClearableIdentityTest,
 		},
 	},
 	"coalesce": {
 		testFile:   "coalesce_test.go",
 		runPattern: "TestCoalesce_Property",
 		srcs: map[string]string{
-			"baseline":            baselineCoalesceTest,
-			"clearable_composite": clearableCompositeCoalesceTest,
-			"composite":           compositeCoalesceTest,
-			"struct_key":          structKeyCoalesceTest,
+			"baseline":              baselineCoalesceTest,
+			"clearable_composite":   clearableCompositeCoalesceTest,
+			"composite":             compositeCoalesceTest,
+			"struct_key":            structKeyCoalesceTest,
+			"struct_key_clearable": structKeyClearableCoalesceTest,
 		},
 	},
 }
@@ -1277,6 +1280,251 @@ func TestCoalesce_Property(t *testing.T) {
 			return false
 		}
 		return reflect.DeepEqual(chunk2, s3)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("coalesce property failed: %v", err)
+	}
+}
+`
+
+// ── HK-16: struct_key_clearable property tests ───────────────────────────────
+
+// structKeyClearableRoundTripTest is the injected round-trip property test for
+// the struct_key_clearable corpus case.  It asserts snapshotEqual(Apply(a, Diff(a,b)), b)
+// for 1000 random skcPayload pairs.
+//
+// The struct-valued Key is fixed across a and b; clearable fields (Home, Labels,
+// Tags) exercise the tri-state envelope.  testing/quick never generates nil maps
+// or nil slices, so OpRetract for Labels and Tags is not exercised here.
+const structKeyClearableRoundTripTest = `package struct_key_clearable_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"struct_key_clearable"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// skcPayload carries the delta-carrying fields of StructKeyClearableSnapshot.
+// Key is fixed to the same value in both a and b.
+type skcPayload struct {
+	Home   struct_key_clearable.SkcAddress
+	Labels map[string]string
+	Tags   []string
+	Score  float64
+}
+
+// toSortedUnique returns a sorted, deduplicated copy of ss.
+func toSortedUnique(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// snapshotEqual applies correct invariants per field shape.
+// Tags uses toSortedUnique (N-04 set-diff semantics, E-15).
+func snapshotEqual(got, b struct_key_clearable.StructKeyClearableSnapshot) bool {
+	return reflect.DeepEqual(got.Header, b.Header) &&
+		got.Key == b.Key &&
+		got.Home == b.Home &&
+		reflect.DeepEqual(got.Labels, b.Labels) &&
+		reflect.DeepEqual(toSortedUnique(got.Tags), toSortedUnique(b.Tags)) &&
+		got.Score == b.Score
+}
+
+// TestRoundTrip_Property asserts snapshotEqual(Apply(a, Diff(a, b)), b) for
+// 1000 random skcPayload pairs.  The struct-valued Key is fixed.
+func TestRoundTrip_Property(t *testing.T) {
+	fixedID  := eddt.EntityID{1}
+	fixedKey := struct_key_clearable.SkcKey{ID: "t1", Shard: 42}
+	now := time.Now()
+
+	prop := func(ap, bp skcPayload) bool {
+		a := struct_key_clearable.StructKeyClearableSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 1, EffectiveAt: now},
+			Key: fixedKey, Home: ap.Home, Labels: ap.Labels,
+			Tags: ap.Tags, Score: ap.Score,
+		}
+		b := struct_key_clearable.StructKeyClearableSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 2, EffectiveAt: now},
+			Key: fixedKey, Home: bp.Home, Labels: bp.Labels,
+			Tags: bp.Tags, Score: bp.Score,
+		}
+		d, err := struct_key_clearable.Diff(a, b)
+		if err != nil {
+			return false
+		}
+		got, err := struct_key_clearable.Apply(a, d)
+		if err != nil {
+			return false
+		}
+		return snapshotEqual(got, b)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("round-trip property failed: %v", err)
+	}
+}
+`
+
+// structKeyClearableIdentityTest is the injected identity-diff property test
+// for the struct_key_clearable corpus case.
+const structKeyClearableIdentityTest = `package struct_key_clearable_test
+
+import (
+	"reflect"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"struct_key_clearable"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+type skcPayload struct {
+	Home   struct_key_clearable.SkcAddress
+	Labels map[string]string
+	Tags   []string
+	Score  float64
+}
+
+// TestIdentity_Property asserts reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)
+// for 1000 random payloads.  aprime is a struct copy of a with Sequence incremented.
+func TestIdentity_Property(t *testing.T) {
+	fixedID  := eddt.EntityID{1}
+	fixedKey := struct_key_clearable.SkcKey{ID: "t1", Shard: 42}
+	now := time.Now()
+
+	prop := func(ap skcPayload) bool {
+		a := struct_key_clearable.StructKeyClearableSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 1, EffectiveAt: now},
+			Key: fixedKey, Home: ap.Home, Labels: ap.Labels,
+			Tags: ap.Tags, Score: ap.Score,
+		}
+		aprime := a
+		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 2, EffectiveAt: now}
+		d, err := struct_key_clearable.Diff(a, aprime)
+		if err != nil {
+			return false
+		}
+		got, err := struct_key_clearable.Apply(a, d)
+		if err != nil {
+			return false
+		}
+		return reflect.DeepEqual(got, aprime)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("identity property failed: %v", err)
+	}
+}
+`
+
+// structKeyClearableCoalesceTest is the injected coalesce property test for
+// the struct_key_clearable corpus case.
+const structKeyClearableCoalesceTest = `package struct_key_clearable_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"struct_key_clearable"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+type skcPayload struct {
+	Home   struct_key_clearable.SkcAddress
+	Labels map[string]string
+	Tags   []string
+	Score  float64
+}
+
+func toSortedUnique(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func snapshotEqual(got, b struct_key_clearable.StructKeyClearableSnapshot) bool {
+	return reflect.DeepEqual(got.Header, b.Header) &&
+		got.Key == b.Key &&
+		got.Home == b.Home &&
+		reflect.DeepEqual(got.Labels, b.Labels) &&
+		reflect.DeepEqual(toSortedUnique(got.Tags), toSortedUnique(b.Tags)) &&
+		got.Score == b.Score
+}
+
+func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p skcPayload, key struct_key_clearable.SkcKey) struct_key_clearable.StructKeyClearableSnapshot {
+	return struct_key_clearable.StructKeyClearableSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: seq, EffectiveAt: now},
+		Key: key, Home: p.Home, Labels: p.Labels,
+		Tags: p.Tags, Score: p.Score,
+	}
+}
+
+// TestCoalesce_Property asserts fold equivalence and chunkability for 1000
+// random (p1, p2, p3) triples.  The struct-valued Key is fixed across all snapshots.
+func TestCoalesce_Property(t *testing.T) {
+	fixedID  := eddt.EntityID{1}
+	fixedKey := struct_key_clearable.SkcKey{ID: "t1", Shard: 42}
+	now := time.Now()
+
+	s0 := struct_key_clearable.StructKeyClearableSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 0, EffectiveAt: now},
+		Key: fixedKey,
+	}
+
+	prop := func(p1, p2, p3 skcPayload) bool {
+		s1 := snap(fixedID, 1, now, p1, fixedKey)
+		s2 := snap(fixedID, 2, now, p2, fixedKey)
+		s3 := snap(fixedID, 3, now, p3, fixedKey)
+
+		d1, err := struct_key_clearable.Diff(s0, s1)
+		if err != nil { return false }
+		d2, err := struct_key_clearable.Diff(s1, s2)
+		if err != nil { return false }
+		d3, err := struct_key_clearable.Diff(s2, s3)
+		if err != nil { return false }
+
+		full, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2, d3})
+		if err != nil || !snapshotEqual(full, s3) { return false }
+
+		mid1, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1})
+		if err != nil { return false }
+		chunk1, err := struct_key_clearable.Coalesce(mid1, []struct_key_clearable.StructKeyClearableSnapshotDelta{d2, d3})
+		if err != nil || !snapshotEqual(chunk1, s3) { return false }
+
+		mid2, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2})
+		if err != nil { return false }
+		chunk2, err := struct_key_clearable.Coalesce(mid2, []struct_key_clearable.StructKeyClearableSnapshotDelta{d3})
+		if err != nil || !snapshotEqual(chunk2, s3) { return false }
+
+		return true
 	}
 	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
 		t.Errorf("coalesce property failed: %v", err)

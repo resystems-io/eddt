@@ -4618,3 +4618,335 @@ func TestClearableSlice_AtomicCoexistence(t *testing.T) {
 		runArgs:      []string{"./..."},
 	})
 }
+
+// TestEmitTemplate_Clearable_Struct_Reflect_SamePkg verifies CL-05..07 generation
+// for a clearable struct field whose inner type is non-comparable (contains a slice).
+// ClearableStructEqReflect=true must trigger reflect.DeepEqual in the emitted Diff.
+// Covers: CL-07, HK-16.
+func TestEmitTemplate_Clearable_Struct_Reflect_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_struct_reflect_delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_struct_reflect"},
+		TargetStructs: []string{"ClearableStructReflectSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// reflect import required: LogEntry is non-comparable.
+	if !strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`expected "reflect" import: LogEntry contains a slice and is non-comparable`)
+	}
+	// reflect.DeepEqual must appear in the diff for the clearable comparison.
+	if !strings.Contains(srcStr, "reflect.DeepEqual") {
+		t.Error("expected reflect.DeepEqual in generated Diff for non-comparable clearable struct")
+	}
+	// LogEntryDelta companion must be emitted (N-01 path).
+	if findStructDecl(f, "LogEntryDelta") == nil {
+		t.Error("LogEntryDelta companion struct must be emitted")
+	}
+	// Delta must carry Latest as FieldDelta[LogEntryDelta].
+	if !strings.Contains(srcStr, "runtime.FieldDelta[LogEntryDelta]") {
+		t.Error("expected runtime.FieldDelta[LogEntryDelta] in generated output")
+	}
+	// Method wrappers present in same-package mode.
+	assertHasMethods(t, f, "ClearableStructReflectSnapshot", []string{"Apply", "Diff"})
+
+	t.Run("CompileAndRun", func(t *testing.T) {
+		runEmittedInModule(t, runOpts{
+			pkgName:      "clearable_struct_reflect",
+			fixtureDir:   "testdata/emit/clearable_struct_reflect",
+			generatedSrc: src,
+			extraFiles:   map[string]string{"clearable_struct_reflect_test.go": clearableStructReflectRunTest},
+			runArgs:      []string{"./..."},
+		})
+	})
+}
+
+const clearableStructReflectRunTest = `package clearable_struct_reflect_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"clearable_struct_reflect"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrCSR(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+var (
+	logA = clearable_struct_reflect.LogEntry{Message: "hello", Tags: []string{"a", "b"}}
+	logB = clearable_struct_reflect.LogEntry{Message: "world", Tags: []string{"c"}}
+)
+
+func TestClearableStructReflect_OpIgnore(t *testing.T) {
+	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
+	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k", Latest: logA}
+	d, err := clearable_struct_reflect.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Latest.Op != eddt.OpIgnore {
+		t.Errorf("equal Latest must yield OpIgnore; got %v", d.Latest.Op)
+	}
+	result, err := clearable_struct_reflect.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Latest, logA) {
+		t.Errorf("OpIgnore: Latest must propagate unchanged; got %v", result.Latest)
+	}
+}
+
+func TestClearableStructReflect_OpRetract(t *testing.T) {
+	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
+	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k"}
+	d, err := clearable_struct_reflect.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Latest.Op != eddt.OpRetract {
+		t.Errorf("non-zero→zero Latest must yield OpRetract; got %v", d.Latest.Op)
+	}
+	result, err := clearable_struct_reflect.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Latest, clearable_struct_reflect.LogEntry{}) {
+		t.Errorf("OpRetract: Latest must be zero LogEntry{}; got %v", result.Latest)
+	}
+}
+
+func TestClearableStructReflect_OpAssert(t *testing.T) {
+	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
+	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k", Latest: logB}
+	d, err := clearable_struct_reflect.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Latest.Op != eddt.OpAssert {
+		t.Errorf("changed Latest must yield OpAssert; got %v", d.Latest.Op)
+	}
+	result, err := clearable_struct_reflect.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !reflect.DeepEqual(result.Latest, logB) {
+		t.Errorf("OpAssert: Latest must equal logB; got %v", result.Latest)
+	}
+}
+`
+
+// TestEmitTemplate_Clearable_Pointer_SamePkg verifies CL-05..07 generation for
+// a clearable struct field whose inner struct contains pointer sub-fields.
+// ContactInfo is comparable (pointer equality), so ClearableStructEqReflect=false
+// and no reflect import is needed.  The ContactInfoDelta companion must carry
+// SetPhone **string for the *string sub-field.
+// Covers: CL-07, HK-16.
+func TestEmitTemplate_Clearable_Pointer_SamePkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_pointer_delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/clearable_pointer"},
+		TargetStructs: []string{"ClearablePointerSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// ContactInfoDelta companion must be emitted.
+	if findStructDecl(f, "ContactInfoDelta") == nil {
+		t.Error("ContactInfoDelta companion struct must be emitted")
+	}
+	// SetPhone field must be **string (pointer-to-pointer for *string source field).
+	if !strings.Contains(srcStr, "SetPhone **string") {
+		t.Error("expected SetPhone **string delta field for *string sub-field in ContactInfoDelta")
+	}
+	// No reflect import: ContactInfo is comparable (pointer comparison).
+	if strings.Contains(srcStr, `"reflect"`) {
+		t.Error(`unexpected "reflect" import: ContactInfo is comparable`)
+	}
+	// Delta carries Contact as FieldDelta[ContactInfoDelta].
+	if !strings.Contains(srcStr, "runtime.FieldDelta[ContactInfoDelta]") {
+		t.Error("expected runtime.FieldDelta[ContactInfoDelta] in generated output")
+	}
+	// Method wrappers present in same-package mode.
+	assertHasMethods(t, f, "ClearablePointerSnapshot", []string{"Apply", "Diff"})
+
+	t.Run("CompileAndRun", func(t *testing.T) {
+		runEmittedInModule(t, runOpts{
+			pkgName:      "clearable_pointer",
+			fixtureDir:   "testdata/emit/clearable_pointer",
+			generatedSrc: src,
+			extraFiles:   map[string]string{"clearable_pointer_test.go": clearablePointerRunTest},
+			runArgs:      []string{"./..."},
+		})
+	})
+}
+
+const clearablePointerRunTest = `package clearable_pointer_test
+
+import (
+	"testing"
+	"time"
+
+	"clearable_pointer"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrCP(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+func TestClearablePointer_OpIgnore(t *testing.T) {
+	phone := "555-1234"
+	info := clearable_pointer.ContactInfo{Name: "Alice", Phone: &phone}
+	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: info}
+	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k", Contact: info}
+	d, err := clearable_pointer.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Contact.Op != eddt.OpIgnore {
+		t.Errorf("equal Contact must yield OpIgnore; got %v", d.Contact.Op)
+	}
+	result, err := clearable_pointer.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Contact != info {
+		t.Errorf("OpIgnore: Contact must propagate unchanged; got %v", result.Contact)
+	}
+}
+
+func TestClearablePointer_OpRetract(t *testing.T) {
+	phone := "555-1234"
+	info := clearable_pointer.ContactInfo{Name: "Alice", Phone: &phone}
+	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: info}
+	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k"}
+	d, err := clearable_pointer.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Contact.Op != eddt.OpRetract {
+		t.Errorf("non-zero→zero Contact must yield OpRetract; got %v", d.Contact.Op)
+	}
+	result, err := clearable_pointer.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Contact != (clearable_pointer.ContactInfo{}) {
+		t.Errorf("OpRetract: Contact must be zero ContactInfo{}; got %v", result.Contact)
+	}
+}
+
+func TestClearablePointer_OpAssert(t *testing.T) {
+	phone1 := "555-1234"
+	phone2 := "555-5678"
+	infoA := clearable_pointer.ContactInfo{Name: "Alice", Phone: &phone1}
+	infoB := clearable_pointer.ContactInfo{Name: "Bob", Phone: &phone2}
+	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: infoA}
+	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k", Contact: infoB}
+	d, err := clearable_pointer.Diff(a, b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if d.Contact.Op != eddt.OpAssert {
+		t.Errorf("changed Contact must yield OpAssert; got %v", d.Contact.Op)
+	}
+	result, err := clearable_pointer.Apply(a, d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if result.Contact.Name != infoB.Name {
+		t.Errorf("OpAssert: Contact.Name must be %q; got %q", infoB.Name, result.Contact.Name)
+	}
+	if result.Contact.Phone == nil || *result.Contact.Phone != *infoB.Phone {
+		t.Errorf("OpAssert: Contact.Phone must equal infoB.Phone")
+	}
+}
+`
+
+// TestEmitTemplate_Clearable_CrossPkg verifies clearable struct+map+slice emission
+// in cross-package mode (OutPkgNameOverride="deltas").
+// Wrapper types (TagDelta, AttrsMapDelta, GroupsSliceDelta) live in the output
+// package; the zero-composite for the clearable struct field must be model.Tag{}.
+// No method wrappers are emitted in cross-package mode (E-12).
+// Covers: CL-07, E-12, HK-16.
+func TestEmitTemplate_Clearable_CrossPkg(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "clearable_crosspkg_delta.go")
+	cfg := Config{
+		InputPkgs:          []string{"./testdata/emit/clearable_crosspkg/model"},
+		TargetStructs:      []string{"ClearableCrossPkgSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "deltas",
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
+	}
+
+	// Output package must be the override.
+	if !strings.Contains(srcStr, "package deltas") {
+		t.Errorf("expected 'package deltas', got:\n%s", srcStr)
+	}
+	// Source-package types must be qualified in Apply/Diff/Coalesce signatures.
+	if !strings.Contains(srcStr, "model.ClearableCrossPkgSnapshot") {
+		t.Error("expected 'model.ClearableCrossPkgSnapshot' in function signatures")
+	}
+	// Zero-composite for the clearable struct field must be model.Tag{}.
+	if !strings.Contains(srcStr, "model.Tag{}") {
+		t.Error("expected 'model.Tag{}' as zero-composite for clearable struct field")
+	}
+	// All three clearable wrapper types must be emitted in the output package.
+	for _, want := range []string{"TagDelta", "AttrsMapDelta", "GroupsSliceDelta"} {
+		if findStructDecl(f, want) == nil {
+			t.Errorf("struct %s must be emitted in cross-package output", want)
+		}
+	}
+	// No method wrappers in cross-package mode (E-12).
+	if findMethodDecl(f, "ClearableCrossPkgSnapshot", "Apply") != nil {
+		t.Error("Apply method wrapper must not be emitted in cross-package mode (E-12)")
+	}
+	// Source-package import must be present.
+	if !strings.Contains(srcStr, "clearable_crosspkg/model") {
+		t.Error("expected source-package import in cross-package output")
+	}
+}

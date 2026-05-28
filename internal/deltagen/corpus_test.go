@@ -58,6 +58,8 @@ var corpus = []corpusCase{
 	{dir: "composite", name: "CompositeSnapshot", pkg: "composite"},
 	// struct_key: struct-valued entity.key, multi-field EntityID hash (EM-05).
 	{dir: "struct_key", name: "SessionSnapshot", pkg: "struct_key"},
+	// struct_key_clearable: struct key + all three clearable shapes coexisting (HK-16).
+	{dir: "struct_key_clearable", name: "StructKeyClearableSnapshot", pkg: "struct_key_clearable"},
 }
 
 // TestCorpus_All is the C-01 table-driven test.
