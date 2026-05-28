@@ -51,7 +51,7 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 			if keyIdx != -1 {
 				return nil, 0, nil, fmt.Errorf(
 					"struct %q has multiple fields tagged eddt:%q (at least %q and %q); exactly one entity-key field is required",
-					structName, "entity.key", candidates[keyIdx].Name, candidates[i].Name)
+					structName, tagEntityKey, candidates[keyIdx].Name, candidates[i].Name)
 			}
 			keyIdx = i
 		}
@@ -59,7 +59,7 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 			return nil, 0, nil, fmt.Errorf(
 				"struct %q has no field tagged eddt:%q; a conforming Snapshot must mark exactly one entity-key field "+
 					"(or supply --key-field on the command line)",
-				structName, "entity.key")
+				structName, tagEntityKey)
 		}
 	}
 

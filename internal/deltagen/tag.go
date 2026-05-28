@@ -61,23 +61,34 @@ const (
 	TagKindClearable
 )
 
+// Canonical eddt: tag value strings. Used in tagKindFor, String, and error
+// messages so every site agrees on the exact spelling.
+const (
+	tagEntityKey        = "entity.key"
+	tagDeltaNested      = "delta.nested"
+	tagDeltaOmit        = "delta.omit"
+	tagDeltaRetired     = "delta.retired"
+	tagDeltaCommutative = "delta.commutative"
+	tagDeltaClearable   = "delta.clearable"
+)
+
 // String returns the canonical eddt: tag string for k, e.g. "delta.nested".
 // The zero value returns "none". Used in error messages so callers see readable
 // tag names rather than raw integers.
 func (k TagKind) String() string {
 	switch k {
 	case TagKindEntityKey:
-		return "entity.key"
+		return tagEntityKey
 	case TagKindNested:
-		return "delta.nested"
+		return tagDeltaNested
 	case TagKindOmit:
-		return "delta.omit"
+		return tagDeltaOmit
 	case TagKindRetired:
-		return "delta.retired"
+		return tagDeltaRetired
 	case TagKindCommutative:
-		return "delta.commutative"
+		return tagDeltaCommutative
 	case TagKindClearable:
-		return "delta.clearable"
+		return tagDeltaClearable
 	default:
 		return "none"
 	}
@@ -198,8 +209,8 @@ func validateTagShape(tag ParsedTag, shape FieldShape) error {
 		switch shape {
 		case ShapeScalar, ShapePointer:
 			return fmt.Errorf(
-				"eddt:\"delta.nested\" requires a composite field shape "+
-					"(struct value, slice, map); got %v", shape)
+				"eddt:%q requires a composite field shape (struct value, slice, map); got %v",
+				tagDeltaNested, shape)
 		}
 	}
 	return nil
@@ -221,11 +232,10 @@ func validateTagShape(tag ParsedTag, shape FieldShape) error {
 func validateTagCombination(tag ParsedTag) error {
 	if tag.Clearable && tag.Kind != TagKindNested {
 		return fmt.Errorf(
-			"eddt:\"delta.clearable\" requires eddt:\"delta.nested\": the " +
-				"clearable envelope applies only to compositional fields; " +
-				"drop delta.clearable (atomic, pointer, and struct-value " +
-				"fields already carry tri-state via their delta pointer) or " +
-				"add delta.nested")
+			"eddt:%q requires eddt:%q: the clearable envelope applies only to "+
+				"compositional fields; drop %s (atomic, pointer, and struct-value "+
+				"fields already carry tri-state via their delta pointer) or add %s",
+			tagDeltaClearable, tagDeltaNested, tagDeltaClearable, tagDeltaNested)
 	}
 	return nil
 }
@@ -233,21 +243,23 @@ func validateTagCombination(tag ParsedTag) error {
 // tagKindFor maps a tag value string to its TagKind.
 func tagKindFor(tagVal string) (TagKind, error) {
 	switch tagVal {
-	case "entity.key":
+	case tagEntityKey:
 		return TagKindEntityKey, nil
-	case "delta.nested":
+	case tagDeltaNested:
 		return TagKindNested, nil
-	case "delta.omit":
+	case tagDeltaOmit:
 		return TagKindOmit, nil
-	case "delta.retired":
+	case tagDeltaRetired:
 		return TagKindRetired, nil
-	case "delta.commutative":
+	case tagDeltaCommutative:
 		return TagKindCommutative, nil
-	case "delta.clearable":
+	case tagDeltaClearable:
 		return TagKindClearable, nil
 	default:
 		return TagKindNone, fmt.Errorf(
-			"unrecognised eddt: tag value %q; valid primary tags: entity.key, delta.nested, delta.omit, delta.retired, delta.commutative; secondary: delta.clearable",
-			tagVal)
+			"unrecognised eddt: tag value %q; valid primary tags: %s, %s, %s, %s, %s; secondary: %s",
+			tagVal,
+			tagEntityKey, tagDeltaNested, tagDeltaOmit, tagDeltaRetired, tagDeltaCommutative,
+			tagDeltaClearable)
 	}
 }
