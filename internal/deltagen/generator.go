@@ -43,10 +43,6 @@ type Config struct {
 	// OutPath is the filesystem path of the file to write. Corresponds to --out.
 	OutPath string
 
-	// Verbose enables progress logging at Info level. Corresponds to --verbose.
-	// The slog handler level is set from this value by the CLI layer.
-	Verbose bool
-
 	// PkgAliases is the raw list of "importpath=alias" mappings. Corresponds to
 	// the --pkg-alias flag. Parsed into a map by the emit stage.
 	PkgAliases []string
@@ -75,7 +71,6 @@ type Generator struct {
 	InputPkgs          []string
 	TargetStructs      []string
 	OutPath            string
-	Verbose            bool
 	PkgAliases         []string
 	Version            string
 	KeyFields          map[string]string
@@ -102,7 +97,6 @@ func New(cfg Config) *Generator {
 		InputPkgs:          cfg.InputPkgs,
 		TargetStructs:      cfg.TargetStructs,
 		OutPath:            cfg.OutPath,
-		Verbose:            cfg.Verbose,
 		PkgAliases:         cfg.PkgAliases,
 		Version:            cfg.Version,
 		KeyFields:          cfg.KeyFields,
@@ -159,7 +153,7 @@ func (g *Generator) Run() error {
 // loadStage resolves all --pkg arguments into type-checked *packages.Package
 // values using the two-phase loading strategy in load.go.
 func (g *Generator) loadStage() ([]*packages.Package, error) {
-	pkgs, err := loadPackages(g.InputPkgs, g.Verbose)
+	pkgs, err := loadPackages(g.InputPkgs, g.log())
 	if err != nil {
 		return nil, err
 	}

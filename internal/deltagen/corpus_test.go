@@ -28,6 +28,7 @@ package deltagen
 //   TestCorpus_All/SessionSnapshot/Compile
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ func TestCorpus_All(t *testing.T) {
 			// ── Parse ─────────────────────────────────────────────────────────
 			// Verify the fixture loads and parses without error.
 			t.Run("Parse", func(t *testing.T) {
-				pkgs, err := loadPackages([]string{"./testdata/corpus/" + tc.dir}, false)
+				pkgs, err := loadPackages([]string{"./testdata/corpus/" + tc.dir}, slog.Default())
 				if err != nil {
 					t.Fatalf("loadPackages: %v", err)
 				}

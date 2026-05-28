@@ -41,6 +41,7 @@ package deltagen
 
 import (
 	"go/types"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -143,7 +144,7 @@ func TestParse_StructNotFound(t *testing.T) {
 func TestParse_NoHeader(t *testing.T) {
 	// Load the fixture package together with the runtime package so the Header
 	// type is available for comparison even though no_header does not import it.
-	pkgs, err := loadPackages([]string{"./testdata/parse/no_header", runtimePkgImportPath}, false)
+	pkgs, err := loadPackages([]string{"./testdata/parse/no_header", runtimePkgImportPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
@@ -608,7 +609,7 @@ func TestParse_CombinedTags(t *testing.T) {
 // loadFixture loads the testdata/parse/<name> fixture package.
 func loadFixture(t *testing.T, name string) []*packages.Package {
 	t.Helper()
-	pkgs, err := loadPackages([]string{"./testdata/parse/" + name}, false)
+	pkgs, err := loadPackages([]string{"./testdata/parse/" + name}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadFixture(%q): %v", name, err)
 	}

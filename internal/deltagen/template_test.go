@@ -77,6 +77,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1316,7 +1317,7 @@ func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
 // the "untagged key via --key-field" case from the EM-05 plan (E-13).
 // Covers: R-24, E-13
 func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
-	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, false)
+	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
@@ -4101,7 +4102,7 @@ func runBuildCmd(t *testing.T, dir, command string, args ...string) {
 // the named struct. Fatals on any error.
 func loadEmitFixture(t *testing.T, fixtureName, structName string) *ParsedSnapshot {
 	t.Helper()
-	pkgs, err := loadPackages([]string{"./testdata/emit/" + fixtureName}, false)
+	pkgs, err := loadPackages([]string{"./testdata/emit/" + fixtureName}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadEmitFixture(%q): %v", fixtureName, err)
 	}

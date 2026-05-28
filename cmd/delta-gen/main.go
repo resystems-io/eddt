@@ -65,7 +65,6 @@ Example usage:
 				InputPkgs:          inputPkgs,
 				TargetStructs:      targetStructs,
 				OutPath:            outPath,
-				Verbose:            verbose,
 				PkgAliases:         pkgAliases,
 				Version:            vcsRevision(),
 				KeyFields:          keyFields,
