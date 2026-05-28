@@ -36,6 +36,7 @@ package deltagen
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -83,10 +84,23 @@ func collectPackageErrors(pkgs []*packages.Package) int {
 	return count
 }
 
+// formatPackageErrors collects the per-package error messages from pkgs into a
+// single error. Used by both the filesystem-path and import-path load branches
+// so callers always see the actual loader complaints rather than just a count.
+func formatPackageErrors(pkgs []*packages.Package) error {
+	var msgs []string
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		for _, e := range p.Errors {
+			msgs = append(msgs, e.Msg)
+		}
+	})
+	return fmt.Errorf("%s", strings.Join(msgs, "\n  "))
+}
+
 // formatImportPathErrors builds a human-readable error from the errors attached
-// to a set of packages that failed to load. When an error message matches a
-// "missing module" pattern it appends a "go get <path>" remediation hint so
-// the caller can act immediately.
+// to a set of packages that failed to load via import path. When an error
+// message matches a "missing module" pattern it appends a "go get <path>"
+// remediation hint so the caller can act immediately.
 func formatImportPathErrors(pkgs []*packages.Package) error {
 	var msgs []string
 	for _, pkg := range pkgs {
@@ -114,7 +128,7 @@ func formatImportPathErrors(pkgs []*packages.Package) error {
 //
 // Filesystem paths and import paths are handled in two separate phases so that
 // each filesystem path can live in its own Go module.
-func loadPackages(inputPkgs []string, verbose bool) ([]*packages.Package, error) {
+func loadPackages(inputPkgs []string, log *slog.Logger) ([]*packages.Package, error) {
 	var all []*packages.Package
 	var importPaths []string
 
@@ -136,13 +150,11 @@ func loadPackages(inputPkgs []string, verbose bool) ([]*packages.Package, error)
 			return nil, fmt.Errorf("failed to load package directory %q: %w", input, err)
 		}
 		if n := collectPackageErrors(pkgs); n > 0 {
-			return nil, fmt.Errorf("package loading had %d error(s) in %q", n, input)
+			return nil, fmt.Errorf("package loading had %d error(s) in %q:\n%w", n, input, formatPackageErrors(pkgs))
 		}
 
-		if verbose {
-			for _, p := range pkgs {
-				fmt.Printf("  loaded %s (%s)\n", p.Name, p.PkgPath)
-			}
+		for _, p := range pkgs {
+			log.Info("loaded package", "name", p.Name, "path", p.PkgPath)
 		}
 		all = append(all, pkgs...)
 	}
@@ -162,10 +174,8 @@ func loadPackages(inputPkgs []string, verbose bool) ([]*packages.Package, error)
 			return nil, formatImportPathErrors(pkgs)
 		}
 
-		if verbose {
-			for _, p := range pkgs {
-				fmt.Printf("  loaded %s (%s)\n", p.Name, p.PkgPath)
-			}
+		for _, p := range pkgs {
+			log.Info("loaded package", "name", p.Name, "path", p.PkgPath)
 		}
 		all = append(all, pkgs...)
 	}

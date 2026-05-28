@@ -16,6 +16,7 @@ package deltagen
 // therefore resolvable from the test binary's working directory.
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +56,7 @@ type Snapshot struct {
 	Name string
 }
 `)
-	pkgs, err := loadPackages([]string{dir}, false)
+	pkgs, err := loadPackages([]string{dir}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: unexpected error: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestLoad_MultipleFilesystemPaths(t *testing.T) {
 	writeTempModule(t, dirA, "pkga", "package pkga\n")
 	writeTempModule(t, dirB, "pkgb", "package pkgb\n")
 
-	pkgs, err := loadPackages([]string{dirA, dirB}, false)
+	pkgs, err := loadPackages([]string{dirA, dirB}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: unexpected error: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestLoad_MultipleFilesystemPaths(t *testing.T) {
 // matching the error format that TestCLI_InvalidPackage asserts.
 // Covers: R-10
 func TestLoad_InvalidFilesystemPath(t *testing.T) {
-	_, err := loadPackages([]string{"/does/not/exist/surely"}, false)
+	_, err := loadPackages([]string{"/does/not/exist/surely"}, slog.Default())
 	if err == nil {
 		t.Fatal("expected error for non-existent path, got nil")
 	}
@@ -110,16 +111,23 @@ func TestLoad_InvalidFilesystemPath(t *testing.T) {
 
 // TestLoad_PackageSyntaxError verifies that a directory containing a Go file
 // with a deliberate syntax error is reported as a load failure rather than
-// silently producing an empty package list.
-// Covers: R-10
+// silently producing an empty package list, and that the error message surfaces
+// the actual loader diagnostic (not just a count).
+// Covers: R-10, HK-03
 func TestLoad_PackageSyntaxError(t *testing.T) {
 	dir := t.TempDir()
 	// Deliberately broken Go source — missing closing brace.
 	writeTempModule(t, dir, "broken", "package broken\n\nfunc broken( {\n")
 
-	_, err := loadPackages([]string{dir}, false)
+	_, err := loadPackages([]string{dir}, slog.Default())
 	if err == nil {
 		t.Fatal("expected error for package with syntax errors, got nil")
+	}
+	// The error must surface the actual loader diagnostic so the user can act,
+	// not just "had N error(s)" with no further detail (HK-03 regression guard).
+	msg := err.Error()
+	if !strings.Contains(msg, "expected") && !strings.Contains(msg, "syntax") && !strings.Contains(msg, "broken") {
+		t.Errorf("error message should contain a loader diagnostic (expected/syntax/filename); got: %s", msg)
 	}
 }
 
@@ -130,7 +138,7 @@ func TestLoad_PackageSyntaxError(t *testing.T) {
 // returned package carries the correct name.
 // Covers: R-10, R-11
 func TestLoad_ImportPath(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages(%q): unexpected error: %v", runtimePkgPath, err)
 	}
@@ -170,7 +178,7 @@ func TestLoad_ImportPathNotInGoMod(t *testing.T) {
 	defer os.Chdir(origDir) //nolint:errcheck
 
 	const badPkg = "github.com/nonexistent/pkg123456789"
-	_, err = loadPackages([]string{badPkg}, false)
+	_, err = loadPackages([]string{badPkg}, slog.Default())
 	if err == nil {
 		t.Fatalf("expected error for nonexistent import path %q, got nil", badPkg)
 	}
@@ -193,7 +201,7 @@ func TestLoad_ImportPathNotInGoMod(t *testing.T) {
 // stage (G-03) will perform to identify embedded runtime.Header fields.
 // Covers: R-10 (NeedDeps correctness)
 func TestLoad_DepsIncluded(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: unexpected error: %v", err)
 	}
@@ -222,7 +230,7 @@ func TestLoad_DepsIncluded(t *testing.T) {
 // cases so that the helper's traversal behaviour is independently verified.
 // Covers: R-10
 func TestLoad_FindPkgByPath(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: unexpected error: %v", err)
 	}
@@ -284,7 +292,7 @@ func TestLoad_IsFilesystemPath(t *testing.T) {
 // false.
 // Covers: R-09, R-10
 func TestResolve_NoOverride(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
@@ -302,7 +310,7 @@ func TestResolve_NoOverride(t *testing.T) {
 // the same value as the source package name crossPackage is false.
 // Covers: R-09, R-10
 func TestResolve_OverrideMatchingSource(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
@@ -321,7 +329,7 @@ func TestResolve_OverrideMatchingSource(t *testing.T) {
 // returned name equals the override.
 // Covers: R-09, R-10
 func TestResolve_OverrideDiffering(t *testing.T) {
-	pkgs, err := loadPackages([]string{runtimePkgPath}, false)
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
@@ -345,7 +353,7 @@ func TestResolve_MultiPkgInput(t *testing.T) {
 	writeTempModule(t, dirA, "pkga", "package pkga\n")
 	writeTempModule(t, dirB, "pkgb", "package pkgb\n")
 
-	pkgs, err := loadPackages([]string{dirA, dirB}, false)
+	pkgs, err := loadPackages([]string{dirA, dirB}, slog.Default())
 	if err != nil {
 		t.Fatalf("loadPackages: %v", err)
 	}
