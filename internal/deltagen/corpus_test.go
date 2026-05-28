@@ -17,6 +17,9 @@ package deltagen
 //   TestCorpus_All/BaselineSnapshot/Parse
 //   TestCorpus_All/BaselineSnapshot/Generate
 //   TestCorpus_All/BaselineSnapshot/Compile
+//   TestCorpus_All/ClearableCompositeSnapshot/Parse
+//   TestCorpus_All/ClearableCompositeSnapshot/Generate
+//   TestCorpus_All/ClearableCompositeSnapshot/Compile
 //   TestCorpus_All/CompositeSnapshot/Parse
 //   TestCorpus_All/CompositeSnapshot/Generate
 //   TestCorpus_All/CompositeSnapshot/Compile
@@ -44,10 +47,12 @@ type corpusCase struct {
 // corpus is the authoritative C-01 conformance corpus.
 //
 // Every case must parse without error, generate without error, and compile
-// in an isolated module.  The clearable corpus is added in Phase 7 (CL-08).
+// in an isolated module.
 var corpus = []corpusCase{
 	// baseline: all 5 atomic shapes + all baseline presence tags + scalar key.
 	{dir: "baseline", name: "BaselineSnapshot", pkg: "baseline"},
+	// clearable_composite: delta.nested+delta.clearable on struct+map+slice + atomic (CL-08).
+	{dir: "clearable_composite", name: "ClearableCompositeSnapshot", pkg: "clearable_composite"},
 	// composite: delta.nested on struct + map + slice together + atomic coexistence.
 	{dir: "composite", name: "CompositeSnapshot", pkg: "composite"},
 	// struct_key: struct-valued entity.key, multi-field EntityID hash (EM-05).

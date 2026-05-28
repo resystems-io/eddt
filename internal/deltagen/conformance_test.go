@@ -36,15 +36,19 @@ package deltagen
 //
 // Test matrix:
 //
-//	TestConformance_RoundTrip/BaselineSnapshot  (C-02)
-//	TestConformance_RoundTrip/CompositeSnapshot (C-02)
-//	TestConformance_RoundTrip/SessionSnapshot   (C-02)
-//	TestConformance_Identity/BaselineSnapshot   (C-03)
-//	TestConformance_Identity/CompositeSnapshot  (C-03)
-//	TestConformance_Identity/SessionSnapshot    (C-03)
-//	TestConformance_Coalesce/BaselineSnapshot   (C-04)
-//	TestConformance_Coalesce/CompositeSnapshot  (C-04)
-//	TestConformance_Coalesce/SessionSnapshot    (C-04)
+//	TestConformance_RoundTrip/BaselineSnapshot           (C-02)
+//	TestConformance_RoundTrip/ClearableCompositeSnapshot (C-02)
+//	TestConformance_RoundTrip/CompositeSnapshot          (C-02)
+//	TestConformance_RoundTrip/SessionSnapshot            (C-02)
+//	TestConformance_Identity/BaselineSnapshot            (C-03)
+//	TestConformance_Identity/ClearableCompositeSnapshot  (C-03)
+//	TestConformance_Identity/CompositeSnapshot           (C-03)
+//	TestConformance_Identity/SessionSnapshot             (C-03)
+//	TestConformance_Coalesce/BaselineSnapshot            (C-04)
+//	TestConformance_Coalesce/ClearableCompositeSnapshot  (C-04)
+//	TestConformance_Coalesce/CompositeSnapshot           (C-04)
+//	TestConformance_Coalesce/SessionSnapshot             (C-04)
+//	TestConformance_TruthTable/ClearableCompositeSnapshot (CL-08 §5.4)
 
 import (
 	"os"
@@ -68,9 +72,10 @@ import (
 // correct invariant.
 func TestConformance_RoundTrip(t *testing.T) {
 	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":   roundTripCheckBaseline,
-		"composite":  roundTripCheckComposite,
-		"struct_key": roundTripCheckStructKey,
+		"baseline":            roundTripCheckBaseline,
+		"clearable_composite": roundTripCheckClearableComposite,
+		"composite":           roundTripCheckComposite,
+		"struct_key":          roundTripCheckStructKey,
 	}
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,6 +96,17 @@ func TestConformance_RoundTrip(t *testing.T) {
 			check(t, src)
 		})
 	}
+}
+
+// roundTripCheckClearableComposite runs the C-02 property test for the clearable_composite corpus case.
+//
+// Injected invariant: snapshotEqual(Apply(a, Diff(a, b)), b) — full equality
+// except Groups (N-04 E-15 set-membership) — for 1000 random clearableCompositePayload pairs.
+// OpRetract is unreachable from testing/quick (no nil maps/slices); §5.4 coverage
+// for that row is in TestConformance_TruthTable.
+func roundTripCheckClearableComposite(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	roundTripCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeRoundTripTest)
 }
 
 // roundTripCheckBaseline runs the C-02 property test for the baseline corpus case.
@@ -445,9 +461,10 @@ func TestRoundTrip_Property(t *testing.T) {
 // is preserved exactly.
 func TestConformance_Identity(t *testing.T) {
 	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":   identityCheckBaseline,
-		"composite":  identityCheckComposite,
-		"struct_key": identityCheckStructKey,
+		"baseline":            identityCheckBaseline,
+		"clearable_composite": identityCheckClearableComposite,
+		"composite":           identityCheckComposite,
+		"struct_key":          identityCheckStructKey,
 	}
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
@@ -468,6 +485,15 @@ func TestConformance_Identity(t *testing.T) {
 			check(t, src)
 		})
 	}
+}
+
+// identityCheckClearableComposite runs the C-03 property test for the clearable_composite corpus case.
+//
+// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime) —
+// all three FieldDelta fields have Op == OpIgnore (zero value) when payload is unchanged.
+func identityCheckClearableComposite(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	identityCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeIdentityTest)
 }
 
 // identityCheckBaseline runs the C-03 property test for the baseline corpus case.
@@ -790,9 +816,10 @@ func TestIdentity_Property(t *testing.T) {
 // 1000 random (p1,p2,p3) triples per corpus case.
 func TestConformance_Coalesce(t *testing.T) {
 	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":   coalesceCheckBaseline,
-		"composite":  coalesceCheckComposite,
-		"struct_key": coalesceCheckStructKey,
+		"baseline":            coalesceCheckBaseline,
+		"clearable_composite": coalesceCheckClearableComposite,
+		"composite":           coalesceCheckComposite,
+		"struct_key":          coalesceCheckStructKey,
 	}
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
@@ -813,6 +840,16 @@ func TestConformance_Coalesce(t *testing.T) {
 			check(t, src)
 		})
 	}
+}
+
+// coalesceCheckClearableComposite runs the C-04 property test for the clearable_composite corpus case.
+//
+// Injected invariant: snapshotEqual(Coalesce(s0,[d1,d2,d3]), s3) plus chunkability —
+// set-membership for Groups (N-04 E-15).  OpRetract is unreachable from testing/quick;
+// covered by TestConformance_TruthTable.
+func coalesceCheckClearableComposite(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	coalesceCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeCoalesceTest)
 }
 
 // coalesceCheckBaseline runs the C-04 property test for the baseline corpus case.
@@ -1152,6 +1189,332 @@ func TestCoalesce_Property(t *testing.T) {
 }
 `
 
+// clearableCompositeRoundTripTest is the injected round-trip property test for
+// the clearable_composite corpus case.  It asserts snapshotEqual(Apply(a, Diff(a,b)), b)
+// for 1000 random clearableCompositePayload pairs.
+//
+// Note: testing/quick never generates nil maps or nil slices, so the OpRetract
+// row of the §5.4 truth-table is never exercised here.  It is covered
+// deterministically by TestConformance_TruthTable.
+const clearableCompositeRoundTripTest = `package clearable_composite_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"clearable_composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// clearableCompositePayload carries the delta-carrying fields of
+// ClearableCompositeSnapshot.  The entity key (Key) is fixed to "k" in both
+// snapshots.  Header fields are set directly; only payload varies under quick.
+type clearableCompositePayload struct {
+	Location clearable_composite.Address
+	Tags     map[string]string
+	Groups   []string
+	Count    int32
+}
+
+// toSortedUnique returns a sorted, deduplicated copy of ss.
+//
+// N-04 set-diff semantics (E-15): Apply(a, Diff(a, b)).Groups contains the
+// same unique elements as b.Groups but element order may differ.
+func toSortedUnique(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// normTags normalizes an empty-but-non-nil map to nil.
+//
+// The clearable-map Diff currently uses len(m)==0 (nil OR empty) as the
+// "zero composite" predicate → OpRetract → Apply produces nil.  Round-trip
+// equality must therefore treat nil and empty map as equivalent.
+//
+// TODO: tighten the Diff predicate to b.X==nil only (Option A) so that an
+// empty-but-non-nil map goes through the inner-diff path instead of OpRetract.
+// When that is done, remove normTags and replace with direct reflect.DeepEqual
+// (the nil→empty no-op case will still need normalization, but the
+// quick-generated empty-map case will no longer reach OpRetract).
+func normTags(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// snapshotEqual reports whether got and b satisfy the correct invariant:
+//
+//   - Header:   reflect.DeepEqual (full; Provenance is nil on both sides).
+//   - Key:      == (fixed string, same in both).
+//   - Location: reflect.DeepEqual (struct value; OpAssert carries inner AddressDelta).
+//   - Tags:     normTags equality (nil/empty-map equivalent; E-17 "cleared ≙ nil").
+//   - Groups:   toSortedUnique equality (nil/empty-slice equivalent; set-membership N-04 E-15).
+//   - Count:    == (atomic scalar).
+func snapshotEqual(got, b clearable_composite.ClearableCompositeSnapshot) bool {
+	return reflect.DeepEqual(got.Header, b.Header) &&
+		got.Key == b.Key &&
+		reflect.DeepEqual(got.Location, b.Location) &&
+		reflect.DeepEqual(normTags(got.Tags), normTags(b.Tags)) &&
+		reflect.DeepEqual(toSortedUnique(got.Groups), toSortedUnique(b.Groups)) &&
+		got.Count == b.Count
+}
+
+// TestRoundTrip_Property asserts snapshotEqual(Apply(a, Diff(a, b)), b) for
+// 1000 random clearableCompositePayload pairs.
+func TestRoundTrip_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	now := time.Now()
+
+	prop := func(ap, bp clearableCompositePayload) bool {
+		a := clearable_composite.ClearableCompositeSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 1, EffectiveAt: now},
+			Key:      "k",
+			Location: ap.Location,
+			Tags:     ap.Tags,
+			Groups:   ap.Groups,
+			Count:    ap.Count,
+		}
+		b := clearable_composite.ClearableCompositeSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 2, EffectiveAt: now},
+			Key:      "k",
+			Location: bp.Location,
+			Tags:     bp.Tags,
+			Groups:   bp.Groups,
+			Count:    bp.Count,
+		}
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			return false
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			return false
+		}
+		return snapshotEqual(got, b)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("round-trip property failed: %v", err)
+	}
+}
+`
+
+// clearableCompositeIdentityTest is the injected identity-diff property test for
+// the clearable_composite corpus case.  It asserts reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)
+// for 1000 random clearableCompositePayload values.
+//
+// When payload(a) == payload(aprime), all three FieldDelta fields must have
+// Op == OpIgnore (zero value) and Apply must preserve every field unchanged.
+const clearableCompositeIdentityTest = `package clearable_composite_test
+
+import (
+	"reflect"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"clearable_composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// clearableCompositePayload carries the delta-carrying fields.
+// Key is fixed to "k"; Header is set directly.
+type clearableCompositePayload struct {
+	Location clearable_composite.Address
+	Tags     map[string]string
+	Groups   []string
+	Count    int32
+}
+
+// TestIdentity_Property asserts reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)
+// for 1000 random payloads.  aprime is a struct copy of a with Sequence incremented.
+// All three FieldDelta fields must be OpIgnore (zero) and Apply must preserve every field.
+func TestIdentity_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	now := time.Now()
+
+	prop := func(ap clearableCompositePayload) bool {
+		a := clearable_composite.ClearableCompositeSnapshot{
+			Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+				Sequence: 1, EffectiveAt: now},
+			Key:      "k",
+			Location: ap.Location,
+			Tags:     ap.Tags,
+			Groups:   ap.Groups,
+			Count:    ap.Count,
+		}
+		aprime := a
+		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 2, EffectiveAt: now}
+		d, err := clearable_composite.Diff(a, aprime)
+		if err != nil {
+			return false
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			return false
+		}
+		return reflect.DeepEqual(got, aprime)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("identity property failed: %v", err)
+	}
+}
+`
+
+// clearableCompositeCoalesceTest is the injected coalesce property test for the
+// clearable_composite corpus case.  It asserts fold equivalence and chunkability
+// at both split points for 1000 random (p1, p2, p3) triples.
+//
+// Groups uses snapshotEqual with toSortedUnique (N-04 E-15 set-membership):
+// multi-step set-diffs preserve the group SET but not ORDER.
+const clearableCompositeCoalesceTest = `package clearable_composite_test
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+	"testing/quick"
+	"time"
+
+	"clearable_composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// clearableCompositePayload carries the delta-carrying fields.
+// Key is fixed to "k"; Header is set directly.
+type clearableCompositePayload struct {
+	Location clearable_composite.Address
+	Tags     map[string]string
+	Groups   []string
+	Count    int32
+}
+
+// snap constructs a sequential snapshot from a payload and sequence number.
+func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p clearableCompositePayload) clearable_composite.ClearableCompositeSnapshot {
+	return clearable_composite.ClearableCompositeSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: seq, EffectiveAt: now},
+		Key:      "k",
+		Location: p.Location,
+		Tags:     p.Tags,
+		Groups:   p.Groups,
+		Count:    p.Count,
+	}
+}
+
+// toSortedUnique returns a sorted, deduplicated copy of ss.
+func toSortedUnique(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// normTags normalizes an empty-but-non-nil map to nil.
+// Clearable-map Diff currently uses len(m)==0 as "zero composite" → OpRetract → nil.
+// TODO: remove once Diff predicate is tightened to b.X==nil only (Option A).
+func normTags(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// snapshotEqual reports whether got and want satisfy the correct invariant:
+// full equality for Header, Key, Location, Count; normTags for Tags (E-17);
+// set-membership for Groups (N-04 E-15).
+func snapshotEqual(got, want clearable_composite.ClearableCompositeSnapshot) bool {
+	return reflect.DeepEqual(got.Header, want.Header) &&
+		got.Key == want.Key &&
+		reflect.DeepEqual(got.Location, want.Location) &&
+		reflect.DeepEqual(normTags(got.Tags), normTags(want.Tags)) &&
+		reflect.DeepEqual(toSortedUnique(got.Groups), toSortedUnique(want.Groups)) &&
+		got.Count == want.Count
+}
+
+// TestCoalesce_Property asserts fold equivalence and chunkability for 1000
+// random (p1, p2, p3) triples.  Groups uses set-membership equality (N-04 E-15).
+func TestCoalesce_Property(t *testing.T) {
+	fixedID := eddt.EntityID{1}
+	now := time.Now()
+
+	s0 := clearable_composite.ClearableCompositeSnapshot{
+		Header: eddt.Header{EntityID: fixedID, ChainID: "c",
+			Sequence: 0, EffectiveAt: now},
+		Key: "k",
+	}
+
+	prop := func(p1, p2, p3 clearableCompositePayload) bool {
+		s1 := snap(fixedID, 1, now, p1)
+		s2 := snap(fixedID, 2, now, p2)
+		s3 := snap(fixedID, 3, now, p3)
+
+		d1, err := clearable_composite.Diff(s0, s1)
+		if err != nil {
+			return false
+		}
+		d2, err := clearable_composite.Diff(s1, s2)
+		if err != nil {
+			return false
+		}
+		d3, err := clearable_composite.Diff(s2, s3)
+		if err != nil {
+			return false
+		}
+
+		// Fold equivalence.
+		full, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1, d2, d3})
+		if err != nil || !snapshotEqual(full, s3) {
+			return false
+		}
+
+		// Chunkability at split point 1.
+		mid1, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1})
+		if err != nil {
+			return false
+		}
+		chunk1, err := clearable_composite.Coalesce(mid1, []clearable_composite.ClearableCompositeSnapshotDelta{d2, d3})
+		if err != nil || !snapshotEqual(chunk1, s3) {
+			return false
+		}
+
+		// Chunkability at split point 2.
+		mid2, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1, d2})
+		if err != nil {
+			return false
+		}
+		chunk2, err := clearable_composite.Coalesce(mid2, []clearable_composite.ClearableCompositeSnapshotDelta{d3})
+		if err != nil {
+			return false
+		}
+		return snapshotEqual(chunk2, s3)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Errorf("coalesce property failed: %v", err)
+	}
+}
+`
+
 // structKeyCoalesceTest is the injected coalesce property test for the struct_key
 // corpus case.  It asserts fold equivalence and chunkability at both split points
 // for 1000 random (p1, p2, p3) triples.
@@ -1247,5 +1610,447 @@ func TestCoalesce_Property(t *testing.T) {
 	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
 		t.Errorf("coalesce property failed: %v", err)
 	}
+}
+`
+
+// ── CL-08 §5.4 truth-table test ──────────────────────────────────────────────
+
+// TestConformance_TruthTable is the CL-08 deterministic §5.4 truth-table test.
+//
+// For each corpus case that has at least one clearable field it generates the
+// delta source, injects a table-driven truth-table test into an isolated temp
+// module, and runs go test -run TestTruthTable_All.  The test is deterministic
+// (no testing/quick) and is the only place where the OpRetract row is exercised,
+// because testing/quick never generates nil maps or nil slices.
+//
+// Five §5.4 rows tested per shape (Location / Tags / Groups):
+//
+//	equal composites              → OpIgnore
+//	both zero composites          → OpIgnore
+//	a zero, b non-zero composite  → OpAssert
+//	a non-zero, b zero composite  → OpRetract
+//	a non-zero, b different       → OpAssert
+func TestConformance_TruthTable(t *testing.T) {
+	cases := map[string]func(*testing.T, []byte){
+		"clearable_composite": truthTableCheckClearableComposite,
+	}
+	for _, tc := range corpus {
+		check, ok := cases[tc.dir]
+		if !ok {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			outPath := filepath.Join(t.TempDir(), "delta.go")
+			cfg := Config{
+				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
+				TargetStructs: []string{tc.name},
+				OutPath:       outPath,
+			}
+			if err := New(cfg).Run(); err != nil {
+				t.Fatalf("Run(): %v", err)
+			}
+			src, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read generated file: %v", err)
+			}
+			check(t, src)
+		})
+	}
+}
+
+// truthTableCheckClearableComposite runs the §5.4 truth-table test for the
+// clearable_composite corpus case.
+func truthTableCheckClearableComposite(t *testing.T, generatedSrc []byte) {
+	t.Helper()
+	truthTableCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeTruthTableTest)
+}
+
+// truthTableCheckCorpus writes the corpus fixture, the generated delta source,
+// and an injected deterministic truth-table test into an isolated temp module
+// and runs go test -run TestTruthTable_All.
+//
+// Steps mirror roundTripCheckCorpus exactly; only the injected test filename
+// and -run pattern differ.
+func truthTableCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	// Two levels up: internal/deltagen → internal → module root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	moduleRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+
+	fixtureDir := filepath.Join("testdata", "corpus", dir)
+	entries, err := os.ReadDir(fixtureDir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", fixtureDir, err)
+	}
+	wroteFixture := false
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+			fixtureSrc, err := os.ReadFile(filepath.Join(fixtureDir, e.Name()))
+			if err != nil {
+				t.Fatalf("read fixture %s: %v", e.Name(), err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "snapshot.go"), fixtureSrc, 0644); err != nil {
+				t.Fatalf("write snapshot.go: %v", err)
+			}
+			wroteFixture = true
+			break
+		}
+	}
+	if !wroteFixture {
+		t.Fatalf("no .go file found in %s", fixtureDir)
+	}
+
+	deltaPath := filepath.Join(tmpDir, "delta.go")
+	if err := os.WriteFile(deltaPath, generatedSrc, 0644); err != nil {
+		t.Fatalf("write delta.go: %v", err)
+	}
+	assertGofmtClean(t, deltaPath)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "truthtable_test.go"), []byte(testSrc), 0644); err != nil {
+		t.Fatalf("write truthtable_test.go: %v", err)
+	}
+
+	modContent := "module " + pkgName + "\n\ngo 1.25.0\n\nrequire go.resystems.io/eddt v0.0.0\n\nreplace go.resystems.io/eddt => " + moduleRoot + "\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	goSum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatalf("read go.sum: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.sum"), goSum, 0644); err != nil {
+		t.Fatalf("write go.sum: %v", err)
+	}
+
+	runBuildCmd(t, tmpDir, "go", "test", "-mod=mod", "-count=1", "-run", "TestTruthTable_All", "./...")
+}
+
+// clearableCompositeTruthTableTest is the injected §5.4 truth-table test for the
+// clearable_composite corpus case.  Fully deterministic (no testing/quick).
+// It is the only place OpRetract is exercised (testing/quick never generates nil
+// maps / slices).
+const clearableCompositeTruthTableTest = `package clearable_composite_test
+
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"clearable_composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+var (
+	baseLocation = clearable_composite.Address{Street: "1 Main St", City: "Anytown"}
+	baseTags     = map[string]string{"env": "prod"}
+	baseGroups   = []string{"alpha"}
+)
+
+func TestTruthTable_All(t *testing.T) {
+	now := time.Now()
+
+	mkSnap := func(seq uint64, loc clearable_composite.Address, tags map[string]string, groups []string) clearable_composite.ClearableCompositeSnapshot {
+		return clearable_composite.ClearableCompositeSnapshot{
+			Header:   eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: now},
+			Key:      "k",
+			Location: loc,
+			Tags:     tags,
+			Groups:   groups,
+			Count:    42,
+		}
+	}
+
+	// ── Location (struct clearable) ──────────────────────────────────────────
+
+	t.Run("Location_equal", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, baseGroups)
+		b := mkSnap(2, baseLocation, baseTags, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Location.Op != eddt.OpIgnore {
+			t.Errorf("Location.Op = %v, want OpIgnore", d.Location.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Location, b.Location) {
+			t.Errorf("Apply Location = %v, want %v", got.Location, b.Location)
+		}
+	})
+
+	t.Run("Location_bothZero", func(t *testing.T) {
+		a := mkSnap(1, clearable_composite.Address{}, baseTags, baseGroups)
+		b := mkSnap(2, clearable_composite.Address{}, baseTags, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Location.Op != eddt.OpIgnore {
+			t.Errorf("Location.Op = %v, want OpIgnore", d.Location.Op)
+		}
+	})
+
+	t.Run("Location_zeroToNonZero", func(t *testing.T) {
+		a := mkSnap(1, clearable_composite.Address{}, baseTags, baseGroups)
+		b := mkSnap(2, baseLocation, baseTags, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Location.Op != eddt.OpAssert {
+			t.Errorf("Location.Op = %v, want OpAssert", d.Location.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Location, b.Location) {
+			t.Errorf("Apply Location = %v, want %v", got.Location, b.Location)
+		}
+	})
+
+	t.Run("Location_nonZeroToZero", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, baseGroups)
+		b := mkSnap(2, clearable_composite.Address{}, baseTags, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Location.Op != eddt.OpRetract {
+			t.Errorf("Location.Op = %v, want OpRetract", d.Location.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if got.Location != (clearable_composite.Address{}) {
+			t.Errorf("Apply Location = %v, want zero Address", got.Location)
+		}
+	})
+
+	t.Run("Location_different", func(t *testing.T) {
+		other := clearable_composite.Address{Street: "99 Oak Ave", City: "Elsewhere"}
+		a := mkSnap(1, baseLocation, baseTags, baseGroups)
+		b := mkSnap(2, other, baseTags, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Location.Op != eddt.OpAssert {
+			t.Errorf("Location.Op = %v, want OpAssert", d.Location.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Location, b.Location) {
+			t.Errorf("Apply Location = %v, want %v", got.Location, b.Location)
+		}
+	})
+
+	// ── Tags (map clearable) ─────────────────────────────────────────────────
+
+	t.Run("Tags_equal", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, map[string]string{"env": "prod"}, baseGroups)
+		b := mkSnap(2, baseLocation, map[string]string{"env": "prod"}, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpIgnore {
+			t.Errorf("Tags.Op = %v, want OpIgnore", d.Tags.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Tags, b.Tags) {
+			t.Errorf("Apply Tags = %v, want %v", got.Tags, b.Tags)
+		}
+	})
+
+	t.Run("Tags_bothNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, nil, baseGroups)
+		b := mkSnap(2, baseLocation, nil, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpIgnore {
+			t.Errorf("Tags.Op = %v, want OpIgnore", d.Tags.Op)
+		}
+	})
+
+	t.Run("Tags_nilToNonNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, nil, baseGroups)
+		b := mkSnap(2, baseLocation, map[string]string{"k": "v"}, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpAssert {
+			t.Errorf("Tags.Op = %v, want OpAssert", d.Tags.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Tags, b.Tags) {
+			t.Errorf("Apply Tags = %v, want %v", got.Tags, b.Tags)
+		}
+	})
+
+	t.Run("Tags_nonNilToNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, map[string]string{"k": "v"}, baseGroups)
+		b := mkSnap(2, baseLocation, nil, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpRetract {
+			t.Errorf("Tags.Op = %v, want OpRetract", d.Tags.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if got.Tags != nil {
+			t.Errorf("Apply Tags = %v, want nil", got.Tags)
+		}
+	})
+
+	t.Run("Tags_different", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, map[string]string{"k": "old"}, baseGroups)
+		b := mkSnap(2, baseLocation, map[string]string{"k": "new"}, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpAssert {
+			t.Errorf("Tags.Op = %v, want OpAssert", d.Tags.Op)
+		}
+		if d.Tags.Value.IsEmpty() {
+			t.Errorf("Tags.Value.IsEmpty() = true, want non-empty inner delta")
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Tags, b.Tags) {
+			t.Errorf("Apply Tags = %v, want %v", got.Tags, b.Tags)
+		}
+	})
+
+	// ── Groups (slice clearable) ─────────────────────────────────────────────
+
+	t.Run("Groups_equal", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, []string{"x", "y"})
+		b := mkSnap(2, baseLocation, baseTags, []string{"x", "y"})
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpIgnore {
+			t.Errorf("Groups.Op = %v, want OpIgnore", d.Groups.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Groups, a.Groups) {
+			t.Errorf("Apply Groups = %v, want %v", got.Groups, a.Groups)
+		}
+	})
+
+	t.Run("Groups_bothNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, nil)
+		b := mkSnap(2, baseLocation, baseTags, nil)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpIgnore {
+			t.Errorf("Groups.Op = %v, want OpIgnore", d.Groups.Op)
+		}
+	})
+
+	t.Run("Groups_nilToNonNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, nil)
+		b := mkSnap(2, baseLocation, baseTags, []string{"new"})
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpAssert {
+			t.Errorf("Groups.Op = %v, want OpAssert", d.Groups.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Groups, b.Groups) {
+			t.Errorf("Apply Groups = %v, want %v", got.Groups, b.Groups)
+		}
+	})
+
+	t.Run("Groups_nonNilToNil", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
+		b := mkSnap(2, baseLocation, baseTags, nil)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpRetract {
+			t.Errorf("Groups.Op = %v, want OpRetract", d.Groups.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if got.Groups != nil {
+			t.Errorf("Apply Groups = %v, want nil", got.Groups)
+		}
+	})
+
+	t.Run("Groups_different", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
+		b := mkSnap(2, baseLocation, baseTags, []string{"y"})
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpAssert {
+			t.Errorf("Groups.Op = %v, want OpAssert", d.Groups.Op)
+		}
+		if d.Groups.Value.IsEmpty() {
+			t.Errorf("Groups.Value.IsEmpty() = true, want non-empty inner delta")
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		hasY, hasX := false, false
+		for _, g := range got.Groups {
+			if g == "y" {
+				hasY = true
+			}
+			if g == "x" {
+				hasX = true
+			}
+		}
+		if !hasY || hasX {
+			t.Errorf("Apply Groups = %v, want {y} (set-membership)", got.Groups)
+		}
+	})
 }
 `
