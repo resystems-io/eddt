@@ -1,0 +1,308 @@
+=== RUN   TestBenchmark_Baseline
+--- PASS: TestBenchmark_Baseline (3.90s)
+=== RUN   TestBenchmark_Composite
+--- PASS: TestBenchmark_Composite (3.94s)
+=== RUN   TestConformance_RoundTrip
+=== RUN   TestConformance_RoundTrip/BaselineSnapshot
+=== RUN   TestConformance_RoundTrip/ClearableCompositeSnapshot
+=== RUN   TestConformance_RoundTrip/CompositeSnapshot
+=== RUN   TestConformance_RoundTrip/SessionSnapshot
+--- PASS: TestConformance_RoundTrip (1.56s)
+=== RUN   TestConformance_Identity
+=== RUN   TestConformance_Identity/BaselineSnapshot
+=== RUN   TestConformance_Identity/ClearableCompositeSnapshot
+=== RUN   TestConformance_Identity/CompositeSnapshot
+=== RUN   TestConformance_Identity/SessionSnapshot
+--- PASS: TestConformance_Identity (1.54s)
+=== RUN   TestConformance_Coalesce
+=== RUN   TestConformance_Coalesce/BaselineSnapshot
+=== RUN   TestConformance_Coalesce/ClearableCompositeSnapshot
+=== RUN   TestConformance_Coalesce/CompositeSnapshot
+=== RUN   TestConformance_Coalesce/SessionSnapshot
+--- PASS: TestConformance_Coalesce (1.61s)
+=== RUN   TestConformance_TruthTable
+=== RUN   TestConformance_TruthTable/ClearableCompositeSnapshot
+--- PASS: TestConformance_TruthTable (0.39s)
+=== RUN   TestCorpus_All
+=== RUN   TestCorpus_All/BaselineSnapshot
+=== RUN   TestCorpus_All/BaselineSnapshot/Parse
+=== RUN   TestCorpus_All/BaselineSnapshot/Generate
+=== RUN   TestCorpus_All/BaselineSnapshot/Compile
+=== RUN   TestCorpus_All/ClearableCompositeSnapshot
+=== RUN   TestCorpus_All/ClearableCompositeSnapshot/Parse
+=== RUN   TestCorpus_All/ClearableCompositeSnapshot/Generate
+=== RUN   TestCorpus_All/ClearableCompositeSnapshot/Compile
+=== RUN   TestCorpus_All/CompositeSnapshot
+=== RUN   TestCorpus_All/CompositeSnapshot/Parse
+=== RUN   TestCorpus_All/CompositeSnapshot/Generate
+=== RUN   TestCorpus_All/CompositeSnapshot/Compile
+=== RUN   TestCorpus_All/SessionSnapshot
+=== RUN   TestCorpus_All/SessionSnapshot/Parse
+=== RUN   TestCorpus_All/SessionSnapshot/Generate
+=== RUN   TestCorpus_All/SessionSnapshot/Compile
+--- PASS: TestCorpus_All (2.06s)
+=== RUN   TestIntegration_ArrowRoundTrip
+=== RUN   TestIntegration_ArrowRoundTrip/ScalarAndStruct
+=== RUN   TestIntegration_ArrowRoundTrip/ShapePointer
+=== RUN   TestIntegration_ArrowRoundTrip/ShapeSliceAtomic
+=== RUN   TestIntegration_ArrowRoundTrip/ShapeMapAtomic
+=== RUN   TestIntegration_ArrowRoundTrip/NestedClearable
+--- PASS: TestIntegration_ArrowRoundTrip (14.43s)
+=== RUN   TestIntegration_PerFieldEmission
+=== RUN   TestIntegration_PerFieldEmission/EM-01..04/AtomicShapes
+=== RUN   TestIntegration_PerFieldEmission/EM-01..04/CompositeShapes
+=== RUN   TestIntegration_PerFieldEmission/EM-05/StructKey
+--- PASS: TestIntegration_PerFieldEmission (0.85s)
+=== RUN   TestIntegration_CrossPkgEmissionCompiles
+=== RUN   TestIntegration_CrossPkgEmissionCompiles/BaselineSnapshot
+=== RUN   TestIntegration_CrossPkgEmissionCompiles/ClearableCompositeSnapshot
+=== RUN   TestIntegration_CrossPkgEmissionCompiles/CompositeSnapshot
+=== RUN   TestIntegration_CrossPkgEmissionCompiles/SessionSnapshot
+--- PASS: TestIntegration_CrossPkgEmissionCompiles (1.16s)
+=== RUN   TestIntegration_TagValidationErrors
+=== RUN   TestIntegration_TagValidationErrors/T02/NestedOnScalar
+=== RUN   TestIntegration_TagValidationErrors/T02/NestedOnPointer
+=== RUN   TestIntegration_TagValidationErrors/T04/StandaloneClearableScalar
+=== RUN   TestIntegration_TagValidationErrors/T04/StandaloneClearablePointer
+=== RUN   TestIntegration_TagValidationErrors/T04/ClearablePlusOmit
+=== RUN   TestIntegration_TagValidationErrors/T04/ClearableOnScalarWithNested
+=== RUN   TestIntegration_TagValidationErrors/T03/UnknownTag
+=== RUN   TestIntegration_TagValidationErrors/T03/NoEntityKeyTag
+=== RUN   TestIntegration_TagValidationErrors/T03/MultipleEntityKeyTags
+=== RUN   TestIntegration_TagValidationErrors/T03/EmbeddedStructKeyTag
+=== RUN   TestIntegration_TagValidationErrors/T03/KeyOverrideFieldNotFound
+=== RUN   TestIntegration_TagValidationErrors/T03/SliceEntityKey
+=== RUN   TestIntegration_TagValidationErrors/T03/MapEntityKey
+--- PASS: TestIntegration_TagValidationErrors (3.10s)
+=== RUN   TestIntegration_KeyFieldOverride
+=== RUN   TestIntegration_KeyFieldOverride/T03/OverrideWithNoTag
+--- PASS: TestIntegration_KeyFieldOverride (0.27s)
+=== RUN   TestLoad_ValidFilesystemPath
+--- PASS: TestLoad_ValidFilesystemPath (0.01s)
+=== RUN   TestLoad_MultipleFilesystemPaths
+--- PASS: TestLoad_MultipleFilesystemPaths (0.02s)
+=== RUN   TestLoad_InvalidFilesystemPath
+--- PASS: TestLoad_InvalidFilesystemPath (0.00s)
+=== RUN   TestLoad_PackageSyntaxError
+--- PASS: TestLoad_PackageSyntaxError (0.01s)
+=== RUN   TestLoad_ImportPath
+--- PASS: TestLoad_ImportPath (0.24s)
+=== RUN   TestLoad_ImportPathNotInGoMod
+--- PASS: TestLoad_ImportPathNotInGoMod (0.01s)
+=== RUN   TestLoad_DepsIncluded
+--- PASS: TestLoad_DepsIncluded (0.23s)
+=== RUN   TestLoad_FindPkgByPath
+--- PASS: TestLoad_FindPkgByPath (0.23s)
+=== RUN   TestLoad_IsFilesystemPath
+--- PASS: TestLoad_IsFilesystemPath (0.00s)
+=== RUN   TestResolve_NoOverride
+--- PASS: TestResolve_NoOverride (0.23s)
+=== RUN   TestResolve_OverrideMatchingSource
+--- PASS: TestResolve_OverrideMatchingSource (0.23s)
+=== RUN   TestResolve_OverrideDiffering
+--- PASS: TestResolve_OverrideDiffering (0.24s)
+=== RUN   TestResolve_MultiPkgInput
+--- PASS: TestResolve_MultiPkgInput (0.02s)
+=== RUN   TestParse_ValidSnapshot
+--- PASS: TestParse_ValidSnapshot (0.25s)
+=== RUN   TestParse_ShapeClassification
+--- PASS: TestParse_ShapeClassification (0.25s)
+=== RUN   TestParse_StructNotFound
+--- PASS: TestParse_StructNotFound (0.23s)
+=== RUN   TestParse_NoHeader
+--- PASS: TestParse_NoHeader (0.23s)
+=== RUN   TestParse_MultipleHeaders
+--- PASS: TestParse_MultipleHeaders (0.23s)
+=== RUN   TestParse_UnsupportedFieldShapes
+=== RUN   TestParse_UnsupportedFieldShapes/bad_func
+=== RUN   TestParse_UnsupportedFieldShapes/bad_chan
+=== RUN   TestParse_UnsupportedFieldShapes/bad_iface
+--- PASS: TestParse_UnsupportedFieldShapes (0.67s)
+=== RUN   TestParse_MapField
+--- PASS: TestParse_MapField (0.23s)
+=== RUN   TestParse_CrossPackageFiltersUnexported
+--- PASS: TestParse_CrossPackageFiltersUnexported (0.23s)
+=== RUN   TestParse_ParseOptsEquivalence
+--- PASS: TestParse_ParseOptsEquivalence (0.23s)
+=== RUN   TestParse_KeyField_TagFoundStruct
+--- PASS: TestParse_KeyField_TagFoundStruct (0.24s)
+=== RUN   TestParse_KeyField_TagFoundScalar
+--- PASS: TestParse_KeyField_TagFoundScalar (0.23s)
+=== RUN   TestParse_KeyField_OverrideOK
+--- PASS: TestParse_KeyField_OverrideOK (0.24s)
+=== RUN   TestParse_KeyField_NoKey
+--- PASS: TestParse_KeyField_NoKey (0.25s)
+=== RUN   TestParse_KeyField_MultiKey
+--- PASS: TestParse_KeyField_MultiKey (0.25s)
+=== RUN   TestParse_KeyField_Pointer
+--- PASS: TestParse_KeyField_Pointer (0.26s)
+=== RUN   TestParse_KeyField_NonComparable
+--- PASS: TestParse_KeyField_NonComparable (0.24s)
+=== RUN   TestParse_KeyField_OverrideMissing
+--- PASS: TestParse_KeyField_OverrideMissing (0.26s)
+=== RUN   TestParse_KeyField_OverrideWinsOverTag
+--- PASS: TestParse_KeyField_OverrideWinsOverTag (0.22s)
+=== RUN   TestParse_TagWiring
+--- PASS: TestParse_TagWiring (0.21s)
+=== RUN   TestParse_TagShapeGate_NestedOK
+=== RUN   TestParse_TagShapeGate_NestedOK/NestedStructSnap
+=== RUN   TestParse_TagShapeGate_NestedOK/NestedSliceSnap
+=== RUN   TestParse_TagShapeGate_NestedOK/NestedMapSnap
+--- PASS: TestParse_TagShapeGate_NestedOK (0.69s)
+=== RUN   TestParse_TagShapeGate_NestedReject
+=== RUN   TestParse_TagShapeGate_NestedReject/NestedScalarSnap
+=== RUN   TestParse_TagShapeGate_NestedReject/NestedPointerSnap
+--- PASS: TestParse_TagShapeGate_NestedReject (0.47s)
+=== RUN   TestParse_CombinedTags
+--- PASS: TestParse_CombinedTags (0.24s)
+=== RUN   TestParse_NestedFieldEmbedHeader
+--- PASS: TestParse_NestedFieldEmbedHeader (0.23s)
+=== RUN   TestParse_NestedCycleDetected
+--- PASS: TestParse_NestedCycleDetected (0.00s)
+=== RUN   TestParseTag
+=== RUN   TestParseTag/T01_Empty
+=== RUN   TestParseTag/T02_EntityKey
+=== RUN   TestParseTag/T03_Nested
+=== RUN   TestParseTag/T04_Omit
+=== RUN   TestParseTag/T05_Retired
+=== RUN   TestParseTag/T06_Commutative
+=== RUN   TestParseTag/T07_KnownOption
+=== RUN   TestParseTag/T08_UnknownOption
+=== RUN   TestParseTag/T09_MultipleOptions
+=== RUN   TestParseTag/T10_CommutativeOption
+=== RUN   TestParseTag/T11_EntityKeyOption
+=== RUN   TestParseTag/T12_EmptyValue
+=== RUN   TestParseTag/T13_BareUnrecognised
+=== RUN   TestParseTag/T14_ClearableAlone
+=== RUN   TestParseTag/T15_Unknown
+=== RUN   TestParseTag/T16_RawPreserved
+=== RUN   TestParseTag/T17_NestedClearable
+=== RUN   TestParseTag/T18_ClearableNestedReverse
+=== RUN   TestParseTag/T19_NestedClearableOption
+=== RUN   TestParseTag/T20_RetiredOptionNoClearable
+=== RUN   TestParseTag/T21_TwoPrimaries
+--- PASS: TestParseTag (0.00s)
+=== RUN   TestValidateTagShape
+=== RUN   TestValidateTagShape/T2.01_NestedOnStruct
+=== RUN   TestValidateTagShape/T2.02_NestedOnSlice
+=== RUN   TestValidateTagShape/T2.03_NestedOnMap
+=== RUN   TestValidateTagShape/T2.04_NestedOnScalar
+=== RUN   TestValidateTagShape/T2.05_NestedOnPointer
+=== RUN   TestValidateTagShape/T2.06_OmitOnScalar
+=== RUN   TestValidateTagShape/T2.07_OmitOnMap
+=== RUN   TestValidateTagShape/T2.08_RetiredOnSlice
+=== RUN   TestValidateTagShape/T2.09_CommutativeOnPointer
+=== RUN   TestValidateTagShape/T2.10_EntityKeyOnStruct
+=== RUN   TestValidateTagShape/T2.11_NoneOnScalar
+--- PASS: TestValidateTagShape (0.00s)
+=== RUN   TestValidateTagCombination
+=== RUN   TestValidateTagCombination/NestedClearable
+=== RUN   TestValidateTagCombination/NoneOnly
+=== RUN   TestValidateTagCombination/EntityKeyOnly
+=== RUN   TestValidateTagCombination/NestedOnly
+=== RUN   TestValidateTagCombination/OmitOnly
+=== RUN   TestValidateTagCombination/RetiredOnly
+=== RUN   TestValidateTagCombination/CommutativeOnly
+=== RUN   TestValidateTagCombination/StandaloneClearable
+=== RUN   TestValidateTagCombination/OmitClearable
+=== RUN   TestValidateTagCombination/RetiredClearable
+=== RUN   TestValidateTagCombination/CommutativeClearable
+=== RUN   TestValidateTagCombination/EntityKeyClearable
+--- PASS: TestValidateTagCombination (0.00s)
+=== RUN   TestTagKindIsSecondary
+--- PASS: TestTagKindIsSecondary (0.00s)
+=== RUN   TestBuildSnapshotView
+=== RUN   TestBuildSnapshotView/V01_Scalar
+=== RUN   TestBuildSnapshotView/V02_Pointer
+=== RUN   TestBuildSnapshotView/V03_Struct
+=== RUN   TestBuildSnapshotView/V05_Slice
+=== RUN   TestBuildSnapshotView/V06_Map
+=== RUN   TestBuildSnapshotView/V07_Omitted
+=== RUN   TestBuildSnapshotView/V08_Retired
+=== RUN   TestBuildSnapshotView/V09_Commute
+--- PASS: TestBuildSnapshotView (0.24s)
+=== RUN   TestBuildSnapshotView_KeyName
+--- PASS: TestBuildSnapshotView_KeyName (0.23s)
+=== RUN   TestBuildSnapshotView_NeedsReflect
+=== RUN   TestBuildSnapshotView_NeedsReflect/HasNonScalar
+=== RUN   TestBuildSnapshotView_NeedsReflect/AllScalar
+--- PASS: TestBuildSnapshotView_NeedsReflect (0.47s)
+=== RUN   TestEmitTemplate_AtomicAll
+=== RUN   TestEmitTemplate_AtomicAll/CompileCheck
+--- PASS: TestEmitTemplate_AtomicAll (0.37s)
+=== RUN   TestEmitTemplate_Nested_Map_SamePkg
+=== RUN   TestEmitTemplate_Nested_Map_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Nested_Map_SamePkg (0.36s)
+=== RUN   TestEmitTemplate_Nested_Map_CrossPkg
+--- PASS: TestEmitTemplate_Nested_Map_CrossPkg (0.22s)
+=== RUN   TestEmitTemplate_Nested_Slice_SamePkg
+=== RUN   TestEmitTemplate_Nested_Slice_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Nested_Slice_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_Nested_Slice_CrossPkg
+--- PASS: TestEmitTemplate_Nested_Slice_CrossPkg (0.23s)
+=== RUN   TestEmitTemplate_Nested_Slice_Reflect_SamePkg
+=== RUN   TestEmitTemplate_Nested_Slice_Reflect_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Nested_Slice_Reflect_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_CrossPackageQualifier
+--- PASS: TestEmitTemplate_CrossPackageQualifier (0.23s)
+=== RUN   TestEmitTemplate_AtomicApply_CrossPackage
+--- PASS: TestEmitTemplate_AtomicApply_CrossPackage (0.23s)
+=== RUN   TestEmitTemplate_AtomicDiff_CrossPackage
+--- PASS: TestEmitTemplate_AtomicDiff_CrossPackage (0.24s)
+=== RUN   TestEmitTemplate_AtomicCoalesce_CrossPackage
+--- PASS: TestEmitTemplate_AtomicCoalesce_CrossPackage (0.22s)
+=== RUN   TestEmitTemplate_NamedPrimitive_KeyMethodEmitted
+--- PASS: TestEmitTemplate_NamedPrimitive_KeyMethodEmitted (0.23s)
+=== RUN   TestEmitTemplate_StructKey_SamePkg
+=== RUN   TestEmitTemplate_StructKey_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_StructKey_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_StructKey_FieldOrderStability
+=== RUN   TestEmitTemplate_StructKey_FieldOrderStability/CompileCheck
+--- PASS: TestEmitTemplate_StructKey_FieldOrderStability (0.83s)
+=== RUN   TestEmitTemplate_EntityID_CrossPackage
+--- PASS: TestEmitTemplate_EntityID_CrossPackage (0.24s)
+=== RUN   TestEmitTemplate_EntityID_TagVsOverridePathEquivalence
+--- PASS: TestEmitTemplate_EntityID_TagVsOverridePathEquivalence (0.23s)
+=== RUN   TestBuildSnapshotView_UnsupportedKeyUnderlying
+--- PASS: TestBuildSnapshotView_UnsupportedKeyUnderlying (0.00s)
+=== RUN   TestEmitTemplate_NoReflectImport_AllScalar
+--- PASS: TestEmitTemplate_NoReflectImport_AllScalar (0.23s)
+=== RUN   TestEmitTemplate_ReflectImport_WhenNeeded
+--- PASS: TestEmitTemplate_ReflectImport_WhenNeeded (0.24s)
+=== RUN   TestEmitTemplate_PtrNonComparable
+=== RUN   TestEmitTemplate_PtrNonComparable/CompileCheck
+--- PASS: TestEmitTemplate_PtrNonComparable (0.26s)
+=== RUN   TestEmitTemplate_Nested_SamePkg
+=== RUN   TestEmitTemplate_Nested_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Nested_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_Nested_Dedup
+--- PASS: TestEmitTemplate_Nested_Dedup (0.24s)
+=== RUN   TestEmitTemplate_Nested_Deep
+=== RUN   TestEmitTemplate_Nested_Deep/CompileCheck
+--- PASS: TestEmitTemplate_Nested_Deep (0.38s)
+=== RUN   TestEmitTemplate_Nested_Triple
+=== RUN   TestEmitTemplate_Nested_Triple/CompileCheck
+--- PASS: TestEmitTemplate_Nested_Triple (0.37s)
+=== RUN   TestEmitTemplate_Nested_CrossPkg
+--- PASS: TestEmitTemplate_Nested_CrossPkg (0.23s)
+=== RUN   TestEmitTemplate_Nested_AnonymousStruct_Error
+--- PASS: TestEmitTemplate_Nested_AnonymousStruct_Error (0.00s)
+=== RUN   TestBuildSnapshotView_CycleDetected
+--- PASS: TestBuildSnapshotView_CycleDetected (0.00s)
+=== RUN   TestEmitTemplate_Clearable_Struct_SamePkg
+=== RUN   TestEmitTemplate_Clearable_Struct_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Clearable_Struct_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_Clearable_Map_SamePkg
+=== RUN   TestEmitTemplate_Clearable_Map_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Clearable_Map_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_Clearable_Slice_SamePkg
+=== RUN   TestEmitTemplate_Clearable_Slice_SamePkg/CompileCheck
+--- PASS: TestEmitTemplate_Clearable_Slice_SamePkg (0.37s)
+=== RUN   TestEmitTemplate_Clearable_Map_Reflect_SamePkg
+--- PASS: TestEmitTemplate_Clearable_Map_Reflect_SamePkg (0.24s)
+=== RUN   TestEmitTemplate_Clearable_Slice_Reflect_SamePkg
+--- PASS: TestEmitTemplate_Clearable_Slice_Reflect_SamePkg (0.24s)
+=== RUN   TestEmitTemplate_NestedOnly_NoFieldDelta
+=== RUN   TestEmitTemplate_NestedOnly_NoFieldDelta/nested_map
+=== RUN   TestEmitTemplate_NestedOnly_NoFieldDelta/nested_slice
+--- PASS: TestEmitTemplate_NestedOnly_NoFieldDelta (0.45s)
