@@ -102,6 +102,11 @@ func parseKeyField(candidates []ParsedField, structName string, opts ParseOpts) 
 		return nil, 0, nil, fmt.Errorf(
 			"struct %q: entity-key field %q has map type %s; maps are not comparable and cannot be entity keys",
 			structName, keyField.Name, keyField.GoType)
+
+	default:
+		return nil, 0, nil, fmt.Errorf(
+			"internal: unhandled key field shape %v for field %q in struct %q",
+			keyField.Shape, keyField.Name, structName)
 	}
 
 	keyVar = keyField.Var
