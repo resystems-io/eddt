@@ -294,23 +294,12 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 
 	// ── TDelta struct shape ───────────────────────────────────────────────────
 
-	deltaDecl := findStructDecl(f, "AtomicAllSnapshotDelta")
-	if deltaDecl == nil {
-		t.Fatalf("AtomicAllSnapshotDelta type not found in generated file")
-	}
-
-	fields := structFieldNames(deltaDecl)
+	fields := assertDeltaShape(t, f, "AtomicAllSnapshotDelta",
+		[]string{"Header", "SetScalar", "SetPointer", "SetStruct", "SetSlice", "SetMap", "SetCommute"})
 
 	// Header embed must be present (first field).
 	if len(fields) == 0 || fields[0] != "Header" {
 		t.Errorf("first field should be Header embed, got: %v", fields)
-	}
-
-	// Expected Set* fields (atomic payload fields).
-	for _, want := range []string{"SetScalar", "SetPointer", "SetStruct", "SetSlice", "SetMap", "SetCommute"} {
-		if !contains(fields, want) {
-			t.Errorf("field %q missing from AtomicAllSnapshotDelta; fields: %v", want, fields)
-		}
 	}
 
 	// Suppressed fields must be absent from TDelta.
@@ -362,12 +351,6 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	}
 	if !strings.Contains(srcStr, "result.Retired = s.Retired") {
 		t.Errorf("Apply body missing suppressed-field propagation: result.Retired = s.Retired")
-	}
-
-	// ── Method wrapper present (same-package mode, E-12) ─────────────────────
-
-	if findMethodDecl(f, "AtomicAllSnapshot", "Apply") == nil {
-		t.Errorf("Apply method wrapper not found (expected in same-package mode)")
 	}
 
 	// ── Diff function shape (EM-03) ───────────────────────────────────────────
@@ -434,12 +417,6 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("generated file missing \"reflect\" import")
 	}
 
-	// ── Diff method wrapper present (same-package mode, E-12) ────────────────
-
-	if findMethodDecl(f, "AtomicAllSnapshot", "Diff") == nil {
-		t.Errorf("Diff method wrapper not found (expected in same-package mode)")
-	}
-
 	// ── Coalesce function shape (EM-04) ───────────────────────────────────────
 
 	coalesceFn := findFuncDecl(f, "Coalesce")
@@ -463,14 +440,13 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Coalesce body missing Apply(result, d)")
 	}
 
-	// ── Coalesce method wrapper present (same-package mode, E-12) ────────────
-
-	if findMethodDecl(f, "AtomicAllSnapshot", "Coalesce") == nil {
-		t.Errorf("Coalesce method wrapper not found (expected in same-package mode)")
-	}
 	if !strings.Contains(srcStr, "return Coalesce(s, ds)") {
 		t.Errorf("Coalesce method wrapper body missing 'return Coalesce(s, ds)'")
 	}
+
+	// ── Method wrappers present (same-package mode, E-12) ────────────────────
+
+	assertHasMethods(t, f, "AtomicAllSnapshot", []string{"Apply", "Diff", "Coalesce"})
 
 	// ── EntityID function shape (EM-05) ───────────────────────────────────────
 	// atomic_all has Key string (raw basic) — function emitted, no method.
@@ -551,16 +527,8 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 	}
 
 	// NestedMapSnapshotDelta must contain the N-03 map encoding fields.
-	deltaDecl := findStructDecl(f, "NestedMapSnapshotDelta")
-	if deltaDecl == nil {
-		t.Fatalf("NestedMapSnapshotDelta not found in generated file")
-	}
-	deltaFields := structFieldNames(deltaDecl)
-	for _, want := range []string{"UpdatedTags", "RemovedTags", "UpdatedScores", "RemovedScores", "SetCount"} {
-		if !contains(deltaFields, want) {
-			t.Errorf("NestedMapSnapshotDelta missing field %q; fields: %v", want, deltaFields)
-		}
-	}
+	deltaFields := assertDeltaShape(t, f, "NestedMapSnapshotDelta",
+		[]string{"UpdatedTags", "RemovedTags", "UpdatedScores", "RemovedScores", "SetCount"})
 	// Raw source field names must not appear in the Delta struct.
 	for _, absent := range []string{"Tags", "Scores", "Count"} {
 		if contains(deltaFields, absent) {
@@ -686,16 +654,8 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 	}
 
 	// NestedSliceSnapshotDelta must contain the N-04 set-diff encoding fields.
-	deltaDecl := findStructDecl(f, "NestedSliceSnapshotDelta")
-	if deltaDecl == nil {
-		t.Fatalf("NestedSliceSnapshotDelta not found in generated file")
-	}
-	deltaFields := structFieldNames(deltaDecl)
-	for _, want := range []string{"AddedNames", "RemovedNames", "AddedTags", "RemovedTags", "SetCount"} {
-		if !contains(deltaFields, want) {
-			t.Errorf("NestedSliceSnapshotDelta missing field %q; fields: %v", want, deltaFields)
-		}
-	}
+	deltaFields := assertDeltaShape(t, f, "NestedSliceSnapshotDelta",
+		[]string{"AddedNames", "RemovedNames", "AddedTags", "RemovedTags", "SetCount"})
 	// Raw source field names must not appear in the Delta struct.
 	for _, absent := range []string{"Names", "Tags", "Count"} {
 		if contains(deltaFields, absent) {
@@ -725,12 +685,7 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 	}
 
 	// Method wrappers must be present in same-package mode (E-12).
-	if findMethodDecl(f, "NestedSliceSnapshot", "Apply") == nil {
-		t.Errorf("Apply method wrapper not found (expected in same-package mode)")
-	}
-	if findMethodDecl(f, "NestedSliceSnapshot", "Diff") == nil {
-		t.Errorf("Diff method wrapper not found (expected in same-package mode)")
-	}
+	assertHasMethods(t, f, "NestedSliceSnapshot", []string{"Apply", "Diff"})
 
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmitNestedSlice(t, src)
@@ -825,16 +780,7 @@ func TestEmitTemplate_Nested_Slice_Reflect_SamePkg(t *testing.T) {
 	}
 
 	// NestedSliceReflectSnapshotDelta must contain AddedBlobs and RemovedBlobs.
-	deltaDecl := findStructDecl(f, "NestedSliceReflectSnapshotDelta")
-	if deltaDecl == nil {
-		t.Fatalf("NestedSliceReflectSnapshotDelta not found in generated file")
-	}
-	deltaFields := structFieldNames(deltaDecl)
-	for _, want := range []string{"AddedBlobs", "RemovedBlobs"} {
-		if !contains(deltaFields, want) {
-			t.Errorf("NestedSliceReflectSnapshotDelta missing field %q; fields: %v", want, deltaFields)
-		}
-	}
+	assertDeltaShape(t, f, "NestedSliceReflectSnapshotDelta", []string{"AddedBlobs", "RemovedBlobs"})
 
 	// reflect import must be PRESENT: []byte is not comparable (§5.2).
 	if !strings.Contains(srcStr, `"reflect"`) {
@@ -2625,30 +2571,14 @@ func TestEmitTemplate_Nested_SamePkg(t *testing.T) {
 	}
 
 	// InnerDelta companion struct must exist (req 01).
-	innerDeltaDecl := findStructDecl(f, "InnerDelta")
-	if innerDeltaDecl == nil {
-		t.Fatalf("InnerDelta type not found in generated file")
-	}
-	innerFields := structFieldNames(innerDeltaDecl)
-	for _, want := range []string{"SetX", "SetY"} {
-		if !contains(innerFields, want) {
-			t.Errorf("InnerDelta missing field %q; fields: %v", want, innerFields)
-		}
-	}
+	innerFields := assertDeltaShape(t, f, "InnerDelta", []string{"SetX", "SetY"})
 	// InnerDelta must NOT have runtime.Header (not a chain anchor).
 	if contains(innerFields, "Header") {
 		t.Errorf("InnerDelta must not embed runtime.Header; fields: %v", innerFields)
 	}
 
 	// Parent Delta must have Sub InnerDelta (not *InnerDelta, no Set prefix) (req 05).
-	parentDeltaDecl := findStructDecl(f, "NestedStructSnapshotDelta")
-	if parentDeltaDecl == nil {
-		t.Fatalf("NestedStructSnapshotDelta not found")
-	}
-	parentFields := structFieldNames(parentDeltaDecl)
-	if !contains(parentFields, "Sub") {
-		t.Errorf("NestedStructSnapshotDelta missing Sub field; fields: %v", parentFields)
-	}
+	parentFields := assertDeltaShape(t, f, "NestedStructSnapshotDelta", []string{"Sub"})
 	if contains(parentFields, "SetSub") {
 		t.Errorf("nested field must be Sub not SetSub; fields: %v", parentFields)
 	}
@@ -2666,12 +2596,7 @@ func TestEmitTemplate_Nested_SamePkg(t *testing.T) {
 	}
 
 	// Same-package method wrappers must exist (req 02, 03).
-	if findMethodDecl(f, "Inner", "Apply") == nil {
-		t.Errorf("Apply method wrapper on Inner not found (expected in same-package mode)")
-	}
-	if findMethodDecl(f, "Inner", "Diff") == nil {
-		t.Errorf("Diff method wrapper on Inner not found (expected in same-package mode)")
-	}
+	assertHasMethods(t, f, "Inner", []string{"Apply", "Diff"})
 
 	// No Coalesce on Inner (req 04).
 	if findMethodDecl(f, "Inner", "Coalesce") != nil {
@@ -2740,16 +2665,7 @@ func TestEmitTemplate_Nested_Dedup(t *testing.T) {
 	}
 
 	// Parent Delta must have both Home and Work as AddressDelta.
-	parentDelta := findStructDecl(f, "NestedMultiSnapshotDelta")
-	if parentDelta == nil {
-		t.Fatalf("NestedMultiSnapshotDelta not found")
-	}
-	parentFields := structFieldNames(parentDelta)
-	for _, name := range []string{"Home", "Work", "Info"} {
-		if !contains(parentFields, name) {
-			t.Errorf("NestedMultiSnapshotDelta missing field %q; fields: %v", name, parentFields)
-		}
-	}
+	assertDeltaShape(t, f, "NestedMultiSnapshotDelta", []string{"Home", "Work", "Info"})
 }
 
 // TestEmitTemplate_Nested_Deep verifies two-level nested emission: Level2Delta
@@ -2786,16 +2702,9 @@ func TestEmitTemplate_Nested_Deep(t *testing.T) {
 	if findStructDecl(f, "Level2Delta") == nil {
 		t.Fatalf("Level2Delta not found")
 	}
-	if findStructDecl(f, "Level1Delta") == nil {
-		t.Fatalf("Level1Delta not found")
-	}
 
 	// Level1Delta must have Sub Level2Delta (not *Level2Delta).
-	level1Delta := findStructDecl(f, "Level1Delta")
-	l1Fields := structFieldNames(level1Delta)
-	if !contains(l1Fields, "Sub") {
-		t.Errorf("Level1Delta missing Sub field; fields: %v", l1Fields)
-	}
+	assertDeltaShape(t, f, "Level1Delta", []string{"Sub"})
 	if strings.Contains(srcStr, "*Level2Delta") {
 		t.Errorf("Level2Delta must not be pointer-wrapped in Level1Delta")
 	}
@@ -2853,11 +2762,7 @@ func TestEmitTemplate_Nested_Triple(t *testing.T) {
 	}
 
 	// Level2Delta must have Stats Level3Delta (not *Level3Delta).
-	level2Delta := findStructDecl(f, "Level2Delta")
-	l2Fields := structFieldNames(level2Delta)
-	if !contains(l2Fields, "Stats") {
-		t.Errorf("Level2Delta missing Stats field; fields: %v", l2Fields)
-	}
+	assertDeltaShape(t, f, "Level2Delta", []string{"Stats"})
 	if strings.Contains(srcStr, "*Level3Delta") {
 		t.Errorf("Level3Delta must not be pointer-wrapped in Level2Delta")
 	}
@@ -4038,12 +3943,7 @@ func TestEmitTemplate_Clearable_Struct_SamePkg(t *testing.T) {
 	}
 
 	// Method wrappers must be present in same-package mode.
-	if findMethodDecl(f, "ClearableStructSnapshot", "Apply") == nil {
-		t.Error("Apply method wrapper not found (expected in same-package mode)")
-	}
-	if findMethodDecl(f, "ClearableStructSnapshot", "Diff") == nil {
-		t.Error("Diff method wrapper not found (expected in same-package mode)")
-	}
+	assertHasMethods(t, f, "ClearableStructSnapshot", []string{"Apply", "Diff"})
 
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmitClearableStruct(t, src)
@@ -4082,16 +3982,7 @@ func TestEmitTemplate_Clearable_Map_SamePkg(t *testing.T) {
 	}
 
 	// TagsMapDelta wrapper struct must be emitted with the correct fields.
-	wrapperDecl := findStructDecl(f, "TagsMapDelta")
-	if wrapperDecl == nil {
-		t.Fatal("TagsMapDelta wrapper struct must be emitted")
-	}
-	wrapperFields := structFieldNames(wrapperDecl)
-	for _, want := range []string{"UpdatedTags", "RemovedTags"} {
-		if !contains(wrapperFields, want) {
-			t.Errorf("TagsMapDelta missing field %q; fields: %v", want, wrapperFields)
-		}
-	}
+	assertDeltaShape(t, f, "TagsMapDelta", []string{"UpdatedTags", "RemovedTags"})
 
 	// IsEmpty method and Apply/Diff helpers must be emitted.
 	if findMethodDecl(f, "TagsMapDelta", "IsEmpty") == nil {
@@ -4124,12 +4015,7 @@ func TestEmitTemplate_Clearable_Map_SamePkg(t *testing.T) {
 	}
 
 	// Method wrappers must be present in same-package mode.
-	if findMethodDecl(f, "ClearableMapSnapshot", "Apply") == nil {
-		t.Error("Apply method wrapper not found (expected in same-package mode)")
-	}
-	if findMethodDecl(f, "ClearableMapSnapshot", "Diff") == nil {
-		t.Error("Diff method wrapper not found (expected in same-package mode)")
-	}
+	assertHasMethods(t, f, "ClearableMapSnapshot", []string{"Apply", "Diff"})
 
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmitClearableMap(t, src)
@@ -4168,16 +4054,7 @@ func TestEmitTemplate_Clearable_Slice_SamePkg(t *testing.T) {
 	}
 
 	// GroupsSliceDelta wrapper struct must be emitted with the correct fields.
-	wrapperDecl := findStructDecl(f, "GroupsSliceDelta")
-	if wrapperDecl == nil {
-		t.Fatal("GroupsSliceDelta wrapper struct must be emitted")
-	}
-	wrapperFields := structFieldNames(wrapperDecl)
-	for _, want := range []string{"AddedGroups", "RemovedGroups"} {
-		if !contains(wrapperFields, want) {
-			t.Errorf("GroupsSliceDelta missing field %q; fields: %v", want, wrapperFields)
-		}
-	}
+	assertDeltaShape(t, f, "GroupsSliceDelta", []string{"AddedGroups", "RemovedGroups"})
 
 	// IsEmpty method and Apply/Diff helpers must be emitted.
 	if findMethodDecl(f, "GroupsSliceDelta", "IsEmpty") == nil {
@@ -4210,12 +4087,7 @@ func TestEmitTemplate_Clearable_Slice_SamePkg(t *testing.T) {
 	}
 
 	// Method wrappers must be present in same-package mode.
-	if findMethodDecl(f, "ClearableSliceSnapshot", "Apply") == nil {
-		t.Error("Apply method wrapper not found (expected in same-package mode)")
-	}
-	if findMethodDecl(f, "ClearableSliceSnapshot", "Diff") == nil {
-		t.Error("Diff method wrapper not found (expected in same-package mode)")
-	}
+	assertHasMethods(t, f, "ClearableSliceSnapshot", []string{"Apply", "Diff"})
 
 	t.Run("CompileCheck", func(t *testing.T) {
 		compileCheckEmitClearableSlice(t, src)

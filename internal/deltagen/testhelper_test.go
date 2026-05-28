@@ -1,6 +1,7 @@
 package deltagen
 
 import (
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,4 +108,33 @@ func runEmittedInModule(t *testing.T, opts runOpts) {
 
 	args := append([]string{"test", "-mod=mod", "-count=1"}, opts.runArgs...)
 	runBuildCmd(t, tmpDir, "go", args...)
+}
+
+// assertDeltaShape asserts that the named struct in f contains all wantFields.
+// It fatals immediately if the struct is absent. The returned field-name slice
+// can be used for subsequent absent-field or ordering assertions.
+func assertDeltaShape(t *testing.T, f *ast.File, structName string, wantFields []string) []string {
+	t.Helper()
+	decl := findStructDecl(f, structName)
+	if decl == nil {
+		t.Fatalf("%s type not found in generated file", structName)
+		return nil
+	}
+	fields := structFieldNames(decl)
+	for _, want := range wantFields {
+		if !contains(fields, want) {
+			t.Errorf("field %q missing from %s; fields: %v", want, structName, fields)
+		}
+	}
+	return fields
+}
+
+// assertHasMethods asserts that every name in names is a method on recvType in f.
+func assertHasMethods(t *testing.T, f *ast.File, recvType string, names []string) {
+	t.Helper()
+	for _, name := range names {
+		if findMethodDecl(f, recvType, name) == nil {
+			t.Errorf("method %s.%s not found in generated file", recvType, name)
+		}
+	}
 }
