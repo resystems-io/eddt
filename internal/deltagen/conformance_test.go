@@ -56,6 +56,83 @@ import (
 	"testing"
 )
 
+// ── conformanceAxis: 2-D test-source table (HK-13) ───────────────────────────
+
+// conformanceAxis groups the injected test file, run pattern, and per-corpus
+// test source strings for one property axis (roundtrip / identity / coalesce /
+// truthtable).  Adding a new corpus case is a single srcs map entry.
+type conformanceAxis struct {
+	testFile   string
+	runPattern string
+	srcs       map[string]string
+}
+
+// conformanceAxes is the (axis → corpus → test source) lookup table.
+// It references the const test-source strings declared later in this file.
+var conformanceAxes = map[string]conformanceAxis{
+	"roundtrip": {
+		testFile:   "roundtrip_test.go",
+		runPattern: "TestRoundTrip_Property",
+		srcs: map[string]string{
+			"baseline":            baselineRoundTripTest,
+			"clearable_composite": clearableCompositeRoundTripTest,
+			"composite":           compositeRoundTripTest,
+			"struct_key":          structKeyRoundTripTest,
+		},
+	},
+	"identity": {
+		testFile:   "identity_test.go",
+		runPattern: "TestIdentity_Property",
+		srcs: map[string]string{
+			"baseline":            baselineIdentityTest,
+			"clearable_composite": clearableCompositeIdentityTest,
+			"composite":           compositeIdentityTest,
+			"struct_key":          structKeyIdentityTest,
+		},
+	},
+	"coalesce": {
+		testFile:   "coalesce_test.go",
+		runPattern: "TestCoalesce_Property",
+		srcs: map[string]string{
+			"baseline":            baselineCoalesceTest,
+			"clearable_composite": clearableCompositeCoalesceTest,
+			"composite":           compositeCoalesceTest,
+			"struct_key":          structKeyCoalesceTest,
+		},
+	},
+}
+
+// generateCorpusDelta generates the delta source for tc and returns the bytes.
+func generateCorpusDelta(t *testing.T, tc corpusCase) []byte {
+	t.Helper()
+	outPath := filepath.Join(t.TempDir(), "delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
+		TargetStructs: []string{tc.name},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	return src
+}
+
+// runCorpusProperty runs the injected property test for one (corpus, axis) cell.
+func runCorpusProperty(t *testing.T, tc corpusCase, generatedSrc []byte, axis conformanceAxis) {
+	t.Helper()
+	runEmittedInModule(t, runOpts{
+		pkgName:      tc.dir,
+		fixtureDir:   filepath.Join("testdata", "corpus", tc.dir),
+		generatedSrc: generatedSrc,
+		extraFiles:   map[string]string{axis.testFile: axis.srcs[tc.dir]},
+		runArgs:      []string{"-run", axis.runPattern, "./..."},
+	})
+}
+
 // TestConformance_RoundTrip is the C-02 property test.
 //
 // For each corpus case it generates the delta source, injects a
@@ -70,93 +147,12 @@ import (
 // slice fields (N-04, E-15) for which set-membership equality is the
 // correct invariant.
 func TestConformance_RoundTrip(t *testing.T) {
-	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":            roundTripCheckBaseline,
-		"clearable_composite": roundTripCheckClearableComposite,
-		"composite":           roundTripCheckComposite,
-		"struct_key":          roundTripCheckStructKey,
-	}
+	axis := conformanceAxes["roundtrip"]
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
-			check := dispatchers[tc.dir]
-			outPath := filepath.Join(t.TempDir(), "delta.go")
-			cfg := Config{
-				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
-				TargetStructs: []string{tc.name},
-				OutPath:       outPath,
-			}
-			if err := New(cfg).Run(); err != nil {
-				t.Fatalf("Run(): %v", err)
-			}
-			src, err := os.ReadFile(outPath)
-			if err != nil {
-				t.Fatalf("read generated file: %v", err)
-			}
-			check(t, src)
+			runCorpusProperty(t, tc, generateCorpusDelta(t, tc), axis)
 		})
 	}
-}
-
-// roundTripCheckClearableComposite runs the C-02 property test for the clearable_composite corpus case.
-//
-// Injected invariant: snapshotEqual(Apply(a, Diff(a, b)), b) — full equality
-// except Groups (N-04 E-15 set-membership) — for 1000 random clearableCompositePayload pairs.
-// OpRetract is unreachable from testing/quick (no nil maps/slices); §5.4 coverage
-// for that row is in TestConformance_TruthTable.
-func roundTripCheckClearableComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	roundTripCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeRoundTripTest)
-}
-
-// roundTripCheckBaseline runs the C-02 property test for the baseline corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, b)), b) — full equality
-// including Header — for 1000 random baselinePayload pairs.
-func roundTripCheckBaseline(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	roundTripCheckCorpus(t, "baseline", "baseline", generatedSrc, baselineRoundTripTest)
-}
-
-// roundTripCheckComposite runs the C-02 property test for the composite corpus case.
-//
-// Injected invariant: snapshotEqual(Apply(a, Diff(a, b)), b) — full equality
-// except Groups (N-04 E-15 set-membership) — for 1000 random compositePayload pairs.
-func roundTripCheckComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	roundTripCheckCorpus(t, "composite", "composite", generatedSrc, compositeRoundTripTest)
-}
-
-// roundTripCheckStructKey runs the C-02 property test for the struct_key corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, b)), b) — full equality
-// including Header — for 1000 random sessionPayload pairs.
-func roundTripCheckStructKey(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	roundTripCheckCorpus(t, "struct_key", "struct_key", generatedSrc, structKeyRoundTripTest)
-}
-
-// roundTripCheckCorpus writes the corpus fixture, the generated delta source,
-// and an injected testing/quick property test into an isolated temp module and
-// runs go test -run TestRoundTrip_Property.
-//
-// Steps:
-//  1. Create a temp directory via t.TempDir().
-//  2. Derive the module root (two levels above the package directory).
-//  3. Copy the fixture .go source from testdata/corpus/<dir>/ as snapshot.go.
-//  4. Write the generated delta source as delta.go; assert it is gofmt-clean.
-//  5. Write the round-trip property test source as roundtrip_test.go.
-//  6. Write go.mod with a replace directive pointing at the local module root.
-//  7. Copy go.sum from the module root.
-//  8. Run go test -mod=mod -count=1 -run TestRoundTrip_Property ./...
-func roundTripCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
-	t.Helper()
-	runEmittedInModule(t, runOpts{
-		pkgName:      pkgName,
-		fixtureDir:   filepath.Join("testdata", "corpus", dir),
-		generatedSrc: generatedSrc,
-		extraFiles:   map[string]string{"roundtrip_test.go": testSrc},
-		runArgs:      []string{"-run", "TestRoundTrip_Property", "./..."},
-	})
 }
 
 // baselineRoundTripTest is the injected round-trip property test for the baseline
@@ -404,85 +400,12 @@ func TestRoundTrip_Property(t *testing.T) {
 // because identity diff produces zero additions/removals, so N-04 slice order
 // is preserved exactly.
 func TestConformance_Identity(t *testing.T) {
-	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":            identityCheckBaseline,
-		"clearable_composite": identityCheckClearableComposite,
-		"composite":           identityCheckComposite,
-		"struct_key":          identityCheckStructKey,
-	}
+	axis := conformanceAxes["identity"]
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
-			check := dispatchers[tc.dir]
-			outPath := filepath.Join(t.TempDir(), "delta.go")
-			cfg := Config{
-				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
-				TargetStructs: []string{tc.name},
-				OutPath:       outPath,
-			}
-			if err := New(cfg).Run(); err != nil {
-				t.Fatalf("Run(): %v", err)
-			}
-			src, err := os.ReadFile(outPath)
-			if err != nil {
-				t.Fatalf("read generated file: %v", err)
-			}
-			check(t, src)
+			runCorpusProperty(t, tc, generateCorpusDelta(t, tc), axis)
 		})
 	}
-}
-
-// identityCheckClearableComposite runs the C-03 property test for the clearable_composite corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime) —
-// all three FieldDelta fields have Op == OpIgnore (zero value) when payload is unchanged.
-func identityCheckClearableComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	identityCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeIdentityTest)
-}
-
-// identityCheckBaseline runs the C-03 property test for the baseline corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime) —
-// full equality including Header — for 1000 random baselinePayload values.
-func identityCheckBaseline(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	identityCheckCorpus(t, "baseline", "baseline", generatedSrc, baselineIdentityTest)
-}
-
-// identityCheckComposite runs the C-03 property test for the composite corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime) —
-// full equality including Header — for 1000 random compositePayload values.
-// No toSortedUnique is needed: identity diff leaves Groups unchanged in order.
-func identityCheckComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	identityCheckCorpus(t, "composite", "composite", generatedSrc, compositeIdentityTest)
-}
-
-// identityCheckStructKey runs the C-03 property test for the struct_key corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime) —
-// full equality including Header — for 1000 random sessionPayload values.
-func identityCheckStructKey(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	identityCheckCorpus(t, "struct_key", "struct_key", generatedSrc, structKeyIdentityTest)
-}
-
-// identityCheckCorpus writes the corpus fixture, the generated delta source,
-// and an injected testing/quick identity-diff property test into an isolated
-// temp module and runs go test -run TestIdentity_Property.
-//
-// Steps mirror roundTripCheckCorpus exactly; only the injected test filename
-// and -run pattern differ.
-func identityCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
-	t.Helper()
-	runEmittedInModule(t, runOpts{
-		pkgName:      pkgName,
-		fixtureDir:   filepath.Join("testdata", "corpus", dir),
-		generatedSrc: generatedSrc,
-		extraFiles:   map[string]string{"identity_test.go": testSrc},
-		runArgs:      []string{"-run", "TestIdentity_Property", "./..."},
-	})
 }
 
 // baselineIdentityTest is the injected identity-diff property test for the
@@ -704,85 +627,12 @@ func TestIdentity_Property(t *testing.T) {
 // p1/p2/p3.  All three assertions are verified in the same prop function for
 // 1000 random (p1,p2,p3) triples per corpus case.
 func TestConformance_Coalesce(t *testing.T) {
-	dispatchers := map[string]func(*testing.T, []byte){
-		"baseline":            coalesceCheckBaseline,
-		"clearable_composite": coalesceCheckClearableComposite,
-		"composite":           coalesceCheckComposite,
-		"struct_key":          coalesceCheckStructKey,
-	}
+	axis := conformanceAxes["coalesce"]
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
-			check := dispatchers[tc.dir]
-			outPath := filepath.Join(t.TempDir(), "delta.go")
-			cfg := Config{
-				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
-				TargetStructs: []string{tc.name},
-				OutPath:       outPath,
-			}
-			if err := New(cfg).Run(); err != nil {
-				t.Fatalf("Run(): %v", err)
-			}
-			src, err := os.ReadFile(outPath)
-			if err != nil {
-				t.Fatalf("read generated file: %v", err)
-			}
-			check(t, src)
+			runCorpusProperty(t, tc, generateCorpusDelta(t, tc), axis)
 		})
 	}
-}
-
-// coalesceCheckClearableComposite runs the C-04 property test for the clearable_composite corpus case.
-//
-// Injected invariant: snapshotEqual(Coalesce(s0,[d1,d2,d3]), s3) plus chunkability —
-// set-membership for Groups (N-04 E-15).  OpRetract is unreachable from testing/quick;
-// covered by TestConformance_TruthTable.
-func coalesceCheckClearableComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	coalesceCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeCoalesceTest)
-}
-
-// coalesceCheckBaseline runs the C-04 property test for the baseline corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
-// chunkability at both split points — for 1000 random (p1,p2,p3) triples.
-func coalesceCheckBaseline(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	coalesceCheckCorpus(t, "baseline", "baseline", generatedSrc, baselineCoalesceTest)
-}
-
-// coalesceCheckComposite runs the C-04 property test for the composite corpus case.
-//
-// Injected invariant: snapshotEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
-// chunkability at both split points — set-membership for Groups (N-04 E-15).
-func coalesceCheckComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	coalesceCheckCorpus(t, "composite", "composite", generatedSrc, compositeCoalesceTest)
-}
-
-// coalesceCheckStructKey runs the C-04 property test for the struct_key corpus case.
-//
-// Injected invariant: reflect.DeepEqual(Coalesce(s0,[d1,d2,d3]), s3) plus
-// chunkability at both split points — for 1000 random (p1,p2,p3) triples.
-func coalesceCheckStructKey(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	coalesceCheckCorpus(t, "struct_key", "struct_key", generatedSrc, structKeyCoalesceTest)
-}
-
-// coalesceCheckCorpus writes the corpus fixture, the generated delta source,
-// and an injected testing/quick coalesce property test into an isolated temp
-// module and runs go test -run TestCoalesce_Property.
-//
-// Steps mirror identityCheckCorpus exactly; only the injected test filename
-// and -run pattern differ.
-func coalesceCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
-	t.Helper()
-	runEmittedInModule(t, runOpts{
-		pkgName:      pkgName,
-		fixtureDir:   filepath.Join("testdata", "corpus", dir),
-		generatedSrc: generatedSrc,
-		extraFiles:   map[string]string{"coalesce_test.go": testSrc},
-		runArgs:      []string{"-run", "TestCoalesce_Property", "./..."},
-	})
 }
 
 // baselineCoalesceTest is the injected coalesce property test for the baseline
@@ -1452,55 +1302,19 @@ func TestCoalesce_Property(t *testing.T) {
 //	a non-zero, b zero composite  → OpRetract
 //	a non-zero, b different       → OpAssert
 func TestConformance_TruthTable(t *testing.T) {
-	cases := map[string]func(*testing.T, []byte){
-		"clearable_composite": truthTableCheckClearableComposite,
+	axis := conformanceAxis{
+		testFile:   "truthtable_test.go",
+		runPattern: "TestTruthTable_All",
+		srcs:       map[string]string{"clearable_composite": clearableCompositeTruthTableTest},
 	}
 	for _, tc := range corpus {
-		check, ok := cases[tc.dir]
-		if !ok {
+		if _, ok := axis.srcs[tc.dir]; !ok {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			outPath := filepath.Join(t.TempDir(), "delta.go")
-			cfg := Config{
-				InputPkgs:     []string{"./testdata/corpus/" + tc.dir},
-				TargetStructs: []string{tc.name},
-				OutPath:       outPath,
-			}
-			if err := New(cfg).Run(); err != nil {
-				t.Fatalf("Run(): %v", err)
-			}
-			src, err := os.ReadFile(outPath)
-			if err != nil {
-				t.Fatalf("read generated file: %v", err)
-			}
-			check(t, src)
+			runCorpusProperty(t, tc, generateCorpusDelta(t, tc), axis)
 		})
 	}
-}
-
-// truthTableCheckClearableComposite runs the §5.4 truth-table test for the
-// clearable_composite corpus case.
-func truthTableCheckClearableComposite(t *testing.T, generatedSrc []byte) {
-	t.Helper()
-	truthTableCheckCorpus(t, "clearable_composite", "clearable_composite", generatedSrc, clearableCompositeTruthTableTest)
-}
-
-// truthTableCheckCorpus writes the corpus fixture, the generated delta source,
-// and an injected deterministic truth-table test into an isolated temp module
-// and runs go test -run TestTruthTable_All.
-//
-// Steps mirror roundTripCheckCorpus exactly; only the injected test filename
-// and -run pattern differ.
-func truthTableCheckCorpus(t *testing.T, dir, pkgName string, generatedSrc []byte, testSrc string) {
-	t.Helper()
-	runEmittedInModule(t, runOpts{
-		pkgName:      pkgName,
-		fixtureDir:   filepath.Join("testdata", "corpus", dir),
-		generatedSrc: generatedSrc,
-		extraFiles:   map[string]string{"truthtable_test.go": testSrc},
-		runArgs:      []string{"-run", "TestTruthTable_All", "./..."},
-	})
 }
 
 // clearableCompositeTruthTableTest is the injected §5.4 truth-table test for the
