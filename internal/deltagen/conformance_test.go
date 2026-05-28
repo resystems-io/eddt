@@ -1976,3 +1976,109 @@ func TestTruthTable_All(t *testing.T) {
 	})
 }
 `
+
+// ── HK-17: deterministic nil-vs-empty coverage ───────────────────────────────
+
+// TestConformance_NilEqualsEmpty is the HK-17 deterministic E-17 nil ≙ empty
+// test for nested (non-clearable) map and slice fields.
+//
+// testing/quick never generates nil maps or slices, so the nil ≙ empty
+// invariant for nested shapes is not exercised by the property-test suite.
+// This test covers it explicitly.  The clearable variants (Tags, Groups) are
+// already covered by TestConformance_TruthTable (Tags_nilToEmpty,
+// Groups_nilToEmpty rows).
+//
+// Test matrix:
+//
+//	TestConformance_NilEqualsEmpty/CompositeSnapshot/TestNilEqualsEmpty_Property/...
+func TestConformance_NilEqualsEmpty(t *testing.T) {
+	axis := conformanceAxis{
+		testFile:   "nilempty_test.go",
+		runPattern: "TestNilEqualsEmpty_Property",
+		srcs:       map[string]string{"composite": compositeNilEmptyTest},
+	}
+	for _, tc := range corpus {
+		if _, ok := axis.srcs[tc.dir]; !ok {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			runCorpusProperty(t, tc, generateCorpusDelta(t, tc), axis)
+		})
+	}
+}
+
+// compositeNilEmptyTest is the injected deterministic nil ≙ empty test for the
+// composite corpus case.  It exercises all four nil/empty/populated transitions
+// for the nested map (Labels, N-03) and nested slice (Groups, N-04) fields.
+//
+// testing/quick never generates nil maps or slices, so these cases require
+// explicit deterministic coverage (HK-17).
+const compositeNilEmptyTest = `package composite_test
+
+import (
+	"testing"
+	"time"
+
+	"composite"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func hdrNE(seq uint64) eddt.Header {
+	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
+}
+
+// TestNilEqualsEmpty_Property exercises E-17 nil ≙ empty for the nested
+// map (Labels) and nested slice (Groups) fields.
+func TestNilEqualsEmpty_Property(t *testing.T) {
+	id := eddt.EntityID{1}
+	now := time.Now()
+
+	type tc struct {
+		name          string
+		aLabels       map[string]string
+		bLabels       map[string]string
+		aGroups       []string
+		bGroups       []string
+		wantNilLabels bool
+		wantNilGroups bool
+	}
+	tests := []tc{
+		// §E-17: nil ≙ empty — no delta produced for nil→nil, nil→empty, empty→nil.
+		{"nil_to_nil",   nil, nil, nil, nil, true, true},
+		{"nil_to_empty", nil, map[string]string{}, nil, []string{}, true, true},
+		{"empty_to_nil", map[string]string{}, nil, []string{}, nil, true, true},
+		// Non-trivial: nil→populated must produce a delta.
+		{"nil_to_populated", nil, map[string]string{"k": "v"}, nil, []string{"x"}, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := composite.CompositeSnapshot{
+				Header:  eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: now},
+				Key:     "k",
+				Labels:  tt.aLabels,
+				Groups:  tt.aGroups,
+			}
+			b := composite.CompositeSnapshot{
+				Header:  eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: now},
+				Key:     "k",
+				Labels:  tt.bLabels,
+				Groups:  tt.bGroups,
+			}
+			d, err := composite.Diff(a, b)
+			if err != nil {
+				t.Fatalf("Diff: %v", err)
+			}
+			gotNilLabels := d.UpdatedLabels == nil && d.RemovedLabels == nil
+			gotNilGroups := d.AddedGroups == nil && d.RemovedGroups == nil
+			if gotNilLabels != tt.wantNilLabels {
+				t.Errorf("Labels delta nil=%v, want %v (Updated=%v, Removed=%v)",
+					gotNilLabels, tt.wantNilLabels, d.UpdatedLabels, d.RemovedLabels)
+			}
+			if gotNilGroups != tt.wantNilGroups {
+				t.Errorf("Groups delta nil=%v, want %v (Added=%v, Removed=%v)",
+					gotNilGroups, tt.wantNilGroups, d.AddedGroups, d.RemovedGroups)
+			}
+		})
+	}
+}
+`
