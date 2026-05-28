@@ -18,7 +18,7 @@ package deltagen
 //  2. findNamedStruct — locate the named struct in the top-level packages'
 //     scopes. The struct must exist and be a named struct type.
 //
-//  3. walkFields — walk the struct's fields exactly once, separating the
+//  3. parseFields — walk the struct's fields exactly once, separating the
 //     single embedded runtime.Header from the candidate payload fields.
 //     In cross-package mode (ParseOpts.CrossPackage == true), unexported
 //     fields are silently dropped because they are inaccessible from
@@ -160,7 +160,7 @@ type ParsedSnapshot struct {
 // additions remain backward-compatible.
 type ParseOpts struct {
 	// CrossPackage is true when the generator output package differs from
-	// the source package (E-12). It instructs walkFields to silently drop
+	// the source package (E-12). It instructs parseFields to silently drop
 	// unexported fields, which would otherwise be inaccessible from the
 	// generated code.
 	CrossPackage bool
@@ -202,17 +202,17 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 	}
 
 	// Step 3: walk the struct's fields once, separating the Header envelope
-	// from candidate payload fields. walkFields applies cross-package
+	// from candidate payload fields. parseFields applies cross-package
 	// unexported-field filtering and rejects unsupported field shapes.
 	// The returned candidate list still contains the entity.key field; step 4
 	// removes it.
 	st := named.Underlying().(*types.Struct)
-	headerVar, candidates, err := walkFields(st, structName, headerType, opts)
+	headerVar, candidates, err := parseFields(st, structName, headerType, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Require exactly one embedded Header. walkFields rejects more than one;
+	// Require exactly one embedded Header. parseFields rejects more than one;
 	// the remaining failure mode is total absence.
 	if headerVar == nil {
 		return nil, fmt.Errorf(

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// walkFields walks the fields of st exactly once, returning the embedded
+// parseFields walks the fields of st exactly once, returning the embedded
 // runtime.Header field separately from the candidate payload fields. It is
 // the internal helper that step 3 of parseSnapshot delegates to.
 //
@@ -32,7 +32,7 @@ import (
 // parseKeyField will subsequently remove it.
 //
 // structName is supplied only for error-message context.
-func walkFields(
+func parseFields(
 	st *types.Struct,
 	structName string,
 	headerType types.Type,
@@ -102,7 +102,7 @@ func walkFields(
 }
 
 // containsHeaderEmbed reports whether t directly embeds a field of type headerType.
-// Used by walkFields to reject delta.nested struct types that embed runtime.Header
+// Used by parseFields to reject delta.nested struct types that embed runtime.Header
 // (they would be chain anchors, not sub-structures — §3.3.2).
 func containsHeaderEmbed(t types.Type, headerType types.Type) bool {
 	st, ok := t.Underlying().(*types.Struct)
