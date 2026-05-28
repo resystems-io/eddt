@@ -30,17 +30,17 @@ eddt:"entity.key" and delta.* struct tags and emits the companion Delta type
 together with Apply, Diff, Coalesce, and EntityID methods.
 
 Example usage:
-  # Generate for a single Snapshot struct
-  delta-gen --pkg ./internal/model --structs UESnapshot --out ue_snapshot_delta.go
+  # Generate for a single Snapshot struct (explicit output file)
+  delta-gen --pkg ./internal/model --type UESnapshot --out ue_snapshot_delta.go
 
   # Multiple input packages (structs from pkg2 resolved natively)
-  delta-gen --pkg ./internal/model --pkg ./internal/types --structs UESnapshot --out ue_delta.go
+  delta-gen --pkg ./internal/model --pkg ./internal/types --type UESnapshot --out ue_delta.go
 
   # Package from go.mod (import path — requires 'go get' first)
-  delta-gen --pkg github.com/user/repo/model --structs UESnapshot --out ue_delta.go
+  delta-gen --pkg github.com/user/repo/model --type UESnapshot --out ue_delta.go
 
   # Alias a package to avoid name collisions (key is the full Go import path)
-  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes --structs UESnapshot --out ue_delta.go`,
+  delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes --type UESnapshot --out ue_delta.go`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(targetStructs) == 0 {
 				return fmt.Errorf("at least one target struct must be specified")
@@ -82,17 +82,13 @@ Example usage:
 	cmd.Flags().StringSliceVarP(&inputPkgs, "pkg", "p", []string{"."}, "Input packages: filesystem paths (./internal/model) or Go import paths (github.com/user/repo/pkg). Import paths must be in your go.mod; run 'go get <pkg>' first if needed.")
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
 	cmd.Flags().StringSliceVarP(&pkgAliases, "pkg-alias", "a", nil, "Aliases for imported packages in 'importpath=alias' format (e.g. go.example.com/pkg=mypkg)")
-	cmd.Flags().StringSliceVarP(&targetStructs, "structs", "s", nil, "Snapshot struct(s) to generate delta types for (comma-separated)")
+	cmd.Flags().StringSliceVarP(&targetStructs, "type", "t", nil, "Snapshot struct(s) to generate delta types for. Repeatable or comma-separated.")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "delta-gen.go", "Output file path")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringSliceVar(&keyFieldValues, "key-field", nil,
-		"Entity-key field override: bare 'FieldName' applies to all --structs targets; "+
+		"Entity-key field override: bare 'FieldName' applies to all --type targets; "+
 			"'StructName=FieldName' applies to one struct only. Repeatable and comma-separated. "+
 			"Overrides the eddt:\"entity.key\" tag when both are present.")
-
-	if err := cmd.MarkFlagRequired("structs"); err != nil {
-		panic(err)
-	}
 
 	return cmd
 }
@@ -160,7 +156,7 @@ func parseKeyFields(values []string, targetStructs []string) (map[string]string,
 			return nil, fmt.Errorf("--key-field: empty field name in %q", v)
 		}
 		if !structSet[structName] {
-			return nil, fmt.Errorf("--key-field: struct %q is not listed in --structs", structName)
+			return nil, fmt.Errorf("--key-field: struct %q is not listed in --type", structName)
 		}
 		result[structName] = fieldName
 	}

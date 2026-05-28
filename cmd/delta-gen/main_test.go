@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-// TestCLI_MissingStructs verifies that omitting --structs produces the Cobra
-// required-flag error and a non-zero exit.
+// TestCLI_MissingStructs verifies that omitting both --type and positional args
+// produces the "at least one target struct" error from RunE.
 // Covers: R-09
 func TestCLI_MissingStructs(t *testing.T) {
 	cmd := newRootCmd()
@@ -24,10 +24,10 @@ func TestCLI_MissingStructs(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when --structs is omitted, got nil")
+		t.Fatal("expected error when no struct is specified, got nil")
 	}
-	if !strings.Contains(err.Error(), `required flag(s) "structs" not set`) {
-		t.Errorf("expected required-flag error, got: %v", err)
+	if !strings.Contains(err.Error(), "at least one target struct must be specified") {
+		t.Errorf("expected at-least-one-struct error, got: %v", err)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestCLI_EmitsDeltaType(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
-		"--structs", "ValidSnapshot",
+		"--type", "ValidSnapshot",
 		"--out", outPath,
 	})
 
@@ -68,7 +68,7 @@ func TestCLI_Help(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, flag := range []string{"--pkg", "--structs", "--out", "--pkg-alias", "--pkg-name", "--verbose", "--key-field"} {
+	for _, flag := range []string{"--pkg", "--type", "--out", "--pkg-alias", "--pkg-name", "--verbose", "--key-field"} {
 		if !strings.Contains(out, flag) {
 			t.Errorf("--help output missing flag %q", flag)
 		}
@@ -104,7 +104,7 @@ func TestCLI_ImportPathNotInGoMod(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "github.com/nonexistent/pkg123456789",
-		"--structs", "Foo",
+		"--type", "Foo",
 		"--out", filepath.Join(tmpDir, "dummy.go"),
 	})
 
@@ -131,7 +131,7 @@ func TestCLI_ImportPathNotInGoMod(t *testing.T) {
 // covers both the repeated-flag and comma-separated forms.
 
 // TestParseKeyFields_SingleBare verifies that a single bare FieldName expands
-// to every struct in --structs.
+// to every struct in --type.
 // Covers: R-09, E-13
 func TestParseKeyFields_SingleBare(t *testing.T) {
 	got, err := parseKeyFields([]string{"Peer"}, []string{"NoKeySnapshot"})
@@ -209,7 +209,7 @@ func TestParseKeyFields_DuplicateBareError(t *testing.T) {
 }
 
 // TestParseKeyFields_UnrecognisedStruct verifies that a per-struct entry whose
-// StructName is not listed in --structs is rejected at parse time.
+// StructName is not listed in --type is rejected at parse time.
 // Covers: R-09, E-13
 func TestParseKeyFields_UnrecognisedStruct(t *testing.T) {
 	_, err := parseKeyFields([]string{"NotAStruct=Location"}, []string{"ValidSnapshot"})
@@ -233,7 +233,7 @@ func TestCLI_KeyField_BareAccepted(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/no_key",
-		"--structs", "NoKeySnapshot",
+		"--type", "NoKeySnapshot",
 		"--key-field", "Peer",
 		"--out", outPath,
 	})
@@ -252,7 +252,7 @@ func TestCLI_KeyField_PerStructAccepted(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/no_key",
-		"--structs", "NoKeySnapshot",
+		"--type", "NoKeySnapshot",
 		"--key-field", "NoKeySnapshot=Peer",
 		"--out", outPath,
 	})
@@ -273,7 +273,7 @@ func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
-		"--structs", "ValidSnapshot",
+		"--type", "ValidSnapshot",
 		"--key-field", "NoSuchField",
 		"--key-field", "ValidSnapshot=Bearer",
 		"--out", outPath,
@@ -286,14 +286,14 @@ func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
 }
 
 // TestCLI_KeyField_UnrecognisedStructError verifies that --key-field with a
-// StructName not in --structs produces a startup error before any package
+// StructName not in --type produces a startup error before any package
 // loading occurs.
 // Covers: R-09, E-13
 func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
-		"--structs", "ValidSnapshot",
+		"--type", "ValidSnapshot",
 		"--key-field", "NotAStruct=Location",
 		"--out", "dummy.go",
 	})
@@ -329,7 +329,7 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
 		"--pkg", "../../internal/deltagen/testdata/parse/valid",
-		"--structs", "ValidSnapshot",
+		"--type", "ValidSnapshot",
 		"--key-field", "ValidSnapshot=Bearer",
 		"--out", outPath,
 	})
@@ -362,6 +362,41 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	if !strings.Contains(out, "tag_field=Key") {
 		t.Errorf("expected tag_field=Key in slog output, got:\n%s", out)
 	}
+}
+
+// ── CG-01: --type flag + -t short alias ──────────────────────────────────────
+
+// TestCLI_TypeFlag verifies that --type is accepted as the replacement for
+// --structs and produces a valid generated file.
+// Covers: CG-01
+func TestCLI_TypeFlag(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "../../internal/deltagen/testdata/parse/valid",
+		"--type", "ValidSnapshot",
+		"--out", outPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("--type flag: expected success, got: %v", err)
+	}
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
+}
+
+// TestCLI_TypeFlagShort verifies that -t (the short form of --type) is accepted.
+// Covers: CG-01
+func TestCLI_TypeFlagShort(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{
+		"--pkg", "../../internal/deltagen/testdata/parse/valid",
+		"-t", "ValidSnapshot",
+		"--out", outPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("-t short flag: expected success, got: %v", err)
+	}
+	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
 }
 
 // assertDeltaFile parses the file at path and verifies it contains a type
