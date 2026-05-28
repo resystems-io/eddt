@@ -1066,6 +1066,142 @@ func buildImports(
 
 // ── View construction ─────────────────────────────────────────────────────────
 
+// fieldSource normalises the per-field inputs to buildFieldView so the shared
+// dispatch logic is independent of whether the field comes from a ParsedField
+// (snapshot path) or a types.Var + raw-tag pair (nested-type path).
+type fieldSource struct {
+	Name  string
+	Typ   types.Type
+	Tag   ParsedTag
+	Shape FieldShape
+}
+
+// fieldBuildCtx carries the shared context for buildFieldView.
+type fieldBuildCtx struct {
+	qualifier  types.Qualifier
+	emitMethod bool
+	parentName string           // enclosing struct name, used in error messages
+	visited    map[string]bool  // N-01 dedup set: prevents duplicate companion emission
+	inPath     map[string]bool  // N-02 cycle-detection: active DFS ancestry chain
+}
+
+// fieldBuildResult is returned by buildFieldView.
+//
+// For struct-value nested fields (IsNested == true) the caller is responsible
+// for cycle detection and for recursing into SubNamed via buildNestedTypeView;
+// the SubTypeName and SubNamed fields carry the information needed to do so.
+type fieldBuildResult struct {
+	FV           fieldView
+	Suppressed   bool
+	NeedsReflect bool
+	// Set for delta.nested struct-value fields; the caller must perform cycle
+	// detection, recursion, and companion accumulation.
+	IsNested    bool
+	SubTypeName string
+	SubNamed    *types.Named
+}
+
+// buildFieldView is the unified five-shape field dispatch shared by
+// buildSnapshotView and buildNestedTypeView.
+//
+//   - suppressed   (omit/retired): FV.Suppressed = true.
+//   - slice-nested (delta.nested on []T): set-diff fieldView (AddedX/RemovedX).
+//   - map-nested   (delta.nested on map[K]V): UpdatedX/RemovedX fieldView.
+//   - struct-nested(delta.nested on T): fieldView + IsNested flag; caller handles
+//     cycle detection and recursion.
+//   - atomic       (untagged / commutative): pointer-wrap fieldView.
+//
+// Callers are responsible for routing clearable fields (delta.nested +
+// delta.clearable) before calling this function.
+func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error) {
+	// Suppressed.
+	if src.Tag.Kind == TagKindOmit || src.Tag.Kind == TagKindRetired {
+		return fieldBuildResult{FV: fieldView{Name: src.Name, Suppressed: true}, Suppressed: true}, nil
+	}
+
+	if src.Tag.Kind == TagKindNested {
+		switch src.Shape {
+		case ShapeSlice:
+			sliceT := src.Typ.Underlying().(*types.Slice)
+			sliceStr := types.TypeString(src.Typ, ctx.qualifier)
+			elemStr := types.TypeString(sliceT.Elem(), ctx.qualifier)
+			fv := fieldView{
+				Name:                  src.Name,
+				DeltaName:             prefixAdded + src.Name,
+				DeltaType:             sliceStr,
+				IsSliceNested:         true,
+				SliceRemovedName:      prefixRemoved + src.Name,
+				SliceElemType:         elemStr,
+				SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
+				SourceTypeStr:         sliceStr,
+			}
+			return fieldBuildResult{FV: fv, NeedsReflect: fv.SliceElemUseReflectEq}, nil
+
+		case ShapeMap:
+			mapT := src.Typ.Underlying().(*types.Map)
+			keyStr := types.TypeString(mapT.Key(), ctx.qualifier)
+			mapStr := types.TypeString(src.Typ, ctx.qualifier)
+			fv := fieldView{
+				Name:                 src.Name,
+				DeltaName:            prefixUpdated + src.Name,
+				DeltaType:            mapStr,
+				IsMapNested:          true,
+				MapRemovedName:       prefixRemoved + src.Name,
+				MapKeyType:           keyStr,
+				MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
+				SourceTypeStr:        mapStr,
+			}
+			return fieldBuildResult{FV: fv, NeedsReflect: fv.MapValueUseReflectEq}, nil
+
+		default: // ShapeStructValue
+			named, ok := src.Typ.(*types.Named)
+			if !ok {
+				return fieldBuildResult{}, fmt.Errorf("delta.nested requires a named type")
+			}
+			subTypeName := named.Obj().Name()
+			qualifiedSub := types.TypeString(named, ctx.qualifier)
+			nestedFuncName, nestedDiffFuncName := "", ""
+			if !ctx.emitMethod {
+				nestedFuncName = prefixApply + subTypeName
+				nestedDiffFuncName = prefixDiff + subTypeName
+			}
+			fv := fieldView{
+				Name:               src.Name,
+				DeltaName:          src.Name,
+				DeltaType:          subTypeName + suffixDelta,
+				IsNested:           true,
+				NestedFuncName:     nestedFuncName,
+				NestedDiffFuncName: nestedDiffFuncName,
+				SourceTypeStr:      qualifiedSub,
+			}
+			return fieldBuildResult{FV: fv, IsNested: true, SubTypeName: subTypeName, SubNamed: named}, nil
+		}
+	}
+
+	// Atomic (TagKindNone or TagKindCommutative): pointer-wrap the source type.
+	deltaType := types.TypeString(types.NewPointer(src.Typ), ctx.qualifier)
+	fv := fieldView{
+		Name:          src.Name,
+		DeltaName:     prefixSet + src.Name,
+		DeltaType:     deltaType,
+		SourceTypeStr: types.TypeString(src.Typ, ctx.qualifier),
+	}
+	needsReflect := false
+	// ShapePointer (*T): nil-equivalence + dereferenced-value comparison (R-27, E-02).
+	if src.Shape == ShapePointer {
+		fv.IsPointer = true
+		pointeeT := src.Typ.Underlying().(*types.Pointer).Elem()
+		if !types.Comparable(pointeeT) {
+			fv.PointeeUseReflectEq = true
+			needsReflect = true
+		}
+	} else if !types.Comparable(src.Typ) {
+		fv.UseReflectEq = true
+		needsReflect = true
+	}
+	return fieldBuildResult{FV: fv, NeedsReflect: needsReflect}, nil
+}
+
 // buildNestedTypeView constructs the template view for one delta.nested
 // companion type U. It recursively visits any delta.nested sub-fields of U,
 // collecting their companion views in bottom-up order (deepest first) so that
@@ -1093,6 +1229,14 @@ func buildNestedTypeView(
 		EmitMethod:    emitMethod,
 	}
 
+	ctx := fieldBuildCtx{
+		qualifier:  qualifier,
+		emitMethod: emitMethod,
+		parentName: typeName,
+		visited:    visited,
+		inPath:     inPath,
+	}
+
 	var additional []nestedTypeView
 
 	for i := 0; i < st.NumFields(); i++ {
@@ -1110,10 +1254,10 @@ func buildNestedTypeView(
 				"nested type %s field %s: parsing eddt:%q: %w", typeName, field.Name(), rawTag, err)
 		}
 
-		// Suppressed fields: propagated in Apply, absent from TDelta and Diff.
-		if tag.Kind == TagKindOmit || tag.Kind == TagKindRetired {
-			nv.Fields = append(nv.Fields, fieldView{Name: field.Name(), Suppressed: true})
-			continue
+		if tag.Clearable {
+			return nestedTypeView{}, nil, fmt.Errorf(
+				"nested type %s field %s: eddt:%q inside a delta.nested type is not yet supported",
+				typeName, field.Name(), tagDeltaClearable)
 		}
 
 		shape, err := classifyShape(field.Type())
@@ -1122,80 +1266,23 @@ func buildNestedTypeView(
 				"nested type %s field %s: %w", typeName, field.Name(), err)
 		}
 
-		if tag.Kind == TagKindNested {
-			if tag.Clearable {
-				return nestedTypeView{}, nil, fmt.Errorf(
-					"nested type %s field %s: eddt:\"delta.clearable\" inside a delta.nested type is not yet supported",
-					typeName, field.Name())
-			}
-			if shape == ShapeSlice {
-				goType := field.Type()
-				sliceT := goType.Underlying().(*types.Slice)
-				sliceStr := types.TypeString(goType, qualifier)
-				elemStr := types.TypeString(sliceT.Elem(), qualifier)
-				fv := fieldView{
-					Name:                  field.Name(),
-					DeltaName:             prefixAdded + field.Name(),
-					DeltaType:             sliceStr,
-					IsSliceNested:         true,
-					SliceRemovedName:      prefixRemoved + field.Name(),
-					SliceElemType:         elemStr,
-					SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
-					SourceTypeStr:         sliceStr,
-				}
-				nv.Fields = append(nv.Fields, fv)
-				nv.DiffFields = append(nv.DiffFields, fv)
-				if fv.SliceElemUseReflectEq {
-					nv.NeedsReflect = true
-				}
-				continue
-			}
-			if shape == ShapeMap {
-				mapT := field.Type().Underlying().(*types.Map)
-				keyStr := types.TypeString(mapT.Key(), qualifier)
-				mapStr := types.TypeString(field.Type(), qualifier)
-				fv := fieldView{
-					Name:                 field.Name(),
-					DeltaName:            prefixUpdated + field.Name(),
-					DeltaType:            mapStr,
-					IsMapNested:          true,
-					MapRemovedName:       prefixRemoved + field.Name(),
-					MapKeyType:           keyStr,
-					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
-					SourceTypeStr:        mapStr,
-				}
-				nv.Fields = append(nv.Fields, fv)
-				nv.DiffFields = append(nv.DiffFields, fv)
-				if fv.MapValueUseReflectEq {
-					nv.NeedsReflect = true
-				}
-				continue
-			}
-			named, ok := field.Type().(*types.Named)
-			if !ok {
-				return nestedTypeView{}, nil, fmt.Errorf(
-					"nested type %s field %s: delta.nested requires a named type",
-					typeName, field.Name())
-			}
-			subTypeName := named.Obj().Name()
-			qualifiedSubTypeName := types.TypeString(named, qualifier)
-			nestedFuncName, nestedDiffFuncName := "", ""
-			if !emitMethod {
-				nestedFuncName = prefixApply + subTypeName
-				nestedDiffFuncName = prefixDiff + subTypeName
-			}
-			fv := fieldView{
-				Name:               field.Name(),
-				DeltaName:          field.Name(),
-				DeltaType:          subTypeName + suffixDelta,
-				IsNested:           true,
-				NestedFuncName:     nestedFuncName,
-				NestedDiffFuncName: nestedDiffFuncName,
-				SourceTypeStr:      qualifiedSubTypeName,
-			}
-			nv.Fields = append(nv.Fields, fv)
-			nv.DiffFields = append(nv.DiffFields, fv)
+		src := fieldSource{Name: field.Name(), Typ: field.Type(), Tag: tag, Shape: shape}
+		res, err := buildFieldView(src, ctx)
+		if err != nil {
+			return nestedTypeView{}, nil, fmt.Errorf("nested type %s field %s: %w", typeName, field.Name(), err)
+		}
 
+		if res.Suppressed {
+			nv.Fields = append(nv.Fields, res.FV)
+			continue
+		}
+
+		// Struct-nested: caller owns cycle detection and recursion.
+		if res.IsNested {
+			nv.Fields = append(nv.Fields, res.FV)
+			nv.DiffFields = append(nv.DiffFields, res.FV)
+			subTypeName := res.SubTypeName
+			named := res.SubNamed
 			if inPath[subTypeName] {
 				return nestedTypeView{}, nil, fmt.Errorf(
 					"delta.nested type chain forms a cycle at %s (§3.3.2)", subTypeName)
@@ -1204,7 +1291,8 @@ func buildNestedTypeView(
 				visited[subTypeName] = true
 				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSubTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				qualifiedSub := types.TypeString(named, qualifier)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSub, subSt, qualifier, emitMethod, visited, inPath)
 				delete(inPath, subTypeName)
 				if err != nil {
 					return nestedTypeView{}, nil, err
@@ -1218,30 +1306,11 @@ func buildNestedTypeView(
 			continue
 		}
 
-		// Atomic field (TagKindNone or TagKindCommutative): pointer-wrap the source type.
-		deltaType := types.TypeString(types.NewPointer(field.Type()), qualifier)
-		fv := fieldView{
-			Name:          field.Name(),
-			DeltaName:     prefixSet + field.Name(),
-			DeltaType:     deltaType,
-			SourceTypeStr: types.TypeString(field.Type(), qualifier),
-		}
-		// ShapePointer (*T) uses nil-equivalence + dereferenced-value comparison (R-27,
-		// E-02). Other non-comparable types use reflect.DeepEqual; scalars and simple
-		// structs use != directly.
-		if shape == ShapePointer {
-			fv.IsPointer = true
-			pointeeT := field.Type().Underlying().(*types.Pointer).Elem()
-			if !types.Comparable(pointeeT) {
-				fv.PointeeUseReflectEq = true
-				nv.NeedsReflect = true
-			}
-		} else if !types.Comparable(field.Type()) {
-			fv.UseReflectEq = true
+		nv.Fields = append(nv.Fields, res.FV)
+		nv.DiffFields = append(nv.DiffFields, res.FV)
+		if res.NeedsReflect {
 			nv.NeedsReflect = true
 		}
-		nv.Fields = append(nv.Fields, fv)
-		nv.DiffFields = append(nv.DiffFields, fv)
 	}
 
 	return nv, additional, nil
@@ -1443,91 +1512,41 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 	visited := make(map[string]bool) // dedup set for nested companion types (N-01 req 09)
 	inPath := make(map[string]bool)  // active DFS ancestry chain for cycle detection (N-02)
 
+	ctx := fieldBuildCtx{
+		qualifier:  qualifier,
+		emitMethod: emitMethod,
+		parentName: ps.Name,
+		visited:    visited,
+		inPath:     inPath,
+	}
+
 	for _, f := range ps.Fields {
-		// Presence-axis: omit/retired fields are suppressed on the Delta side
-		// but still appear in Fields so the Apply template emits result.F = s.F.
-		if f.Tag.Kind == TagKindOmit || f.Tag.Kind == TagKindRetired {
-			sv.Fields = append(sv.Fields, fieldView{Name: f.Name, Suppressed: true})
+		// CL-05..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
+		// Handled before the shared dispatch since it accumulates directly into sv.
+		if f.Tag.Kind == TagKindNested && f.Tag.Clearable {
+			if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath); err != nil {
+				return snapshotView{}, err
+			}
 			continue
 		}
 
-		// N-01/N-03/N-04: delta.nested struct-value → companion type (N-01);
-		// map → UpdatedX/RemovedX encoding (N-03); slice → AddedX/RemovedX set-diff (N-04).
-		// CL-05..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
-		if f.Tag.Kind == TagKindNested {
-			if f.Tag.Clearable {
-				if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath); err != nil {
-					return snapshotView{}, err
-				}
-				continue
-			}
-			if f.Shape == ShapeSlice {
-				sliceT := f.GoType.Underlying().(*types.Slice)
-				sliceStr := types.TypeString(f.GoType, qualifier)
-				elemStr := types.TypeString(sliceT.Elem(), qualifier)
-				fv := fieldView{
-					Name:                  f.Name,
-					DeltaName:             prefixAdded + f.Name,
-					DeltaType:             sliceStr,
-					IsSliceNested:         true,
-					SliceRemovedName:      prefixRemoved + f.Name,
-					SliceElemType:         elemStr,
-					SliceElemUseReflectEq: !types.Comparable(sliceT.Elem()),
-					SourceTypeStr:         sliceStr,
-				}
-				sv.Fields = append(sv.Fields, fv)
-				sv.DiffFields = append(sv.DiffFields, fv)
-				if fv.SliceElemUseReflectEq {
-					sv.NeedsReflect = true
-				}
-				continue
-			}
-			if f.Shape == ShapeMap {
-				mapT := f.GoType.Underlying().(*types.Map)
-				keyStr := types.TypeString(mapT.Key(), qualifier)
-				mapStr := types.TypeString(f.GoType, qualifier)
-				fv := fieldView{
-					Name:                 f.Name,
-					DeltaName:            prefixUpdated + f.Name,
-					DeltaType:            mapStr,
-					IsMapNested:          true,
-					MapRemovedName:       prefixRemoved + f.Name,
-					MapKeyType:           keyStr,
-					MapValueUseReflectEq: !types.Comparable(mapT.Elem()),
-					SourceTypeStr:        mapStr,
-				}
-				sv.Fields = append(sv.Fields, fv)
-				sv.DiffFields = append(sv.DiffFields, fv)
-				if fv.MapValueUseReflectEq {
-					sv.NeedsReflect = true
-				}
-				continue
-			}
-			named, ok := f.GoType.(*types.Named)
-			if !ok {
-				return snapshotView{}, fmt.Errorf(
-					"field %s.%s: delta.nested requires a named type (anonymous struct types are not supported)",
-					ps.Name, f.Name)
-			}
-			subTypeName := named.Obj().Name()
-			qualifiedSubTypeName := types.TypeString(named, qualifier)
-			nestedFuncName, nestedDiffFuncName := "", ""
-			if !emitMethod {
-				nestedFuncName = prefixApply + subTypeName
-				nestedDiffFuncName = prefixDiff + subTypeName
-			}
-			fv := fieldView{
-				Name:               f.Name,
-				DeltaName:          f.Name,
-				DeltaType:          subTypeName + suffixDelta,
-				IsNested:           true,
-				NestedFuncName:     nestedFuncName,
-				NestedDiffFuncName: nestedDiffFuncName,
-				SourceTypeStr:      qualifiedSubTypeName,
-			}
-			sv.Fields = append(sv.Fields, fv)
-			sv.DiffFields = append(sv.DiffFields, fv)
+		src := fieldSource{Name: f.Name, Typ: f.GoType, Tag: f.Tag, Shape: f.Shape}
+		res, err := buildFieldView(src, ctx)
+		if err != nil {
+			return snapshotView{}, fmt.Errorf("field %s.%s: %w", ps.Name, f.Name, err)
+		}
 
+		if res.Suppressed {
+			sv.Fields = append(sv.Fields, res.FV)
+			continue
+		}
+
+		// Struct-nested: caller owns cycle detection and recursion (N-01/N-02).
+		if res.IsNested {
+			sv.Fields = append(sv.Fields, res.FV)
+			sv.DiffFields = append(sv.DiffFields, res.FV)
+			subTypeName := res.SubTypeName
+			named := res.SubNamed
 			if inPath[subTypeName] {
 				return snapshotView{}, fmt.Errorf(
 					"field %s.%s: delta.nested type chain forms a cycle at %s (§3.3.2)",
@@ -1537,7 +1556,8 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 				visited[subTypeName] = true
 				inPath[subTypeName] = true
 				subSt, _ := named.Underlying().(*types.Struct)
-				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSubTypeName, subSt, qualifier, emitMethod, visited, inPath)
+				qualifiedSub := types.TypeString(named, qualifier)
+				subView, subExtra, err := buildNestedTypeView(subTypeName, qualifiedSub, subSt, qualifier, emitMethod, visited, inPath)
 				delete(inPath, subTypeName)
 				if err != nil {
 					return snapshotView{}, fmt.Errorf("field %s.%s: %w", ps.Name, f.Name, err)
@@ -1551,35 +1571,13 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			continue
 		}
 
-		// TagKindNone and TagKindCommutative both emit as atomic (§9.5).
-		// Render the Delta-side type as *<GoType>; one pointer wrap covers all shapes.
-		deltaType := types.TypeString(types.NewPointer(f.GoType), qualifier)
-		sourceTypeStr := types.TypeString(f.GoType, qualifier)
-
-		fv := fieldView{
-			Name:          f.Name,
-			DeltaName:     prefixSet + f.Name,
-			DeltaType:     deltaType,
-			SourceTypeStr: sourceTypeStr,
-		}
-		// ShapePointer (*T) uses nil-equivalence + dereferenced-value comparison (R-27,
-		// E-02). Other non-comparable types use reflect.DeepEqual; scalars and simple
-		// structs use != directly.
-		if f.Shape == ShapePointer {
-			fv.IsPointer = true
-			pointeeT := f.GoType.Underlying().(*types.Pointer).Elem()
-			if !types.Comparable(pointeeT) {
-				fv.PointeeUseReflectEq = true
-				sv.NeedsReflect = true
-			}
-		} else if !types.Comparable(f.GoType) {
-			fv.UseReflectEq = true
-			sv.NeedsReflect = true
-		}
-		sv.Fields = append(sv.Fields, fv)
+		sv.Fields = append(sv.Fields, res.FV)
 		// DiffFields excludes suppressed fields so the Diff template emits no body
 		// line for them (EM-03).
-		sv.DiffFields = append(sv.DiffFields, fv)
+		sv.DiffFields = append(sv.DiffFields, res.FV)
+		if res.NeedsReflect {
+			sv.NeedsReflect = true
+		}
 	}
 
 	return sv, nil
