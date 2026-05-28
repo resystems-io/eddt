@@ -734,7 +734,7 @@ default:
 }{{else}}{
 	__inner := {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})
 	if !__inner.IsEmpty() {
-		if len(b.{{.Name}}) == 0 {
+		if b.{{.Name}} == nil {
 			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpRetract}
 		} else {
 			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpAssert, Value: __inner}

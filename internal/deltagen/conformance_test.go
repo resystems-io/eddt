@@ -1236,37 +1236,20 @@ func toSortedUnique(ss []string) []string {
 	return out
 }
 
-// normTags normalizes an empty-but-non-nil map to nil.
-//
-// The clearable-map Diff currently uses len(m)==0 (nil OR empty) as the
-// "zero composite" predicate → OpRetract → Apply produces nil.  Round-trip
-// equality must therefore treat nil and empty map as equivalent.
-//
-// TODO: tighten the Diff predicate to b.X==nil only (Option A) so that an
-// empty-but-non-nil map goes through the inner-diff path instead of OpRetract.
-// When that is done, remove normTags and replace with direct reflect.DeepEqual
-// (the nil→empty no-op case will still need normalization, but the
-// quick-generated empty-map case will no longer reach OpRetract).
-func normTags(m map[string]string) map[string]string {
-	if len(m) == 0 {
-		return nil
-	}
-	return m
-}
-
 // snapshotEqual reports whether got and b satisfy the correct invariant:
 //
 //   - Header:   reflect.DeepEqual (full; Provenance is nil on both sides).
 //   - Key:      == (fixed string, same in both).
 //   - Location: reflect.DeepEqual (struct value; OpAssert carries inner AddressDelta).
-//   - Tags:     normTags equality (nil/empty-map equivalent; E-17 "cleared ≙ nil").
+//   - Tags:     reflect.DeepEqual (direct; Option A ensures nil-only triggers OpRetract,
+//               and testing/quick never generates nil maps, so all quick cases round-trip exactly).
 //   - Groups:   toSortedUnique equality (nil/empty-slice equivalent; set-membership N-04 E-15).
 //   - Count:    == (atomic scalar).
 func snapshotEqual(got, b clearable_composite.ClearableCompositeSnapshot) bool {
 	return reflect.DeepEqual(got.Header, b.Header) &&
 		got.Key == b.Key &&
 		reflect.DeepEqual(got.Location, b.Location) &&
-		reflect.DeepEqual(normTags(got.Tags), normTags(b.Tags)) &&
+		reflect.DeepEqual(got.Tags, b.Tags) &&
 		reflect.DeepEqual(toSortedUnique(got.Groups), toSortedUnique(b.Groups)) &&
 		got.Count == b.Count
 }
@@ -1430,9 +1413,13 @@ func toSortedUnique(ss []string) []string {
 	return out
 }
 
-// normTags normalizes an empty-but-non-nil map to nil.
-// Clearable-map Diff currently uses len(m)==0 as "zero composite" → OpRetract → nil.
-// TODO: remove once Diff predicate is tightened to b.X==nil only (Option A).
+// normTags normalizes an empty-but-non-nil map to nil for comparison.
+//
+// The coalesce seed s0 has nil Tags.  When all deltas in the fold are OpIgnore
+// for Tags (e.g. nil→{}→{}→{} chains produce empty inner diffs), the coalesced
+// result preserves nil while sN.Tags is an empty-but-non-nil map from
+// testing/quick.  nil and {} are semantically equivalent per E-17, so normTags
+// equalizes them for the fold-equivalence check.
 func normTags(m map[string]string) map[string]string {
 	if len(m) == 0 {
 		return nil
@@ -1441,7 +1428,7 @@ func normTags(m map[string]string) map[string]string {
 }
 
 // snapshotEqual reports whether got and want satisfy the correct invariant:
-// full equality for Header, Key, Location, Count; normTags for Tags (E-17);
+// full equality for Header, Key, Location, Count; normTags for Tags (E-17 nil/empty fold edge);
 // set-membership for Groups (N-04 E-15).
 func snapshotEqual(got, want clearable_composite.ClearableCompositeSnapshot) bool {
 	return reflect.DeepEqual(got.Header, want.Header) &&
@@ -1951,6 +1938,49 @@ func TestTruthTable_All(t *testing.T) {
 		}
 	})
 
+	// Option A: empty-but-non-nil is not nil, so {k:v}→{} uses inner diff (OpAssert), not OpRetract.
+	t.Run("Tags_nonNilToEmpty", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, map[string]string{"k": "v"}, baseGroups)
+		b := mkSnap(2, baseLocation, map[string]string{}, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpAssert {
+			t.Errorf("Tags.Op = %v, want OpAssert", d.Tags.Op)
+		}
+		if d.Tags.Value.IsEmpty() {
+			t.Errorf("Tags.Value.IsEmpty() = true, want non-empty inner delta (k removed)")
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if !reflect.DeepEqual(got.Tags, b.Tags) {
+			t.Errorf("Apply Tags = %v, want %v (empty non-nil)", got.Tags, b.Tags)
+		}
+	})
+
+	// Option A: nil→{} produces an empty inner diff → OpIgnore (nil/empty no-op).
+	t.Run("Tags_nilToEmpty", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, nil, baseGroups)
+		b := mkSnap(2, baseLocation, map[string]string{}, baseGroups)
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Tags.Op != eddt.OpIgnore {
+			t.Errorf("Tags.Op = %v, want OpIgnore (empty inner diff; nil/empty are equivalent)", d.Tags.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if got.Tags != nil {
+			t.Errorf("Apply Tags = %v, want nil (OpIgnore preserved nil)", got.Tags)
+		}
+	})
+
 	// ── Groups (slice clearable) ─────────────────────────────────────────────
 
 	t.Run("Groups_equal", func(t *testing.T) {
@@ -2050,6 +2080,52 @@ func TestTruthTable_All(t *testing.T) {
 		}
 		if !hasY || hasX {
 			t.Errorf("Apply Groups = %v, want {y} (set-membership)", got.Groups)
+		}
+	})
+
+	// Option A: [x]→[] uses inner diff (removes x → OpAssert), not OpRetract.
+	t.Run("Groups_nonNilToEmpty", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
+		b := mkSnap(2, baseLocation, baseTags, []string{})
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpAssert {
+			t.Errorf("Groups.Op = %v, want OpAssert", d.Groups.Op)
+		}
+		if d.Groups.Value.IsEmpty() {
+			t.Errorf("Groups.Value.IsEmpty() = true, want non-empty inner delta (x removed)")
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		for _, g := range got.Groups {
+			if g == "x" {
+				t.Errorf("Apply Groups = %v, want empty (x removed)", got.Groups)
+				break
+			}
+		}
+	})
+
+	// Option A: nil→[] produces an empty inner diff → OpIgnore (nil/empty no-op).
+	t.Run("Groups_nilToEmpty", func(t *testing.T) {
+		a := mkSnap(1, baseLocation, baseTags, nil)
+		b := mkSnap(2, baseLocation, baseTags, []string{})
+		d, err := clearable_composite.Diff(a, b)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if d.Groups.Op != eddt.OpIgnore {
+			t.Errorf("Groups.Op = %v, want OpIgnore (empty inner diff; nil/empty are equivalent)", d.Groups.Op)
+		}
+		got, err := clearable_composite.Apply(a, d)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if got.Groups != nil {
+			t.Errorf("Apply Groups = %v, want nil (OpIgnore preserved nil)", got.Groups)
 		}
 	})
 }
