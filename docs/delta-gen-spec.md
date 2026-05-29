@@ -21,7 +21,7 @@ the canonical vocabulary. The high-level needs that this generator
 contributes to are listed in [eddt-needs.md](eddt-needs.md) and
 traced upward from the needs in §3 below.
 
-**Status:** Draft v1.0 — Architecture and Requirements sections
+**Status:** Draft v1.1 — Audit pass: redundancy culled, A4 traces refined
 complete.
 
 ---
@@ -57,7 +57,8 @@ complete.
   - [8.3 Output formatting (R-DG-021, R-DG-022)](#83-output-formatting-r-dg-021-r-dg-022)
   - [8.4 reflect usage (N-DG-005)](#84-reflect-usage-n-dg-005)
   - [8.5 Cross-package mode and unexported fields (R-DG-016)](#85-cross-package-mode-and-unexported-fields-r-dg-016)
-  - [8.6 Verbose flag](#86-verbose-flag)
+  - [8.6 Nested companion type emission ordering (R-DG-021)](#86-nested-companion-type-emission-ordering-r-dg-021)
+  - [8.7 Verbose flag](#87-verbose-flag)
 
 <!-- /TOC -->
 
@@ -677,7 +678,7 @@ offending Snapshot type.
 > entity-key candidate with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-004` Chain Safety
 - **Source (A5):** Upstream spec §4.6; observed implementation (`parseKeyField`)
 - **Rationale (A1):** `EntityID` hashing requires a single, unambiguous source of entity identity; a missing key leaves entity routing undefined, and multiple keys make the hash input ambiguous across generator invocations.
 - **V&V method (A2):** Test
@@ -813,51 +814,19 @@ properties of the artefacts that downstream code binds to.
 
 *In Table 1: `<F>` denotes the payload field name from `T`. `<U>Delta`
 denotes the companion Delta type generated for the nested struct type
-`U`. `<F>SliceDelta` and `<F>MapDelta` are wrapper types emitted
-alongside `TDelta` (see R-DG-018).*
+`U`. `<F>SliceDelta` and `<F>MapDelta` are named struct types the Code
+Emitter SHALL emit alongside `TDelta`; their names SHALL be formed by
+appending `SliceDelta` or `MapDelta` to the payload field name `<F>`
+respectively.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-005` Operational Performance
+- **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-002` Cross-Layer Schema Harmonisation; `N-DG-005` Operational Performance
 - **Source (A5):** Upstream spec §5; R-01, R-02, R-03, R-07, N-01, N-03, N-04, CL-01; observed implementation (emission table)
 - **Rationale (A1):** The field representation is the core output contract for downstream consumers; any deviation from Table 1 is a breaking change for code that reads or writes the generated Delta type.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
-
-#### <a id="r-dg-017"></a>`R-DG-017` — Nested companion type emission ordering
-
-> *The Code Emitter SHALL emit companion Delta types for nested struct
-> types before any type that references them. When the same nested
-> struct type is referenced from multiple Snapshot fields or from
-> multiple Snapshot targets in a single output file, its companion
-> Delta type SHALL be emitted exactly once.*
-
-- **Type (A38):** Functional
-- **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** C-05; observed implementation (`buildNestedTypeView`)
-- **Rationale (A1):** Go requires type declarations to precede their use in the same source file; emitting a referencing type before its dependency produces a compile error.
-- **V&V method (A2):** Compile check
-- **Allocation (A8):** `S-DG-02` Code Emitter
-- **Priority (A32):** P0
-- **Criticality (A33):** High
-
-#### <a id="r-dg-018"></a>`R-DG-018` — Clearable wrapper types
-
-> *When `delta.nested` and `delta.clearable` are combined on a slice
-> or map payload field `F`, the Code Emitter SHALL emit a named
-> wrapper struct type alongside `TDelta`. The wrapper type SHALL be
-> named `<F>SliceDelta` for a `[]T` field and `<F>MapDelta` for a
-> `map[K]V` field.*
-
-- **Type (A38):** Functional
-- **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-004` Chain Safety
-- **Source (A5):** CL-05; observed implementation (`nestedKindSliceWrapper`, `nestedKindMapWrapper`)
-- **Rationale (A1):** `runtime.FieldDelta[T]` requires a concrete, named inner type `T`; the wrapper type provides the required name for slice and map composites that lack a user-defined inner Delta type.
-- **V&V method (A2):** Compile check
-- **Allocation (A8):** `S-DG-02` Code Emitter
-- **Priority (A32):** P1
-- **Criticality (A33):** High
 
 #### <a id="r-dg-019"></a>`R-DG-019` — Emission modes
 
@@ -908,6 +877,7 @@ alongside `TDelta` (see R-DG-018).*
 - **Allocation (A8):** `S-DG-02` Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
+- **Additional comments (A37):** Go does not permit duplicate top-level type declarations within the same package; this compilability constraint subsumes the single-emission obligation for shared nested companion types (each companion Delta type may appear at most once in the generated output, otherwise R-DG-021 is violated). The current implementation's convention of emitting nested companion types in dependency order before their first use is described in §8.
 
 #### <a id="r-dg-022"></a>`R-DG-022` — Byte-identical regeneration
 
@@ -971,7 +941,7 @@ defers to), unless otherwise noted.
 > `Apply(a, Diff(a, aprime))` SHALL equal `aprime`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `N-DG-004` Chain Safety
+- **Parent need (A4):** `N-DG-004` Chain Safety; `N-DG-005` Operational Performance
 - **Source (A5):** Upstream spec §8.2; E-06
 - **Rationale (A1):** A `Diff` that emits spurious field updates for equal payloads wastes wire bandwidth, triggers needless downstream processing, and violates the minimality invariant on which delta compaction (Coalesce) relies.
 - **V&V method (A2):** Analysis
@@ -1160,10 +1130,10 @@ struct fields, `nil` for map and slice fields).*
 #### <a id="r-dg-034"></a>`R-DG-034` — EntityID content-determination
 
 > *`EntityID(s)` SHALL compute a deterministic value from the bytes
-> of the entity-key field(s) alone. When a Snapshot type has more
-> than one entity-key field (a struct-valued key), the fields SHALL
-> be hashed in lexicographic order of their Go field names,
-> independent of their declaration order in the source struct.*
+> of the entity-key field alone. When the entity-key field has a
+> struct type, its constituent Go fields SHALL be hashed in
+> lexicographic order of their Go field names, independent of their
+> declaration order in the source struct.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-003` System Traceability; `N-DG-004` Chain Safety
@@ -1247,29 +1217,42 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-039"></a>`R-DG-039` — Cross-package and key-field flags
+#### <a id="r-dg-039"></a>`R-DG-039` — Cross-package mode flags
 
-> *The Generator CLI SHALL accept:*
-> *`--pkg-name` / `-n` to override the output package name; when the
-> supplied name differs from the source package name, cross-package
-> mode is activated and method-wrapper emission is suppressed;*
-> *`--pkg-alias` / `-a` (repeatable, in `importpath=alias` form) to
-> supply import aliases for the generated import block;*
-> *`--key-field` to override the entity-key field for a named
-> Snapshot type, in `FieldName` or `StructName=FieldName` form.
-> Duplicate or ambiguous `--key-field` values SHALL be rejected with
-> a diagnostic.*
+> *The Generator CLI SHALL accept `--pkg-name` / `-n` to override the
+> output package name. When the supplied name differs from the source
+> package name, cross-package mode SHALL be activated and method-wrapper
+> emission SHALL be suppressed. The CLI SHALL accept `--pkg-alias` /
+> `-a` (repeatable, in `importpath=alias` form) to supply import aliases
+> for the generated import block.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-002` Cross-Layer Schema Harmonisation
-- **Source (A5):** C-05 (cross-package); observed implementation (`parsePkgAliases`, `parseKeyFields`)
-- **Rationale (A1):** Cross-package generation is required when the Delta type must live in a different package from the Snapshot (e.g. a public API package); the key-field override accommodates Snapshots whose entity key is embedded in a struct field rather than tagged inline.
+- **Source (A5):** C-05 (cross-package); observed implementation (`parsePkgAliases`)
+- **Rationale (A1):** Cross-package generation is required when the Delta type must live in a different package from the Snapshot (e.g. a public API package); import aliases resolve ambiguous package names in the generated import block.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-040"></a>`R-DG-040` — Error reporting and exit status
+#### <a id="r-dg-040"></a>`R-DG-040` — Key-field override flag
+
+> *The Generator CLI SHALL accept `--key-field` to override the
+> entity-key field for a named Snapshot type, in `FieldName` or
+> `StructName=FieldName` form. Duplicate or ambiguous `--key-field`
+> values for the same Snapshot type SHALL be rejected with a
+> diagnostic.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`parseKeyFields`)
+- **Rationale (A1):** Some Snapshots have their entity key embedded in a struct field that cannot be annotated with `entity.key` (e.g. a shared embedded type); the override provides an escape hatch that keeps the Snapshot struct free of generator-specific tags.
+- **V&V method (A2):** Test
+- **Allocation (A8):** `S-DG-04` Generator CLI
+- **Priority (A32):** P1
+- **Criticality (A33):** Moderate
+
+#### <a id="r-dg-041"></a>`R-DG-041` — Error reporting and exit status
 
 > *On any failure to parse, validate, or emit a Snapshot target, the
 > Generator CLI SHALL exit with a non-zero status code. In multi-file
@@ -1302,7 +1285,7 @@ Errata are identified `E-DG-NNN`. Each erratum records:
 - The resolution (or *open*, with the date opened).
 - The resolution date once closed.
 
-At v1.0 the register is empty.
+At v1.1 the register is empty.
 
 | ID | Affected | Description | Resolution | Date |
 |:---|:---------|:------------|:-----------|:-----|
@@ -1391,9 +1374,9 @@ The Code Emitter passes generated source through `go/format.Source`
 before writing it to disk. If formatting fails, the raw source is
 surfaced in the error so the author can diagnose template regressions.
 Determinism (R-DG-022) is achieved by construction: the template
-iterates over fields in declaration order and sorts nested-type
-dependencies topologically; no map iteration or goroutine scheduling
-is involved in the output path.
+iterates over fields in declaration order and emits nested-type
+companions in topological dependency order (see §8.6); no map
+iteration or goroutine scheduling is involved in the output path.
 
 ### 8.4 reflect usage (N-DG-005)
 
@@ -1412,7 +1395,19 @@ fields, governed by Table 1 (R-DG-016). This is a consequence of
 Go's package-visibility model: the generated package cannot reference
 unexported identifiers from the source package.
 
-### 8.6 Verbose flag
+### 8.6 Nested companion type emission ordering (R-DG-021)
+
+The current Code Emitter emits nested companion Delta types in
+topological dependency order — a type is emitted before any type that
+references it. This is a convention for readability and diff stability;
+Go's package-level type declarations can appear in any order and the
+compiler resolves them without requiring declaration before use.
+Deduplication (each shared nested companion type appears exactly once
+in the output) is a compilability constraint: Go does not permit
+duplicate top-level type declarations within the same package, so any
+violation of this convention would also violate R-DG-021.
+
+### 8.7 Verbose flag
 
 The Generator CLI provides `--verbose` / `-v`, which raises the
 internal log level from `Warn` to `Info`, surfacing per-stage
