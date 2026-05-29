@@ -1,4 +1,4 @@
-// Package nested_triple is the N-02 three-level nesting fixture. Snapshot →
+// Package nested_triple is the R-DG-009 three-level nesting fixture. Snapshot →
 // Level1 → Level2 → Level3 exercises arbitrary-depth compositional emission.
 // Used by TestEmitTemplate_Nested_Triple.
 package nested_triple

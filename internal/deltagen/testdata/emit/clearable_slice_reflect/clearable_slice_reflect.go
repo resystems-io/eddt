@@ -1,4 +1,4 @@
-// Package clearable_slice_reflect is the CL-05..07 emit fixture for a
+// Package clearable_slice_reflect is the R-DG-016..07 emit fixture for a
 // delta.nested+delta.clearable slice field with a non-comparable element type.
 //
 // The element type ([]byte) is not comparable, so the generated

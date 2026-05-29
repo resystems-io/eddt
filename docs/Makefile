@@ -38,12 +38,13 @@ PDFS = $(SOURCES:.md=.pdf)
 # the X-XXX-NN format expected by refs-linkify. The script scans these
 # for definitions and rewrites references in every source.
 #
-# Currently restricted to eddt-needs.md (N-EDDT-NN / N-ECOL-NN).
+# Currently restricted to eddt-needs.md (N-EDDT-NN / N-ECOL-NN) and
+# delta-gen-spec.md (R-DG-NN / N-DG-NN / E-DG-NN).
 # The arrow-*-refinements.md docs use a different identifier scheme
 # (R1, R2, B1, …) that refs-linkify does not recognise.
-# The delta-gen-refinements.md doc uses flat R-NN identifiers that
-# produce duplicate-definition errors and will be superseded by the
-# forthcoming delta-gen-spec.md with R-DG-NN / N-DG-NN identifiers.
+# delta-gen-refinements.md is a historical record retained in its
+# original R-NN / CL-NN / EM-NN form; its section headers produce
+# duplicate-definition errors when scanned as an index.
 INDEXES = eddt-needs.md \
           delta-gen-spec.md
 
@@ -54,12 +55,9 @@ INDEXES = eddt-needs.md \
 # (rather than waiting for a missing-link to bite at PDF render time
 # or in a downstream PR review).
 #
-# delta-gen-refinements.md is excluded from LINKIFY_SOURCES because it
-# uses a flat R-NN / C-NN / D-NN / E-NN identifier scheme that does
-# not match the X-XXX-NN format refs-linkify recognises; including it
-# generates spurious empty-anchor link targets. It will be re-included
-# once superseded by the forthcoming delta-gen-spec.md with R-DG-NN /
-# N-DG-NN / E-DG-NN identifiers.
+# delta-gen-refinements.md is excluded from LINKIFY_SOURCES: it is a
+# historical record retained in its original R-NN identifier form and
+# should not have its cross-reference block rewritten.
 REFS_LINKIFY    = $(SCRIPTS)/refs-linkify.py
 INDEX_FLAGS     = $(foreach idx,$(INDEXES),--index $(idx))
 LINKIFY_SOURCES = $(filter-out delta-gen-refinements.md,$(SOURCES))

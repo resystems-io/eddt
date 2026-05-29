@@ -1,4 +1,4 @@
-// Package nested_multi is the N-01 deduplication fixture: two delta.nested
+// Package nested_multi is the R-DG-016 deduplication fixture: two delta.nested
 // fields of the same type (Address) and one of a different type (Meta).
 // AddressDelta must be emitted exactly once even though two fields share it.
 package nested_multi

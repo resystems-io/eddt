@@ -1,18 +1,18 @@
 package deltagen
 
 // tag.go implements the eddt: struct tag parser for the delta-gen pipeline.
-// It is the entry point for Phase 3 (T-01 through T-03):
+// It is the entry point for Phase 3 (R-DG-004, R-DG-005 through R-DG-006, R-DG-007):
 //
-//   - T-01 (this file): parse the raw eddt: tag string into a structured
+//   - R-DG-004, R-DG-005 (this file): parse the raw eddt: tag string into a structured
 //     ParsedTag carrying a TagKind and any comma-separated key=value options.
-//   - T-02: wire parseTag into walkFields; validate tag combinations and
+//   - R-DG-006, R-DG-007: wire parseTag into walkFields; validate tag combinations and
 //     per-tag field-shape constraints.
-//   - T-03: migrate all callers to ParsedTag.Kind; consolidate entity.key
+//   - R-DG-006, R-DG-007: migrate all callers to ParsedTag.Kind; consolidate entity.key
 //     and delta.* tag handling onto the same parsed-tag code path.
 //
-// delta.clearable is recognised as a secondary tag (CL-03, Phase 7): it sets
+// delta.clearable is recognised as a secondary tag (R-DG-004, R-DG-007, Phase 7): it sets
 // ParsedTag.Clearable and never occupies ParsedTag.Kind. The Clearable ⟹
-// Nested semantic constraint is enforced by validateTagCombination (CL-04).
+// Nested semantic constraint is enforced by validateTagCombination (R-DG-007).
 
 import (
 	"fmt"
@@ -29,12 +29,12 @@ const (
 
 	// TagKindEntityKey corresponds to eddt:"entity.key". The tagged field is
 	// the entity-key field recognised by parseKeyField (G-04). Wired into the
-	// parse pipeline in T-03.
+	// parse pipeline in R-DG-006, R-DG-007.
 	TagKindEntityKey
 
 	// TagKindNested corresponds to eddt:"delta.nested". The tagged field is
 	// a struct value for which the generator recurses and emits a companion
-	// <T>Delta type (delta-gen spec §9.2; Phase 5 N-01).
+	// <T>Delta type (delta-gen spec §9.2; Phase 5 R-DG-016).
 	TagKindNested
 
 	// TagKindOmit corresponds to eddt:"delta.omit". The tagged field is
@@ -56,8 +56,8 @@ const (
 
 	// TagKindClearable corresponds to eddt:"delta.clearable". It is a SECONDARY
 	// tag: it never occupies ParsedTag.Kind (which holds the single primary tag)
-	// — instead it sets ParsedTag.Clearable. Per Errata E-23 it is admissible
-	// only combined with delta.nested; that constraint is enforced in CL-04.
+	// — instead it sets ParsedTag.Clearable. Per Errata R-DG-007 it is admissible
+	// only combined with delta.nested; that constraint is enforced in R-DG-007.
 	TagKindClearable
 )
 
@@ -102,14 +102,14 @@ func (k TagKind) IsSecondary() bool { return k == TagKindClearable }
 // ParsedTag is the structured result of parsing a single eddt: tag value.
 // It carries the recognised TagKind and any comma-separated key=value options
 // present after the tag value. Unknown option keys are preserved without
-// acting on them (Errata E-07).
+// acting on them (Errata R-DG-005).
 type ParsedTag struct {
 	Kind TagKind
 
 	// Clearable is true when the comma-separated tag list included the
-	// secondary delta.clearable modifier. Per E-23 it is meaningful only
-	// alongside delta.nested (Kind == TagKindNested); CL-04 enforces that
-	// and CL-05 emits the FieldDelta[T] envelope.
+	// secondary delta.clearable modifier. Per R-DG-007 it is meaningful only
+	// alongside delta.nested (Kind == TagKindNested); R-DG-007 enforces that
+	// and R-DG-016 emits the FieldDelta[T] envelope.
 	Clearable bool
 
 	// Options holds the key=value pairs from the comma-separated option list
@@ -129,7 +129,7 @@ type ParsedTag struct {
 // for an absent tag.
 //
 // Each comma-separated part is classified by form:
-//   - Contains "=" → a key=value option (unknown keys preserved per E-07).
+//   - Contains "=" → a key=value option (unknown keys preserved per R-DG-005).
 //   - No "="  → a tag token (looked up via tagKindFor).
 //     Secondary tokens (IsSecondary) set ParsedTag.Clearable (or the
 //     appropriate bool for future secondaries). Primary tokens set Kind;
@@ -139,7 +139,7 @@ type ParsedTag struct {
 //   - An empty raw string produces TagKindNone with no options.
 //   - Recognised primary tags: "entity.key", "delta.nested", "delta.omit",
 //     "delta.retired", "delta.commutative". Anything else is an error.
-//   - Recognised secondary tags: "delta.clearable" (CL-03).
+//   - Recognised secondary tags: "delta.clearable" (R-DG-004, R-DG-007).
 //   - Two primary tokens in one tag value is an error.
 //   - An empty key (e.g. "=value") is an error.
 //   - An empty value (e.g. "k=") is accepted; the key maps to "".
@@ -188,7 +188,7 @@ func parseTag(raw string) (ParsedTag, error) {
 
 // validateTagShape returns an error if a tag is incompatible with a field
 // shape under the harmonised three-axis model (refinements §1.6.3; Errata
-// E-14, E-17, E-18).
+// R-DG-004, R-DG-005, R-DG-006, R-DG-007, R-DG-016, R-DG-007).
 //
 // Baseline rules (this function in Phase 3):
 //   - TagKindNested: requires a composite shape (struct value, slice, map).
@@ -201,8 +201,8 @@ func parseTag(raw string) (ParsedTag, error) {
 //     responsibility, not the tag-shape gate's.
 //   - TagKindNone: no tag, no constraint.
 //
-// CL-04 (Phase 7) extends this function to gate TagKindClearable (admitted
-// on every shape per E-18) and the nested + clearable combination (E-17).
+// R-DG-007 (Phase 7) extends this function to gate TagKindClearable (admitted
+// on every shape per R-DG-007) and the nested + clearable combination (R-DG-007, R-DG-016).
 func validateTagShape(tag ParsedTag, shape FieldShape) error {
 	switch tag.Kind {
 	case TagKindNested:
@@ -217,7 +217,7 @@ func validateTagShape(tag ParsedTag, shape FieldShape) error {
 }
 
 // validateTagCombination enforces the envelope-axis constraint from Errata
-// E-23: a field carrying the secondary delta.clearable modifier MUST also
+// R-DG-007: a field carrying the secondary delta.clearable modifier MUST also
 // carry the primary delta.nested tag. Tri-state is the implicit norm for
 // every other field shape — atomic, pointer, and struct-value fields already
 // distinguish ignore / reset / assert through their generated delta pointer —

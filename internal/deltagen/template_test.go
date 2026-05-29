@@ -1,62 +1,62 @@
 package deltagen
 
-// template_test.go exercises the EM-01 / EM-02 / EM-03 code-emission pipeline:
+// template_test.go exercises the R-DG-015 / R-DG-012, R-DG-013 / R-DG-012, R-DG-013 code-emission pipeline:
 //
 //   - TestBuildSnapshotView: table-driven view-construction unit tests covering
 //     the §1.6.3 atomic-row emission matrix row by row (V01-V09); also checks
-//     Suppressed and UseReflectEq flags (EM-02, EM-03) and KeyName.
+//     Suppressed and UseReflectEq flags (R-DG-012, R-DG-013, R-DG-012, R-DG-013) and KeyName.
 //   - TestBuildSnapshotView_KeyName: asserts sv.KeyName == "Key" for atomic_all.
 //   - TestBuildSnapshotView_NeedsReflect: asserts NeedsReflect aggregate flag.
 //   - TestEmitTemplate_AtomicAll: end-to-end pipeline test against the
 //     atomic_all fixture; asserts TDelta AST shape, Apply function and method
-//     wrapper presence, per-field Apply contributions (EM-02), Diff function
-//     and method wrapper presence, per-field Diff contributions (EM-03).
+//     wrapper presence, per-field Apply contributions (R-DG-012, R-DG-013), Diff function
+//     and method wrapper presence, per-field Diff contributions (R-DG-012, R-DG-013).
 //   - TestEmitTemplate_AtomicDiff_CrossPackage: asserts Diff in cross-package
-//     mode: qualified signature, no method wrapper (E-12, EM-03).
+//     mode: qualified signature, no method wrapper (R-DG-012, R-DG-013, R-DG-019, R-DG-012, R-DG-013).
 //   - TestEmitTemplate_NoReflectImport_AllScalar: asserts that the "reflect"
 //     import is absent when the Snapshot has only scalar fields.
 //   - TestEmitTemplate_ReflectImport_WhenNeeded: asserts that the "reflect"
 //     import is present when non-scalar fields exist.
 //   - TestEmitTemplate_AtomicApply_CrossPackage: asserts Apply in cross-package
-//     mode: qualified signature, no method wrapper (E-12, EM-02).
+//     mode: qualified signature, no method wrapper (R-DG-012, R-DG-013, R-DG-019, R-DG-012, R-DG-013).
 //   - TestEmitTemplate_NestedNotYet: asserts that delta.nested triggers the
 //     Phase-5 sentinel error.
 //   - TestEmitTemplate_CrossPackageQualifier: asserts type-string qualification
 //     in cross-package mode.
-//   - TestEmitTemplate_Nested_Map_SamePkg: asserts N-03 map delta encoding —
+//   - TestEmitTemplate_Nested_Map_SamePkg: asserts R-DG-016 map delta encoding —
 //     UpdatedX/RemovedX fields in TDelta, no companion EntryDelta type, reflect
-//     import absent (Entry is comparable, NR-01); backed by compileCheckEmitNestedMap.
-//   - TestEmitTemplate_Nested_Map_CrossPkg: asserts N-03 cross-package mode —
-//     no method wrappers, map operation fragments present (E-12).
-//   - TestEmitTemplate_Nested_Slice_SamePkg: asserts N-04 slice delta encoding —
+//     import absent (Entry is comparable, R-DG-016); backed by compileCheckEmitNestedMap.
+//   - TestEmitTemplate_Nested_Map_CrossPkg: asserts R-DG-016 cross-package mode —
+//     no method wrappers, map operation fragments present (R-DG-012, R-DG-013, R-DG-019).
+//   - TestEmitTemplate_Nested_Slice_SamePkg: asserts R-DG-016, R-DG-028 slice delta encoding —
 //     AddedX/RemovedX fields in TDelta, no reflect import (comparable elements),
 //     method wrappers present; backed by compileCheckEmitNestedSlice.
-//   - TestEmitTemplate_Nested_Slice_CrossPkg: asserts N-04 cross-package mode —
-//     no method wrappers, AddedX/RemovedX fragments present (E-12).
-//   - TestEmitTemplate_Nested_Slice_Reflect_SamePkg: asserts N-04 non-comparable
+//   - TestEmitTemplate_Nested_Slice_CrossPkg: asserts R-DG-016, R-DG-028 cross-package mode —
+//     no method wrappers, AddedX/RemovedX fragments present (R-DG-012, R-DG-013, R-DG-019).
+//   - TestEmitTemplate_Nested_Slice_Reflect_SamePkg: asserts R-DG-016, R-DG-028 non-comparable
 //     element path — reflect import present, reflect.DeepEqual in generated code;
 //     backed by compileCheckEmitNestedSliceReflect runtime tests (§5.2).
 //   - compileCheckEmit: runs go test in an isolated temp module with a replace
 //     directive; exercises Apply round-trip and HeaderAfterApply error
-//     propagation (EM-02); also exercises Diff round-trip, identity-diff
+//     propagation (R-DG-012, R-DG-013); also exercises Diff round-trip, identity-diff
 //     minimality, partial-diff minimality, and HeaderForDiff error propagation
-//     (EM-03).
-//   - compileCheckEmitNestedMap: isolated-module compile-and-run for N-03;
+//     (R-DG-012, R-DG-013).
+//   - compileCheckEmitNestedMap: isolated-module compile-and-run for R-DG-016;
 //     covers add/remove/update entries, round-trip on Tags and Scores, and
-//     atomic-field coexistence (E-16 upsert semantics).
-//   - compileCheckEmitNestedSlice: isolated-module compile-and-run for N-04;
+//     atomic-field coexistence (R-DG-006, R-DG-016 upsert semantics).
+//   - compileCheckEmitNestedSlice: isolated-module compile-and-run for R-DG-016, R-DG-028;
 //     covers add/remove elements, simultaneous add+remove, round-trip on Names
-//     and Tags, and atomic-field coexistence (E-15 set-diff semantics).
-//   - TestEmitTemplate_Clearable_Struct_SamePkg: asserts CL-05..07 struct shape —
-//     FieldDelta[AddressDelta] field, AddressDelta companion emitted via N-01
+//     and Tags, and atomic-field coexistence (R-DG-006, R-DG-016 set-diff semantics).
+//   - TestEmitTemplate_Clearable_Struct_SamePkg: asserts R-DG-016..07 struct shape —
+//     FieldDelta[AddressDelta] field, AddressDelta companion emitted via R-DG-016
 //     dedup, ApplyAddress/DiffAddress present, Op-switch in Apply, three-branch
 //     in Diff, no reflect import (Address is comparable); backed by
 //     compileCheckEmitClearableStruct tri-state truth table.
-//   - TestEmitTemplate_Clearable_Map_SamePkg: asserts CL-05..07 map shape —
+//   - TestEmitTemplate_Clearable_Map_SamePkg: asserts R-DG-016..07 map shape —
 //     FieldDelta[TagsMapDelta] field, TagsMapDelta wrapper with UpdatedTags/
 //     RemovedTags, IsEmpty/ApplyTagsMapDelta/DiffTagsMapDelta emitted, no reflect;
 //     backed by compileCheckEmitClearableMap.
-//   - TestEmitTemplate_Clearable_Slice_SamePkg: asserts CL-05..07 slice shape —
+//   - TestEmitTemplate_Clearable_Slice_SamePkg: asserts R-DG-016..07 slice shape —
 //     FieldDelta[GroupsSliceDelta] field, GroupsSliceDelta wrapper with
 //     AddedGroups/RemovedGroups, IsEmpty/ApplyGroupsSliceDelta/DiffGroupsSliceDelta,
 //     no reflect; backed by compileCheckEmitClearableSlice.
@@ -66,7 +66,7 @@ package deltagen
 //     present when slice element type is non-comparable ([]byte).
 //   - TestEmitTemplate_NestedOnly_NoFieldDelta: regression guard — nested_map and
 //     nested_slice output must not contain runtime.FieldDelta or IsEmpty tokens
-//     (byte-identical guarantee for CL-05..07).
+//     (byte-identical guarantee for R-DG-016..07).
 //   - compileCheckEmitClearableStruct/Map/Slice: isolated-module compile-and-run
 //     covering the tri-state truth table (OpIgnore/OpRetract/OpAssert via
 //     Diff+Apply) plus round-trip and atomic-field coexistence.
@@ -89,7 +89,7 @@ import (
 
 // TestBuildSnapshotView exercises buildSnapshotView against the atomic_all
 // fixture, verifying the §1.6.3 atomic-row emission matrix row by row.
-// Covers: R-19, E-14, E-15, E-16
+// Covers: R-DG-015, R-DG-004, R-DG-005, R-DG-006, R-DG-006, R-DG-016, R-DG-006, R-DG-016
 func TestBuildSnapshotView(t *testing.T) {
 	// Load and parse the atomic_all fixture; use same-package qualifier.
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
@@ -118,17 +118,17 @@ func TestBuildSnapshotView(t *testing.T) {
 		fieldName           string
 		deltaName           string
 		deltaType           string
-		suppressed          bool // true for delta.omit / delta.retired: in view, Suppressed: true (EM-02)
-		useReflectEq        bool // true when !types.Comparable(GoType): UseReflectEq: true (EM-03, NR-01)
-		isPointer           bool // true for ShapePointer: nil-equivalence + deref comparison (CL-10, R-27)
+		suppressed          bool // true for delta.omit / delta.retired: in view, Suppressed: true (R-DG-012, R-DG-013)
+		useReflectEq        bool // true when !types.Comparable(GoType): UseReflectEq: true (R-DG-012, R-DG-013, R-DG-016)
+		isPointer           bool // true for ShapePointer: nil-equivalence + deref comparison (R-DG-026, R-DG-016)
 		pointeeUseReflectEq bool // true when pointee is non-comparable: reflect.DeepEqual(*a,*b)
 	}{
 		// V01 — ShapeScalar int32: comparable → !=, no reflect.
 		{label: "V01_Scalar", fieldName: "Scalar", deltaName: "SetScalar", deltaType: "*int32"},
-		// V02 — ShapePointer *string: nil-equivalence + *a == *b comparison (CL-10, R-27).
+		// V02 — ShapePointer *string: nil-equivalence + *a == *b comparison (R-DG-026, R-DG-016).
 		// UseReflectEq stays false (pointer identity via != is not used); IsPointer drives its own branch.
 		{label: "V02_Pointer", fieldName: "Pointer", deltaName: "SetPointer", deltaType: "**string", isPointer: true},
-		// V03 — ShapeStructValue Inner{A,B int32}: all-scalar struct, comparable → !=, no reflect (NR-01).
+		// V03 — ShapeStructValue Inner{A,B int32}: all-scalar struct, comparable → !=, no reflect (R-DG-016).
 		{label: "V03_Struct", fieldName: "Struct", deltaName: "SetStruct", deltaType: "*Inner"},
 		// V05 — ShapeSlice []byte: slices are not comparable → reflect.DeepEqual.
 		{label: "V05_Slice", fieldName: "Slice", deltaName: "SetSlice", deltaType: "*[]byte", useReflectEq: true},
@@ -204,8 +204,8 @@ func TestBuildSnapshotView(t *testing.T) {
 }
 
 // TestBuildSnapshotView_KeyName verifies that buildSnapshotView populates
-// sv.KeyName from ps.KeyVar.Name() (EM-02 contract).
-// Covers: R-20
+// sv.KeyName from ps.KeyVar.Name() (R-DG-012, R-DG-013 contract).
+// Covers: R-DG-012
 func TestBuildSnapshotView_KeyName(t *testing.T) {
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 	opts := emitOpts{crossPackage: false}
@@ -223,7 +223,7 @@ func TestBuildSnapshotView_KeyName(t *testing.T) {
 // TestBuildSnapshotView_NeedsReflect verifies that sv.NeedsReflect is true when
 // the fixture has non-scalar fields and false when only scalar / suppressed
 // fields are present.
-// Covers: R-21, E-20
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 	// atomic_all has slice ([]byte) and map (map[string]int32) fields which are
 	// non-comparable and require reflect.DeepEqual → NeedsReflect.
@@ -260,11 +260,11 @@ func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 // TestEmitTemplate_AtomicAll runs the full emit pipeline against the atomic_all
 // fixture, parses the generated file with go/parser, and asserts:
 //   - TDelta struct shape: Header embed, Set* fields, suppressed fields absent.
-//   - Apply function signature and body structure (EM-02).
-//   - Apply method wrapper present (same-package mode, E-12, EM-02).
-//   - Generated file is gofmt-clean (R-11).
+//   - Apply function signature and body structure (R-DG-012, R-DG-013).
+//   - Apply method wrapper present (same-package mode, R-DG-012, R-DG-013, R-DG-019, R-DG-012, R-DG-013).
+//   - Generated file is gofmt-clean (R-DG-037).
 //
-// Covers: R-19, R-20, R-25, E-12, E-14, E-15, E-16
+// Covers: R-DG-015, R-DG-012, R-DG-022, R-DG-012, R-DG-013, R-DG-019, R-DG-004, R-DG-005, R-DG-006, R-DG-006, R-DG-016, R-DG-006, R-DG-016
 func TestEmitTemplate_AtomicAll(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "atomic_all_delta.go")
 
@@ -277,7 +277,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -314,7 +314,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("entity-key field should not appear in TDelta; fields: %v", fields)
 	}
 
-	// ── Apply function shape (EM-02) ──────────────────────────────────────────
+	// ── Apply function shape (R-DG-012, R-DG-013) ──────────────────────────────────────────
 
 	applyFn := findFuncDecl(f, "Apply")
 	if applyFn == nil {
@@ -353,7 +353,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Apply body missing suppressed-field propagation: result.Retired = s.Retired")
 	}
 
-	// ── Diff function shape (EM-03) ───────────────────────────────────────────
+	// ── Diff function shape (R-DG-012, R-DG-013) ───────────────────────────────────────────
 
 	diffFn := findFuncDecl(f, "Diff")
 	if diffFn == nil {
@@ -373,8 +373,8 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Diff body missing runtime.HeaderForDiff(a.Header, b.Header)")
 	}
 
-	// Comparable scalar/struct fields use !=; non-comparable fields use reflect.DeepEqual (NR-01).
-	// Pointer fields use nil-equivalence + dereferenced comparison, NOT plain != (CL-10, R-27).
+	// Comparable scalar/struct fields use !=; non-comparable fields use reflect.DeepEqual (R-DG-016).
+	// Pointer fields use nil-equivalence + dereferenced comparison, NOT plain != (R-DG-026, R-DG-016).
 	// Comparable (!=): Scalar (int32), Struct (Inner{int32,int32}), Commute (int32).
 	// Pointer (*string): nil-equivalence guard + *a.Pointer == *b.Pointer.
 	// Non-comparable (reflect): Slice ([]byte), Map (map[string]int32).
@@ -383,21 +383,21 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 			t.Errorf("Diff body missing != comparison for comparable field %s", name)
 		}
 		if strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
-			t.Errorf("Diff body must not use reflect.DeepEqual for comparable field %s (NR-01)", name)
+			t.Errorf("Diff body must not use reflect.DeepEqual for comparable field %s (R-DG-016)", name)
 		}
 	}
-	// Pointer field: nil-equivalence guard (CL-10). Must NOT use plain identity comparison.
+	// Pointer field: nil-equivalence guard (R-DG-026). Must NOT use plain identity comparison.
 	if strings.Contains(srcStr, "a.Pointer != b.Pointer") {
-		t.Errorf("Diff body must not compare Pointer by identity (pointer address); want nil-equivalence + deref (CL-10)")
+		t.Errorf("Diff body must not compare Pointer by identity (pointer address); want nil-equivalence + deref (R-DG-026)")
 	}
 	if strings.Contains(srcStr, "reflect.DeepEqual(a.Pointer, b.Pointer)") {
-		t.Errorf("Diff body must not use whole-pointer reflect.DeepEqual for Pointer; want deref comparison (CL-10)")
+		t.Errorf("Diff body must not use whole-pointer reflect.DeepEqual for Pointer; want deref comparison (R-DG-026)")
 	}
 	if !strings.Contains(srcStr, "*a.Pointer == *b.Pointer") {
-		t.Errorf("Diff body missing dereferenced pointer comparison *a.Pointer == *b.Pointer (CL-10)")
+		t.Errorf("Diff body missing dereferenced pointer comparison *a.Pointer == *b.Pointer (R-DG-026)")
 	}
 	if !strings.Contains(srcStr, "a.Pointer == nil") {
-		t.Errorf("Diff body missing nil-equivalence guard for Pointer (CL-10)")
+		t.Errorf("Diff body missing nil-equivalence guard for Pointer (R-DG-026)")
 	}
 	for _, name := range []string{"Slice", "Map"} {
 		if !strings.Contains(srcStr, "reflect.DeepEqual(a."+name+", b."+name+")") {
@@ -417,7 +417,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("generated file missing \"reflect\" import")
 	}
 
-	// ── Coalesce function shape (EM-04) ───────────────────────────────────────
+	// ── Coalesce function shape (R-DG-012, R-DG-013) ───────────────────────────────────────
 
 	coalesceFn := findFuncDecl(f, "Coalesce")
 	if coalesceFn == nil {
@@ -444,11 +444,11 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("Coalesce method wrapper body missing 'return Coalesce(s, ds)'")
 	}
 
-	// ── Method wrappers present (same-package mode, E-12) ────────────────────
+	// ── Method wrappers present (same-package mode, R-DG-012, R-DG-013, R-DG-019) ────────────────────
 
 	assertHasMethods(t, f, "AtomicAllSnapshot", []string{"Apply", "Diff", "Coalesce"})
 
-	// ── EntityID function shape (EM-05) ───────────────────────────────────────
+	// ── EntityID function shape (R-DG-034) ───────────────────────────────────────
 	// atomic_all has Key string (raw basic) — function emitted, no method.
 
 	entityIDFn := findFuncDecl(f, "EntityID")
@@ -479,7 +479,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 		t.Errorf("generated file must not import crypto/blake2b directly")
 	}
 
-	// ── No EntityID method for raw-basic key (EM-05, R-24) ───────────────────
+	// ── No EntityID method for raw-basic key (R-DG-034, R-DG-012, R-DG-014) ───────────────────
 
 	if findMethodDecl(f, "string", "EntityID") != nil {
 		t.Errorf("EntityID method must not be emitted for raw-basic key type string")
@@ -491,15 +491,15 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 }
 
 // TestEmitTemplate_Nested_Map_SamePkg verifies end-to-end generation for
-// delta.nested map fields (N-03) in same-package mode:
+// delta.nested map fields (R-DG-016) in same-package mode:
 //   - NestedMapSnapshotDelta carries UpdatedTags/RemovedTags and
-//     UpdatedScores/RemovedScores (E-16 upsert encoding), plus SetCount *int32.
+//     UpdatedScores/RemovedScores (R-DG-006, R-DG-016 upsert encoding), plus SetCount *int32.
 //   - No companion type is emitted for the map value types (V is atomic).
 //   - Apply body references both the removed-keys slice and the updated-entries map.
 //   - Generated file is gofmt-clean and the reflect import is ABSENT: Entry is a
 //     comparable struct (all-scalar fields), so Diff uses != not reflect.DeepEqual.
 //
-// Covers: N-03, E-16, NR-01
+// Covers: R-DG-016, R-DG-006, R-DG-016, R-DG-016
 func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_map_delta.go")
 
@@ -526,7 +526,7 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
 	}
 
-	// NestedMapSnapshotDelta must contain the N-03 map encoding fields.
+	// NestedMapSnapshotDelta must contain the R-DG-016 map encoding fields.
 	deltaFields := assertDeltaShape(t, f, "NestedMapSnapshotDelta",
 		[]string{"UpdatedTags", "RemovedTags", "UpdatedScores", "RemovedScores", "SetCount"})
 	// Raw source field names must not appear in the Delta struct.
@@ -538,7 +538,7 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 
 	// No companion type for the map value type Entry (V is treated atomically).
 	if findStructDecl(f, "EntryDelta") != nil {
-		t.Errorf("EntryDelta must not be emitted: N-03 treats map value type atomically")
+		t.Errorf("EntryDelta must not be emitted: R-DG-016 treats map value type atomically")
 	}
 
 	// Apply body must include the three map-apply steps for each map field.
@@ -549,12 +549,12 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 	}
 
 	// reflect import must be ABSENT: Entry is a comparable struct (all-scalar fields),
-	// so the generated Diff uses != for Scores value comparison (NR-01).
+	// so the generated Diff uses != for Scores value comparison (R-DG-016).
 	if strings.Contains(srcStr, `"reflect"`) {
 		t.Errorf(`unexpected "reflect" import: Entry is comparable, Diff must use != not reflect.DeepEqual`)
 	}
 	if strings.Contains(srcStr, "reflect.DeepEqual") {
-		t.Errorf("unexpected reflect.DeepEqual in generated code: Entry is comparable (NR-01)")
+		t.Errorf("unexpected reflect.DeepEqual in generated code: Entry is comparable (R-DG-016)")
 	}
 
 	t.Run("CompileCheck", func(t *testing.T) {
@@ -562,10 +562,10 @@ func TestEmitTemplate_Nested_Map_SamePkg(t *testing.T) {
 	})
 }
 
-// TestEmitTemplate_Nested_Map_CrossPkg verifies N-03 generation in cross-package
-// mode: no method wrappers are emitted (E-12), and the Apply/Diff function bodies
+// TestEmitTemplate_Nested_Map_CrossPkg verifies R-DG-016 generation in cross-package
+// mode: no method wrappers are emitted (R-DG-012, R-DG-013, R-DG-019), and the Apply/Diff function bodies
 // still contain the map-copy/delete/upsert logic.
-// Covers: N-03, E-12
+// Covers: R-DG-016, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_map_cross_delta.go")
 
@@ -601,7 +601,7 @@ func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
 		t.Errorf("Diff function not found in cross-pkg output")
 	}
 
-	// Method wrappers must NOT be emitted (E-12).
+	// Method wrappers must NOT be emitted (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "NestedMapSnapshot", "Apply") != nil {
 		t.Errorf("Apply method wrapper must not be emitted in cross-pkg mode")
 	}
@@ -618,15 +618,15 @@ func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
 }
 
 // TestEmitTemplate_Nested_Slice_SamePkg verifies end-to-end generation for
-// delta.nested slice fields (N-04) in same-package mode:
+// delta.nested slice fields (R-DG-016, R-DG-028) in same-package mode:
 //   - NestedSliceSnapshotDelta carries AddedNames/RemovedNames and
-//     AddedTags/RemovedTags (E-15 set-diff encoding), plus SetCount *int32.
+//     AddedTags/RemovedTags (R-DG-006, R-DG-016 set-diff encoding), plus SetCount *int32.
 //   - No companion type is emitted for the slice element types (V is atomic).
 //   - Apply body references both the removed-elements path and the added-elements append.
 //   - Generated file is gofmt-clean and the reflect import is ABSENT: Names (string)
-//     and Tags (comparable struct) both use the O(n) map[T]struct{} path (NR-01).
+//     and Tags (comparable struct) both use the O(n) map[T]struct{} path (R-DG-016).
 //
-// Covers: N-04, E-15, NR-01
+// Covers: R-DG-016, R-DG-028, R-DG-006, R-DG-016, R-DG-016
 func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_slice_delta.go")
 
@@ -653,7 +653,7 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, src)
 	}
 
-	// NestedSliceSnapshotDelta must contain the N-04 set-diff encoding fields.
+	// NestedSliceSnapshotDelta must contain the R-DG-016, R-DG-028 set-diff encoding fields.
 	deltaFields := assertDeltaShape(t, f, "NestedSliceSnapshotDelta",
 		[]string{"AddedNames", "RemovedNames", "AddedTags", "RemovedTags", "SetCount"})
 	// Raw source field names must not appear in the Delta struct.
@@ -665,7 +665,7 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 
 	// No companion type for the slice element types.
 	if findStructDecl(f, "TagDelta") != nil {
-		t.Errorf("TagDelta must not be emitted: N-04 treats slice element type atomically")
+		t.Errorf("TagDelta must not be emitted: R-DG-016, R-DG-028 treats slice element type atomically")
 	}
 
 	// Apply body must reference the removed and added slice fields.
@@ -676,15 +676,15 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 	}
 
 	// reflect import must be ABSENT: Names (string) and Tags (comparable struct)
-	// both use the O(n) map[T]struct{} path (NR-01, §5.2).
+	// both use the O(n) map[T]struct{} path (R-DG-016, §5.2).
 	if strings.Contains(srcStr, `"reflect"`) {
 		t.Errorf(`unexpected "reflect" import: element types are comparable, must use map-set path`)
 	}
 	if strings.Contains(srcStr, "reflect.DeepEqual") {
-		t.Errorf("unexpected reflect.DeepEqual in generated code: element types are comparable (NR-01)")
+		t.Errorf("unexpected reflect.DeepEqual in generated code: element types are comparable (R-DG-016)")
 	}
 
-	// Method wrappers must be present in same-package mode (E-12).
+	// Method wrappers must be present in same-package mode (R-DG-012, R-DG-013, R-DG-019).
 	assertHasMethods(t, f, "NestedSliceSnapshot", []string{"Apply", "Diff"})
 
 	t.Run("CompileCheck", func(t *testing.T) {
@@ -692,10 +692,10 @@ func TestEmitTemplate_Nested_Slice_SamePkg(t *testing.T) {
 	})
 }
 
-// TestEmitTemplate_Nested_Slice_CrossPkg verifies N-04 generation in cross-package
-// mode: no method wrappers are emitted (E-12), and the Apply/Diff function bodies
+// TestEmitTemplate_Nested_Slice_CrossPkg verifies R-DG-016, R-DG-028 generation in cross-package
+// mode: no method wrappers are emitted (R-DG-012, R-DG-013, R-DG-019), and the Apply/Diff function bodies
 // still contain the slice set-diff logic.
-// Covers: N-04, E-12
+// Covers: R-DG-016, R-DG-028, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_Nested_Slice_CrossPkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_slice_cross_delta.go")
 
@@ -731,7 +731,7 @@ func TestEmitTemplate_Nested_Slice_CrossPkg(t *testing.T) {
 		t.Errorf("Diff function not found in cross-pkg output")
 	}
 
-	// Method wrappers must NOT be emitted (E-12).
+	// Method wrappers must NOT be emitted (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "NestedSliceSnapshot", "Apply") != nil {
 		t.Errorf("Apply method wrapper must not be emitted in cross-pkg mode")
 	}
@@ -747,12 +747,12 @@ func TestEmitTemplate_Nested_Slice_CrossPkg(t *testing.T) {
 	}
 }
 
-// TestEmitTemplate_Nested_Slice_Reflect_SamePkg verifies N-04 generation for a
+// TestEmitTemplate_Nested_Slice_Reflect_SamePkg verifies R-DG-016, R-DG-028 generation for a
 // slice field whose element type is not comparable ([][]byte, element type []byte).
 // The generator must set SliceElemUseReflectEq=true, inject the reflect import,
 // and emit reflect.DeepEqual calls in both Apply and Diff bodies (§5.2).
 //
-// Covers: N-04, §5.2 (non-comparable element fallback)
+// Covers: R-DG-016, R-DG-028, §5.2 (non-comparable element fallback)
 func TestEmitTemplate_Nested_Slice_Reflect_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_slice_reflect_delta.go")
 
@@ -805,7 +805,7 @@ func TestEmitTemplate_Nested_Slice_Reflect_SamePkg(t *testing.T) {
 // TestEmitTemplate_CrossPackageQualifier verifies that in cross-package mode
 // the generated file qualifies source-package types (e.g. *model.Address) and
 // imports the source package.
-// Covers: R-19, E-12
+// Covers: R-DG-015, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 
@@ -819,7 +819,7 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -845,8 +845,8 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 
 // TestEmitTemplate_AtomicApply_CrossPackage verifies Apply emission in
 // cross-package mode: source-package types are qualified in the function
-// signature, and no method wrapper is emitted (E-12).
-// Covers: R-20, E-12
+// signature, and no method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
+// Covers: R-DG-012, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 
@@ -860,7 +860,7 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -885,7 +885,7 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 		t.Errorf("expected 'model.CrossPkgSnapshot' in Apply signature, got:\n%s", srcStr)
 	}
 
-	// No method wrapper in cross-package mode (E-12).
+	// No method wrapper in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "CrossPkgSnapshot", "Apply") != nil {
 		t.Errorf("Apply method wrapper must not be emitted in cross-package mode")
 	}
@@ -893,8 +893,8 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 
 // TestEmitTemplate_AtomicDiff_CrossPackage verifies Diff emission in
 // cross-package mode: source-package types are qualified in the function
-// signature, and no Diff method wrapper is emitted (E-12).
-// Covers: R-21, E-12, E-20
+// signature, and no Diff method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
+// Covers: R-DG-012, R-DG-013, R-DG-012, R-DG-013, R-DG-019, R-DG-012
 func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 
@@ -908,7 +908,7 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -928,7 +928,7 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 		t.Fatalf("Diff function not found in generated file")
 	}
 
-	// Signature must qualify source-package types (E-12).
+	// Signature must qualify source-package types (R-DG-012, R-DG-013, R-DG-019).
 	if !strings.Contains(srcStr, "model.CrossPkgSnapshot") {
 		t.Errorf("expected 'model.CrossPkgSnapshot' in Diff signature, got:\n%s", srcStr)
 	}
@@ -937,22 +937,22 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 		t.Errorf("expected 'func Diff(a, b model.CrossPkgSnapshot)' in generated file, got:\n%s", srcStr)
 	}
 
-	// No Diff method wrapper in cross-package mode (E-12).
+	// No Diff method wrapper in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "CrossPkgSnapshot", "Diff") != nil {
 		t.Errorf("Diff method wrapper must not be emitted in cross-package mode")
 	}
 
 	// CrossPkgSnapshot.Location Address is a comparable struct (Street, City string),
-	// so Diff uses != — no reflect import (NR-01).
+	// so Diff uses != — no reflect import (R-DG-016).
 	if strings.Contains(srcStr, `"reflect"`) {
-		t.Errorf("unexpected \"reflect\" import: Address is comparable, Diff must use != (NR-01):\n%s", srcStr)
+		t.Errorf("unexpected \"reflect\" import: Address is comparable, Diff must use != (R-DG-016):\n%s", srcStr)
 	}
 }
 
 // TestEmitTemplate_AtomicCoalesce_CrossPackage verifies Coalesce emission in
 // cross-package mode: source-package types are qualified in the function
-// signature, and no Coalesce method wrapper is emitted (E-12).
-// Covers: R-22, E-12, E-21
+// signature, and no Coalesce method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
+// Covers: R-DG-012, R-DG-013, R-DG-012, R-DG-013, R-DG-019, R-DG-012
 func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 
@@ -966,7 +966,7 @@ func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -986,12 +986,12 @@ func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 		t.Fatalf("Coalesce function not found in generated file")
 	}
 
-	// Signature must qualify source-package types for both parameter and return (E-12).
+	// Signature must qualify source-package types for both parameter and return (R-DG-012, R-DG-013, R-DG-019).
 	if !strings.Contains(srcStr, "func Coalesce(s model.CrossPkgSnapshot, ds []CrossPkgSnapshotDelta) (model.CrossPkgSnapshot, error)") {
 		t.Errorf("expected qualified Coalesce signature, got:\n%s", srcStr)
 	}
 
-	// No Coalesce method wrapper in cross-package mode (E-12).
+	// No Coalesce method wrapper in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "CrossPkgSnapshot", "Coalesce") != nil {
 		t.Errorf("Coalesce method wrapper must not be emitted in cross-package mode")
 	}
@@ -1000,7 +1000,7 @@ func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 // TestEmitTemplate_NamedPrimitive_KeyMethodEmitted verifies that a named-primitive
 // entity key (Key IMSI, type IMSI string) causes the EntityID function to emit a
 // string(k) conversion and the same-package method wrapper to be generated.
-// Covers: R-24, E-12
+// Covers: R-DG-012, R-DG-014, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "entityid_named_prim_delta.go")
 	cfg := Config{
@@ -1051,7 +1051,7 @@ func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
 // TestEmitTemplate_StructKey_SamePkg verifies that a struct entity key emits an
 // EntityID function walking sub-fields in lexicographic field-name order with
 // appropriate Write* calls, plus a same-package method wrapper.
-// Covers: R-24, E-12
+// Covers: R-DG-012, R-DG-014, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "entityid_struct_key_delta.go")
 	cfg := Config{
@@ -1117,7 +1117,7 @@ func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 // source declaration order. entityid_struct_key declares IMSI before SubID;
 // entityid_struct_key_reversed declares SubID before IMSI. Both must emit
 // IMSI first (lexicographic order), so the hash lines must be byte-equal.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEmitTemplate_StructKey_FieldOrderStability(t *testing.T) {
 	emitAndGetEntityIDBody := func(t *testing.T, inputPkg, structName string) string {
 		t.Helper()
@@ -1209,8 +1209,8 @@ func TestEmitTemplate_StructKey_FieldOrderStability(t *testing.T) {
 }
 
 // TestEmitTemplate_EntityID_CrossPackage verifies EntityID emission in cross-
-// package mode: the key type is qualified and no method wrapper is emitted (E-12).
-// Covers: R-24, E-12
+// package mode: the key type is qualified and no method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
+// Covers: R-DG-012, R-DG-014, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 	cfg := Config{
@@ -1249,7 +1249,7 @@ func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
 		t.Errorf("EntityID body missing: runtime.WriteString(h, k.ID)")
 	}
 
-	// No EntityID method wrapper in cross-package mode (E-12).
+	// No EntityID method wrapper in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "ModelKey", "EntityID") != nil {
 		t.Errorf("EntityID method wrapper must not be emitted in cross-package mode")
 	}
@@ -1260,8 +1260,8 @@ func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
 // ParseOpts.KeyFieldOverride produces byte-equal EntityID hash lines. Both
 // parse paths converge on the same KeyVar (parse_key.go:107), so emission
 // must be identical regardless of how the field was identified. This covers
-// the "untagged key via --key-field" case from the EM-05 plan (E-13).
-// Covers: R-24, E-13
+// the "untagged key via --key-field" case from the R-DG-034 plan (R-DG-040).
+// Covers: R-DG-012, R-DG-014, R-DG-040
 func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
 	pkgs, err := loadPackages([]string{"./testdata/parse/valid"}, slog.Default())
 	if err != nil {
@@ -1311,14 +1311,14 @@ func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
 }
 
 // TestBuildSnapshotView_UnsupportedKeyUnderlying verifies that a key whose
-// underlying type is outside the EM-05 support matrix (e.g. float64, which is
+// underlying type is outside the R-DG-034 support matrix (e.g. float64, which is
 // comparable so the parser accepts it but the hash renderer cannot map it)
 // causes buildSnapshotView to return a descriptive error.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestBuildSnapshotView_UnsupportedKeyUnderlying(t *testing.T) {
 	// Construct a ParsedSnapshot whose entity-key field has underlying float64.
 	// float64 is a basic comparable type so the parser would accept it, but
-	// buildKeyHashLines returns an error for it (EM-05 support matrix).
+	// buildKeyHashLines returns an error for it (R-DG-034 support matrix).
 	flt := types.Typ[types.Float64]
 	keyVar := types.NewVar(token.NoPos, nil, "Key", flt)
 	headerVar := types.NewVar(token.NoPos, nil, "Header", flt) // dummy; not used
@@ -1347,7 +1347,7 @@ func TestBuildSnapshotView_UnsupportedKeyUnderlying(t *testing.T) {
 
 // TestEmitTemplate_NoReflectImport_AllScalar verifies that the "reflect" import
 // is absent when the Snapshot contains only scalar and suppressed fields.
-// Covers: R-21, E-20
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestEmitTemplate_NoReflectImport_AllScalar(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "scalar_only_delta.go")
 
@@ -1360,7 +1360,7 @@ func TestEmitTemplate_NoReflectImport_AllScalar(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -1385,7 +1385,7 @@ func TestEmitTemplate_NoReflectImport_AllScalar(t *testing.T) {
 
 // TestEmitTemplate_ReflectImport_WhenNeeded verifies that the "reflect" import
 // is present when the Snapshot contains non-scalar fields.
-// Covers: R-21, E-20
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestEmitTemplate_ReflectImport_WhenNeeded(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "atomic_all_delta.go")
 
@@ -1398,7 +1398,7 @@ func TestEmitTemplate_ReflectImport_WhenNeeded(t *testing.T) {
 		t.Fatalf("Run() failed: %v", err)
 	}
 
-	// R-11: generated file must be gofmt-clean as written.
+	// R-DG-037: generated file must be gofmt-clean as written.
 	assertGofmtClean(t, outPath)
 
 	src, err := os.ReadFile(outPath)
@@ -1418,7 +1418,7 @@ func TestEmitTemplate_ReflectImport_WhenNeeded(t *testing.T) {
 }
 
 // TestEmitTemplate_PtrNonComparable exercises the PointeeUseReflectEq path
-// (CL-10): a *SliceBag field whose pointee is non-comparable (contains a
+// (R-DG-026): a *SliceBag field whose pointee is non-comparable (contains a
 // slice). The generated Diff must emit reflect.DeepEqual(*a.Bag, *b.Bag)
 // inside the nil-equivalence guard, and the "reflect" import must be present.
 func TestEmitTemplate_PtrNonComparable(t *testing.T) {
@@ -1506,12 +1506,12 @@ type PtrNonComparableSnapshot struct {
 // compileCheckEmit writes the generated source (plus a matching source
 // Snapshot package) into an isolated temp module with a replace directive
 // for go.resystems.io/eddt, then:
-//   - asserts the generated delta.go is gofmt-clean (R-11),
+//   - asserts the generated delta.go is gofmt-clean (R-DG-037),
 //   - runs go test ./... to type-check and exercise Apply round-trip behaviour
-//     (R-20) and HeaderAfterApply error propagation (E-19),
+//     (R-DG-012) and HeaderAfterApply error propagation (R-DG-012),
 //   - exercises Diff round-trip Apply(a, Diff(a, b)) == b across all five
-//     atomic shapes (R-28), identity-diff Set* nilness (R-29 / E-06),
-//     partial-diff minimality, and HeaderForDiff error propagation (E-20).
+//     atomic shapes (R-DG-023), identity-diff Set* nilness (R-DG-024 / R-DG-024),
+//     partial-diff minimality, and HeaderForDiff error propagation (R-DG-012).
 //
 // The temp module reuses the eddt module's go.sum so that transitive
 // dependencies (e.g. golang.org/x/crypto) resolve without network access.
@@ -1541,8 +1541,8 @@ type AtomicAllSnapshot struct {
 }
 `
 
-	// Write a behaviour test exercising Apply round-trip (R-20) and
-	// HeaderAfterApply error propagation (E-19). The test is placed in the
+	// Write a behaviour test exercising Apply round-trip (R-DG-012) and
+	// HeaderAfterApply error propagation (R-DG-012). The test is placed in the
 	// atomic_all_test package (external test package) to prove the generated
 	// package-level Apply function is callable from outside the package.
 	testCode := `package atomic_all_test
@@ -1596,8 +1596,8 @@ func TestApplyRoundTrip(t *testing.T) {
 }
 
 // TestApplyHeaderValidationError verifies that a non-monotone Sequence causes
-// Apply to return a non-nil error (E-19: Apply returns (T, error)).
-// Covers: R-20
+// Apply to return a non-nil error (R-DG-012: Apply returns (T, error)).
+// Covers: R-DG-012
 func TestApplyHeaderValidationError(t *testing.T) {
 	id := eddt.EntityID{1}
 	now := time.Now()
@@ -1614,9 +1614,9 @@ func TestApplyHeaderValidationError(t *testing.T) {
 `
 	applyTestCode := testCode
 
-	// Write a behaviour test exercising Diff round-trip (R-28), identity-diff
-	// minimality (R-29 / E-06), partial-diff minimality, and HeaderForDiff
-	// error propagation (E-20).
+	// Write a behaviour test exercising Diff round-trip (R-DG-023), identity-diff
+	// minimality (R-DG-024 / R-DG-024), partial-diff minimality, and HeaderForDiff
+	// error propagation (R-DG-012).
 	diffTestCode := `package atomic_all_test
 
 import (
@@ -1652,10 +1652,10 @@ func makeSnap(id eddt.EntityID, seq uint64, t time.Time, filler int) atomic_all.
 }
 
 // TestDiffApplyRoundTrip verifies Apply(a, Diff(a, b)) payload-equals b across
-// all five atomic shapes plus delta.commutative (R-28).
+// all five atomic shapes plus delta.commutative (R-DG-023).
 // Suppressed fields must equal a (propagated by Apply; Diff emits nothing for them).
-// Header equality is not asserted — it advances by construction (E-06).
-// Covers: R-28, R-21, E-20
+// Header equality is not asserted — it advances by construction (R-DG-024).
+// Covers: R-DG-023, R-DG-012, R-DG-013, R-DG-012
 func TestDiffApplyRoundTrip(t *testing.T) {
 	id := eddt.EntityID{1}
 	t1 := time.Now()
@@ -1706,10 +1706,10 @@ func TestDiffApplyRoundTrip(t *testing.T) {
 }
 
 // TestDiffIdentity verifies Diff(a, a) produces a TDelta with all Set* fields
-// nil (minimality of the identity diff, R-29). Apply(a, Diff(a, a)) is NOT
+// nil (minimality of the identity diff, R-DG-024). Apply(a, Diff(a, a)) is NOT
 // called — that would violate HeaderAfterApply's strict Sequence monotonicity
-// precondition (E-06: identity diff Sequence == a.Sequence).
-// Covers: R-29, E-06
+// precondition (R-DG-024: identity diff Sequence == a.Sequence).
+// Covers: R-DG-024, R-DG-024
 func TestDiffIdentity(t *testing.T) {
 	id := eddt.EntityID{1}
 	now := time.Now()
@@ -1741,12 +1741,12 @@ func TestDiffIdentity(t *testing.T) {
 	}
 	// Note: Apply(a, delta) is intentionally not called here.
 	// delta.Header.Sequence == a.Header.Sequence, violating HeaderAfterApply's
-	// strict monotonicity precondition (E-06).
+	// strict monotonicity precondition (R-DG-024).
 }
 
 // TestDiffPartial verifies that Diff produces a minimal delta: only the one
 // field that differs between a and c has a non-nil Set* value.
-// Covers: R-28, R-21
+// Covers: R-DG-023, R-DG-012, R-DG-013
 func TestDiffPartial(t *testing.T) {
 	id := eddt.EntityID{1}
 	t1 := time.Now()
@@ -1786,8 +1786,8 @@ func TestDiffPartial(t *testing.T) {
 
 // TestDiffHeaderForDiffError verifies that Diff returns a non-nil error when
 // HeaderForDiff rejects the inputs (e.g. mismatched EntityID).
-// This pins the (TDelta, error) signature behaviour under E-20.
-// Covers: R-21, E-20
+// This pins the (TDelta, error) signature behaviour under R-DG-012.
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestDiffHeaderForDiffError(t *testing.T) {
 	id1 := eddt.EntityID{1}
 	id2 := eddt.EntityID{2}
@@ -1810,7 +1810,7 @@ func TestDiffHeaderForDiffError(t *testing.T) {
 // Commute=0). This exercises the nil-pointer, nil-slice, and nil-map branches
 // of reflect.DeepEqual in the Diff body — cases not covered by
 // TestDiffApplyRoundTrip, which uses non-zero payload on both sides.
-// Covers: R-28
+// Covers: R-DG-023
 func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
 	id := eddt.EntityID{1}
 	t1 := time.Now()
@@ -1856,7 +1856,7 @@ func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
 }
 
 // TestDiffPointerMinimality verifies that Diff uses value equality for pointer
-// fields, not pointer identity (CL-10, R-27, E-02). Two independently-allocated
+// fields, not pointer identity (R-DG-026, R-DG-016, R-DG-016). Two independently-allocated
 // strings with equal content must diff as unchanged (SetPointer==nil); differing
 // values and nil↔non-nil transitions must diff as changed.
 func TestDiffPointerMinimality(t *testing.T) {
@@ -1941,7 +1941,7 @@ import (
 // TestCoalesceEmpty verifies that Coalesce with a nil or empty delta slice
 // returns (s, nil) without advancing the Header — the monoidal identity
 // element of the fold: Coalesce(x, []) == x (byte-equal).
-// Covers: R-22, R-30, E-21
+// Covers: R-DG-012, R-DG-013, R-DG-025, R-DG-012
 func TestCoalesceEmpty(t *testing.T) {
 	id := eddt.EntityID{1}
 	s := makeSnap(id, 1, time.Now(), 5)
@@ -1967,7 +1967,7 @@ func TestCoalesceEmpty(t *testing.T) {
 
 // TestCoalesceSingleDelta_EqualsApply verifies that Coalesce with a single
 // delta is equivalent to a direct Apply call: the one-step fold equals Apply.
-// Covers: R-22, R-30, E-21
+// Covers: R-DG-012, R-DG-013, R-DG-025, R-DG-012
 func TestCoalesceSingleDelta_EqualsApply(t *testing.T) {
 	id := eddt.EntityID{1}
 	t1 := time.Now()
@@ -2000,7 +2000,7 @@ func TestCoalesceSingleDelta_EqualsApply(t *testing.T) {
 // shape — produces the final snapshot's payload. This covers all five atomic
 // shapes (scalar, pointer, struct, slice, map) plus delta.commutative, and
 // verifies that suppressed fields propagate from the seed unchanged.
-// Covers: R-22, R-30, E-21
+// Covers: R-DG-012, R-DG-013, R-DG-025, R-DG-012
 func TestCoalesceMultiStep_ProgressionOfChanges(t *testing.T) {
 	id := eddt.EntityID{1}
 	t0 := time.Now()
@@ -2083,12 +2083,12 @@ func TestCoalesceMultiStep_ProgressionOfChanges(t *testing.T) {
 }
 
 // TestCoalesceNoOpPayload verifies the spirit of Coalesce(x, [Diff(y,y)]) ==
-// x (payload-wise). Taken literally, Diff(y,y) collides with E-06 when
+// x (payload-wise). Taken literally, Diff(y,y) collides with R-DG-024 when
 // y.Sequence == x.Sequence because HeaderAfterApply requires strict monotonicity.
 // We therefore construct y with y.Sequence > x.Sequence and identical payload:
-// Diff(y,y) has all Set* nil (identity-diff, R-29), and applying it to x leaves
+// Diff(y,y) has all Set* nil (identity-diff, R-DG-024), and applying it to x leaves
 // the payload unchanged while advancing the Header.
-// Covers: R-22, R-30, E-21
+// Covers: R-DG-012, R-DG-013, R-DG-025, R-DG-012
 func TestCoalesceNoOpPayload(t *testing.T) {
 	id := eddt.EntityID{1}
 	t1 := time.Now()
@@ -2104,7 +2104,7 @@ func TestCoalesceNoOpPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Diff(y,y): %v", err)
 	}
-	// Identity-diff: all Set* must be nil (R-29 / E-06 documents this).
+	// Identity-diff: all Set* must be nil (R-DG-024 / R-DG-024 documents this).
 	if noop.SetScalar != nil || noop.SetPointer != nil || noop.SetStruct != nil ||
 		noop.SetSlice != nil || noop.SetMap != nil || noop.SetCommute != nil {
 		t.Error("Diff(y,y): expected all Set* nil (identity-diff)")
@@ -2143,7 +2143,7 @@ func TestCoalesceNoOpPayload(t *testing.T) {
 // TestCoalesceAssociativity verifies that Coalesce is associative (chunkable):
 // Coalesce(Coalesce(s, ds1), ds2) == Coalesce(s, append(ds1, ds2...)).
 // This confirms that the fold can be split at any point with identical results.
-// Covers: R-22, R-30, E-21
+// Covers: R-DG-012, R-DG-013, R-DG-025, R-DG-012
 func TestCoalesceAssociativity(t *testing.T) {
 	id := eddt.EntityID{1}
 	t0 := time.Now()
@@ -2187,8 +2187,8 @@ func TestCoalesceAssociativity(t *testing.T) {
 
 // TestCoalesceErrorAtFirst verifies that a delta with a mismatched EntityID as
 // the first element causes Coalesce to return (zero T, non-nil error). No
-// subsequent deltas are applied. Pins the E-21 zero-return-on-error contract.
-// Covers: R-22, E-21
+// subsequent deltas are applied. Pins the R-DG-012 zero-return-on-error contract.
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestCoalesceErrorAtFirst(t *testing.T) {
 	id := eddt.EntityID{1}
 	otherId := eddt.EntityID{2}
@@ -2206,7 +2206,7 @@ func TestCoalesceErrorAtFirst(t *testing.T) {
 		t.Errorf("expected error to mention EntityID, got: %v", err)
 	}
 
-	// E-21: zero T returned on error, not a partial result.
+	// R-DG-012: zero T returned on error, not a partial result.
 	var zero atomic_all.AtomicAllSnapshot
 	if !reflect.DeepEqual(result, zero) {
 		t.Errorf("expected zero AtomicAllSnapshot on error")
@@ -2216,8 +2216,8 @@ func TestCoalesceErrorAtFirst(t *testing.T) {
 // TestCoalesceErrorMidFold verifies that a sequence regression in the second
 // delta stops the fold and returns (zero T, non-nil error). The first delta is
 // valid and has already been applied. Coalesce returns the zero value rather
-// than the partial intermediate state — pins the E-21 contract.
-// Covers: R-22, E-21
+// than the partial intermediate state — pins the R-DG-012 contract.
+// Covers: R-DG-012, R-DG-013, R-DG-012
 func TestCoalesceErrorMidFold(t *testing.T) {
 	id := eddt.EntityID{1}
 	t0 := time.Now()
@@ -2243,7 +2243,7 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 		t.Fatal("expected error for sequence regression, got nil")
 	}
 
-	// E-21: zero T returned on error, not the partial intermediate state.
+	// R-DG-012: zero T returned on error, not the partial intermediate state.
 	var zero atomic_all.AtomicAllSnapshot
 	if !reflect.DeepEqual(result, zero) {
 		t.Errorf("expected zero AtomicAllSnapshot on error, got non-zero result")
@@ -2264,7 +2264,7 @@ import (
 
 // TestEntityID_Determinism verifies that EntityID returns the same value for
 // the same input across 100 calls.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_Determinism(t *testing.T) {
 	want := atomic_all.EntityID("ABC")
 	for i := 0; i < 100; i++ {
@@ -2277,7 +2277,7 @@ func TestEntityID_Determinism(t *testing.T) {
 // TestEntityID_DistinctOnDifferentInput verifies that distinct string inputs
 // produce distinct EntityIDs. Length-prefix in runtime.WriteString prevents
 // concatenation collisions.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_DistinctOnDifferentInput(t *testing.T) {
 	ids := []eddt.EntityID{
 		atomic_all.EntityID(""),
@@ -2298,7 +2298,7 @@ func TestEntityID_DistinctOnDifferentInput(t *testing.T) {
 // TestEntityID_ZeroValueIsNonZero verifies that EntityID for a zero-value string
 // key produces a non-zero EntityID. Blake2b-256 of the length-prefix encoding
 // of "" is not all-zero, so the zero-key hash is not a sentinel value.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_ZeroValueIsNonZero(t *testing.T) {
 	id := atomic_all.EntityID("")
 	if id.IsZero() {
@@ -2310,7 +2310,7 @@ func TestEntityID_ZeroValueIsNonZero(t *testing.T) {
 // produces the same digest as manually invoking the runtime helpers. This pins
 // the hash across process boundaries: if the generated code or the runtime
 // changes incompatibly, this test catches the divergence.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_GoldenBytes(t *testing.T) {
 	// Compute the expected digest using the same runtime helpers the generated
 	// code uses. If the generated code and the reference compute identically,
@@ -2377,7 +2377,7 @@ import (
 // TestEntityID_StructKey_Method verifies that the same-package method wrapper
 // on SomeKey delegates to the package-level EntityID function and produces the
 // same result.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_Method(t *testing.T) {
 	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 42}
 	id1 := entityid_struct_key.EntityID(k)
@@ -2392,7 +2392,7 @@ func TestEntityID_StructKey_Method(t *testing.T) {
 
 // TestEntityID_StructKey_DistinctFields verifies that changing a single sub-
 // field of a struct key produces a different EntityID.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_DistinctFields(t *testing.T) {
 	base := entityid_struct_key.SomeKey{IMSI: "A", SubID: 0}
 	diffIMSI := entityid_struct_key.SomeKey{IMSI: "B", SubID: 0}
@@ -2409,7 +2409,7 @@ func TestEntityID_StructKey_DistinctFields(t *testing.T) {
 // TestEntityID_StructKey_LengthPrefixPreventsConcatCollision verifies that
 // runtime.WriteString's length prefix prevents keys that would collide under
 // naive concatenation from producing the same EntityID.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_LengthPrefixPreventsConcatCollision(t *testing.T) {
 	// Without length prefix: WriteString("AB")+WriteUint64(0) and
 	// WriteString("A")+WriteUint64(0x42) would both start with "A..." bytes.
@@ -2423,7 +2423,7 @@ func TestEntityID_StructKey_LengthPrefixPreventsConcatCollision(t *testing.T) {
 
 // TestEntityID_StructKey_Determinism verifies that EntityID is deterministic
 // for struct keys across 100 calls.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_Determinism(t *testing.T) {
 	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 7}
 	want := entityid_struct_key.EntityID(k)
@@ -2436,7 +2436,7 @@ func TestEntityID_StructKey_Determinism(t *testing.T) {
 
 // TestEntityID_StructKey_GoldenBytes verifies that the generated EntityID
 // matches manually invoking the runtime helpers.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
 	k := entityid_struct_key.SomeKey{IMSI: "hello", SubID: 42}
 
@@ -2498,7 +2498,7 @@ import (
 
 // TestEntityID_ReversedKey_Method verifies the same-package method wrapper on
 // ReversedKey delegates to the package-level EntityID function.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_ReversedKey_Method(t *testing.T) {
 	k := entityid_struct_key_reversed.ReversedKey{IMSI: "310260000000001", SubID: 42}
 	id1 := entityid_struct_key_reversed.EntityID(k)
@@ -2514,7 +2514,7 @@ func TestEntityID_ReversedKey_Method(t *testing.T) {
 // (this package). Both must hash IMSI before SubID (lexicographic order).
 // The expected hash is computed inline using the same runtime helpers in
 // alphabetical field-name order, matching TestEntityID_StructKey_GoldenBytes.
-// Covers: R-24
+// Covers: R-DG-012, R-DG-014
 func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
 	k := entityid_struct_key_reversed.ReversedKey{IMSI: "hello", SubID: 42}
 
@@ -2539,11 +2539,11 @@ func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
 	})
 }
 
-// ── N-01: delta.nested struct-value tests ────────────────────────────────────
+// ── R-DG-016: delta.nested struct-value tests ────────────────────────────────────
 
-// TestEmitTemplate_Nested_SamePkg verifies end-to-end N-01 emission for a
+// TestEmitTemplate_Nested_SamePkg verifies end-to-end R-DG-016 emission for a
 // Snapshot with one delta.nested struct-value field in same-package mode.
-// Covers: R-19, N-01 reqs 01-05, 09, 11
+// Covers: R-DG-015, R-DG-016, R-DG-009, R-DG-021, R-DG-019, R-DG-003, R-DG-006
 func TestEmitTemplate_Nested_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_struct_delta.go")
 
@@ -2627,7 +2627,7 @@ func TestEmitTemplate_Nested_SamePkg(t *testing.T) {
 
 // TestEmitTemplate_Nested_Dedup verifies that two delta.nested fields of the
 // same type emit a single companion Delta type, not two copies (req 09).
-// Covers: N-01 req 09
+// Covers: R-DG-016
 func TestEmitTemplate_Nested_Dedup(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_multi_delta.go")
 
@@ -2671,7 +2671,7 @@ func TestEmitTemplate_Nested_Dedup(t *testing.T) {
 // TestEmitTemplate_Nested_Deep verifies two-level nested emission: Level2Delta
 // and Level1Delta are both emitted, Level1Delta contains Sub Level2Delta, and
 // the root Apply/Diff delegate transitively.
-// Covers: N-01 req 01 (multi-level)
+// Covers: R-DG-016 (multi-level)
 func TestEmitTemplate_Nested_Deep(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_deep_delta.go")
 
@@ -2727,7 +2727,7 @@ func TestEmitTemplate_Nested_Deep(t *testing.T) {
 // Level3Delta, Level2Delta, and Level1Delta are all emitted, Level2Delta
 // contains Stats Level3Delta, and Apply/Diff delegate transitively at all
 // levels.
-// Covers: N-02
+// Covers: R-DG-009
 func TestEmitTemplate_Nested_Triple(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_triple_delta.go")
 
@@ -2784,7 +2784,7 @@ func TestEmitTemplate_Nested_Triple(t *testing.T) {
 // TestEmitTemplate_Nested_CrossPkg verifies that in cross-package mode nested
 // types emit only package-level functions (no method wrappers), and the parent
 // Apply/Diff use function call syntax (req 06).
-// Covers: N-01 req 06, E-12
+// Covers: R-DG-006, R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_Nested_CrossPkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "nested_cross_delta.go")
 
@@ -2820,7 +2820,7 @@ func TestEmitTemplate_Nested_CrossPkg(t *testing.T) {
 		t.Errorf("DiffInner function not found in cross-pkg output")
 	}
 
-	// Method wrappers must NOT be emitted (req 06, E-12).
+	// Method wrappers must NOT be emitted (req 06, R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "Inner", "Apply") != nil {
 		t.Errorf("Apply method wrapper on Inner must not be emitted in cross-pkg mode")
 	}
@@ -2840,7 +2840,7 @@ func TestEmitTemplate_Nested_CrossPkg(t *testing.T) {
 // TestEmitTemplate_Nested_AnonymousStruct_Error verifies that a delta.nested
 // field with an anonymous struct type returns an error requiring a named type
 // (req 08).
-// Covers: N-01 req 08
+// Covers: R-DG-013, R-DG-016
 func TestEmitTemplate_Nested_AnonymousStruct_Error(t *testing.T) {
 	// Build a ParsedSnapshot with a delta.nested field whose GoType is an
 	// anonymous struct (not *types.Named).
@@ -2884,8 +2884,8 @@ func TestEmitTemplate_Nested_AnonymousStruct_Error(t *testing.T) {
 // TestBuildSnapshotView_CycleDetected verifies that the emit stage returns a
 // clear error when the delta.nested type graph contains a cycle (A.F → B,
 // B.G → A). Struct-value cycles cannot exist in valid Go source; the graph is
-// constructed directly via go/types to exercise the inPath guard (N-02 §3.3.2).
-// Covers: N-02
+// constructed directly via go/types to exercise the inPath guard (R-DG-009 §3.3.2).
+// Covers: R-DG-009
 func TestBuildSnapshotView_CycleDetected(t *testing.T) {
 	pkg := types.NewPackage("test/cycle", "cycle")
 
@@ -2940,7 +2940,7 @@ func TestBuildSnapshotView_CycleDetected(t *testing.T) {
 
 // compileCheckEmitNested writes the generated nested_struct source into an
 // isolated temp module and runs go test to verify runtime correctness.
-// Covers: N-01 reqs 02, 03, 04, 05, 12
+// Covers: R-DG-016, R-DG-009, R-DG-021, R-DG-019, R-DG-003, R-DG-006
 func compileCheckEmitNested(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3098,7 +3098,7 @@ func TestNested_Coalesce_Root_Works(t *testing.T) {
 
 // compileCheckEmitNestedDeep verifies the two-level nesting fixture compiles
 // and a round-trip Apply(a, Diff(a,b)) == b works for changes at both levels.
-// Covers: N-01 req 01 (multi-level at runtime)
+// Covers: R-DG-016 (multi-level at runtime)
 func compileCheckEmitNestedDeep(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3179,7 +3179,7 @@ func TestDeep_RoundTrip(t *testing.T) {
 // compileCheckEmitNestedTriple verifies the three-level nesting fixture compiles
 // and that Apply(a, Diff(a,b))==b works for simultaneous changes at all three
 // levels (Level1.Count, Level2.Rank, Level3.Score).
-// Covers: N-02
+// Covers: R-DG-009
 func compileCheckEmitNestedTriple(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3272,7 +3272,7 @@ func TestTriple_RoundTrip(t *testing.T) {
 }
 
 // compileCheckEmitNestedMap verifies that the generated nested_map delta source
-// compiles and satisfies five runtime contracts (N-03, E-16 upsert semantics):
+// compiles and satisfies five runtime contracts (R-DG-016, R-DG-006, R-DG-016 upsert semantics):
 //
 //  1. Add entry: Diff records new key in UpdatedTags; Apply adds it to result.
 //  2. Remove entry: Diff records removed key in RemovedTags; Apply removes it.
@@ -3281,7 +3281,7 @@ func TestTriple_RoundTrip(t *testing.T) {
 //     add/remove/update on both Tags (scalar value) and Scores (struct value).
 //  5. Atomic coexistence: Count-only change → SetCount non-nil, maps nil.
 //
-// Covers: N-03, E-16
+// Covers: R-DG-016, R-DG-006, R-DG-016
 func compileCheckEmitNestedMap(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3324,7 +3324,7 @@ func header(seq uint64) eddt.Header {
 	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
 }
 
-// TestMap_AddEntry: Diff records new key in UpdatedTags; Apply adds it (N-03 req 1).
+// TestMap_AddEntry: Diff records new key in UpdatedTags; Apply adds it (R-DG-016 req 1).
 func TestMap_AddEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
@@ -3341,7 +3341,7 @@ func TestMap_AddEntry(t *testing.T) {
 	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
 }
 
-// TestMap_RemoveEntry: Diff records removed key in RemovedTags; Apply removes it (N-03 req 2).
+// TestMap_RemoveEntry: Diff records removed key in RemovedTags; Apply removes it (R-DG-016 req 2).
 func TestMap_RemoveEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1"}}
@@ -3359,7 +3359,7 @@ func TestMap_RemoveEntry(t *testing.T) {
 	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
 }
 
-// TestMap_UpdateEntry: changed key appears in UpdatedTags only, not RemovedTags (E-16 upsert, N-03 req 3).
+// TestMap_UpdateEntry: changed key appears in UpdatedTags only, not RemovedTags (R-DG-006, R-DG-016 upsert, R-DG-016 req 3).
 func TestMap_UpdateEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "old"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "new"}}
@@ -3369,14 +3369,14 @@ func TestMap_UpdateEntry(t *testing.T) {
 	if d.UpdatedTags == nil || d.UpdatedTags["x"] != "new" {
 		t.Errorf("UpdatedTags must have x=new; got %v", d.UpdatedTags)
 	}
-	// E-16: a value-changed entry must NOT appear in RemovedTags.
+	// R-DG-006, R-DG-016: a value-changed entry must NOT appear in RemovedTags.
 	if len(d.RemovedTags) != 0 {
-		t.Errorf("RemovedTags must be empty for update-only delta (E-16 upsert); got %v", d.RemovedTags)
+		t.Errorf("RemovedTags must be empty for update-only delta (R-DG-006, R-DG-016 upsert); got %v", d.RemovedTags)
 	}
 }
 
 // TestMap_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove/update on both
-// Tags (scalar value) and Scores (struct value with reflect.DeepEqual comparison) (N-03 req 4).
+// Tags (scalar value) and Scores (struct value with reflect.DeepEqual comparison) (R-DG-016 req 4).
 func TestMap_RoundTrip(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{
 		Header: header(1), Key: "k",
@@ -3415,7 +3415,7 @@ func TestMap_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestMap_AtomicCoexistence: Count-only change yields non-nil SetCount with nil map deltas (N-03 req 5).
+// TestMap_AtomicCoexistence: Count-only change yields non-nil SetCount with nil map deltas (R-DG-016 req 5).
 func TestMap_AtomicCoexistence(t *testing.T) {
 	tags := map[string]string{"x": "1"}
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: tags, Count: 1}
@@ -3439,7 +3439,7 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 }
 
 // compileCheckEmitNestedSlice verifies that the generated nested_slice delta source
-// compiles and satisfies five runtime contracts (N-04, E-15 set-diff semantics):
+// compiles and satisfies five runtime contracts (R-DG-016, R-DG-028, R-DG-006, R-DG-016 set-diff semantics):
 //
 //  1. Add elements: Diff records new elements in AddedNames; Apply adds them.
 //  2. Remove elements: Diff records removed elements in RemovedNames; Apply removes them.
@@ -3448,7 +3448,7 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 //     add/remove on both Names (string) and Tags (comparable struct).
 //  5. Atomic coexistence: Count-only change → SetCount non-nil, slice deltas nil.
 //
-// Covers: N-04, E-15
+// Covers: R-DG-016, R-DG-028, R-DG-006, R-DG-016
 func compileCheckEmitNestedSlice(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3500,7 +3500,7 @@ func sortedStrings(ss []string) []string {
 	return out
 }
 
-// TestSlice_AddElements: Diff records new elements in AddedNames; Apply adds them (N-04 req 1).
+// TestSlice_AddElements: Diff records new elements in AddedNames; Apply adds them (R-DG-016, R-DG-028 req 1).
 func TestSlice_AddElements(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x", "y"}}
@@ -3519,7 +3519,7 @@ func TestSlice_AddElements(t *testing.T) {
 	}
 }
 
-// TestSlice_RemoveElements: Diff records removed elements in RemovedNames; Apply removes them (N-04 req 2).
+// TestSlice_RemoveElements: Diff records removed elements in RemovedNames; Apply removes them (R-DG-016, R-DG-028 req 2).
 func TestSlice_RemoveElements(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x", "y"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x"}}
@@ -3538,7 +3538,7 @@ func TestSlice_RemoveElements(t *testing.T) {
 	}
 }
 
-// TestSlice_AddAndRemove: simultaneous add and remove populates both delta fields (N-04 req 3).
+// TestSlice_AddAndRemove: simultaneous add and remove populates both delta fields (R-DG-016, R-DG-028 req 3).
 func TestSlice_AddAndRemove(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"keep", "drop"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"keep", "new"}}
@@ -3554,7 +3554,7 @@ func TestSlice_AddAndRemove(t *testing.T) {
 }
 
 // TestSlice_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove on both
-// Names (string) and Tags (comparable struct) (N-04 req 4).
+// Names (string) and Tags (comparable struct) (R-DG-016, R-DG-028 req 4).
 func TestSlice_RoundTrip(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{
 		Header: hdr(1), Key: "k",
@@ -3587,7 +3587,7 @@ func TestSlice_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSlice_AtomicCoexistence: Count-only change yields non-nil SetCount with nil slice deltas (N-04 req 5).
+// TestSlice_AtomicCoexistence: Count-only change yields non-nil SetCount with nil slice deltas (R-DG-016, R-DG-028 req 5).
 func TestSlice_AtomicCoexistence(t *testing.T) {
 	names := []string{"x", "y"}
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: names, Count: 1}
@@ -3612,13 +3612,13 @@ func TestSlice_AtomicCoexistence(t *testing.T) {
 
 // compileCheckEmitNestedSliceReflect verifies that the generated nested_slice_reflect
 // delta source compiles and satisfies three runtime contracts for the non-comparable
-// element path (N-04, §5.2 reflect.DeepEqual fallback):
+// element path (R-DG-016, R-DG-028, §5.2 reflect.DeepEqual fallback):
 //
 //  1. Add blob: Diff records new []byte in AddedBlobs; Apply adds it.
 //  2. Remove blob: Diff records removed []byte in RemovedBlobs; Apply removes it.
 //  3. Round-trip: Apply(a, Diff(a,b)) payload-equals b for simultaneous add/remove.
 //
-// Covers: N-04, §5.2 (non-comparable O(n²) path)
+// Covers: R-DG-016, R-DG-028, §5.2 (non-comparable O(n²) path)
 func compileCheckEmitNestedSliceReflect(t *testing.T, generatedSrc []byte) {
 	t.Helper()
 
@@ -3652,7 +3652,7 @@ func blobHdr(seq uint64) eddt.Header {
 	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
 }
 
-// TestReflect_AddBlob: Diff records new []byte in AddedBlobs; Apply adds it (N-04 §5.2 req 1).
+// TestReflect_AddBlob: Diff records new []byte in AddedBlobs; Apply adds it (R-DG-016, R-DG-028 §5.2 req 1).
 func TestReflect_AddBlob(t *testing.T) {
 	b1 := []byte{1, 2, 3}
 	b2 := []byte{4, 5, 6}
@@ -3673,7 +3673,7 @@ func TestReflect_AddBlob(t *testing.T) {
 	}
 }
 
-// TestReflect_RemoveBlob: Diff records removed []byte in RemovedBlobs; Apply removes it (N-04 §5.2 req 2).
+// TestReflect_RemoveBlob: Diff records removed []byte in RemovedBlobs; Apply removes it (R-DG-016, R-DG-028 §5.2 req 2).
 func TestReflect_RemoveBlob(t *testing.T) {
 	b1 := []byte{1, 2, 3}
 	b2 := []byte{4, 5, 6}
@@ -3694,7 +3694,7 @@ func TestReflect_RemoveBlob(t *testing.T) {
 	}
 }
 
-// TestReflect_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove (N-04 §5.2 req 3).
+// TestReflect_RoundTrip: Apply(a, Diff(a,b))==b for simultaneous add/remove (R-DG-016, R-DG-028 §5.2 req 3).
 func TestReflect_RoundTrip(t *testing.T) {
 	keep := []byte{1}
 	drop := []byte{2}
@@ -3708,7 +3708,7 @@ func TestReflect_RoundTrip(t *testing.T) {
 	result, err := nested_slice_reflect.Apply(a, d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 
-	// Survivor order: keep is first (source order), add is appended (E-03).
+	// Survivor order: keep is first (source order), add is appended (R-DG-028).
 	want := [][]byte{keep, add}
 	if !reflect.DeepEqual(result.Blobs, want) {
 		t.Errorf("RoundTrip: got %v want %v", result.Blobs, want)
@@ -3825,7 +3825,7 @@ func contains(slice []string, s string) bool {
 // (i.e. the file is not gofmt-clean as written). When the file is dirty the
 // helper also runs gofmt -d and includes the diff in the failure message so
 // the template defect is immediately diagnosable.
-// Covers: R-11
+// Covers: R-DG-037
 func assertGofmtClean(t *testing.T, path string) {
 	t.Helper()
 	out, err := exec.Command("gofmt", "-l", path).CombinedOutput()
@@ -3868,7 +3868,7 @@ func findMethodDecl(f *ast.File, recvType, methodName string) *ast.FuncDecl {
 }
 
 // ---------------------------------------------------------------------------
-// CL-05..07 clearable-envelope template tests
+// R-DG-016..07 clearable-envelope template tests
 // ---------------------------------------------------------------------------
 
 func TestEmitTemplate_Clearable_Struct_SamePkg(t *testing.T) {
@@ -3902,7 +3902,7 @@ func TestEmitTemplate_Clearable_Struct_SamePkg(t *testing.T) {
 		t.Error("expected runtime.FieldDelta[AddressDelta] in generated output")
 	}
 
-	// AddressDelta companion must be emitted (N-01 reuse path).
+	// AddressDelta companion must be emitted (R-DG-016 reuse path).
 	if findStructDecl(f, "AddressDelta") == nil {
 		t.Error("AddressDelta companion struct must be emitted")
 	}
@@ -4619,10 +4619,10 @@ func TestClearableSlice_AtomicCoexistence(t *testing.T) {
 	})
 }
 
-// TestEmitTemplate_Clearable_Struct_Reflect_SamePkg verifies CL-05..07 generation
+// TestEmitTemplate_Clearable_Struct_Reflect_SamePkg verifies R-DG-016..07 generation
 // for a clearable struct field whose inner type is non-comparable (contains a slice).
 // ClearableStructEqReflect=true must trigger reflect.DeepEqual in the emitted Diff.
-// Covers: CL-07, HK-16.
+// Covers: R-DG-016, R-DG-026, R-DG-026.
 func TestEmitTemplate_Clearable_Struct_Reflect_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "clearable_struct_reflect_delta.go")
 	cfg := Config{
@@ -4653,7 +4653,7 @@ func TestEmitTemplate_Clearable_Struct_Reflect_SamePkg(t *testing.T) {
 	if !strings.Contains(srcStr, "reflect.DeepEqual") {
 		t.Error("expected reflect.DeepEqual in generated Diff for non-comparable clearable struct")
 	}
-	// LogEntryDelta companion must be emitted (N-01 path).
+	// LogEntryDelta companion must be emitted (R-DG-016 path).
 	if findStructDecl(f, "LogEntryDelta") == nil {
 		t.Error("LogEntryDelta companion struct must be emitted")
 	}
@@ -4753,12 +4753,12 @@ func TestClearableStructReflect_OpAssert(t *testing.T) {
 }
 `
 
-// TestEmitTemplate_Clearable_Pointer_SamePkg verifies CL-05..07 generation for
+// TestEmitTemplate_Clearable_Pointer_SamePkg verifies R-DG-016..07 generation for
 // a clearable struct field whose inner struct contains pointer sub-fields.
 // ContactInfo is comparable (pointer equality), so ClearableStructEqReflect=false
 // and no reflect import is needed.  The ContactInfoDelta companion must carry
 // SetPhone **string for the *string sub-field.
-// Covers: CL-07, HK-16.
+// Covers: R-DG-016, R-DG-026, R-DG-026.
 func TestEmitTemplate_Clearable_Pointer_SamePkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "clearable_pointer_delta.go")
 	cfg := Config{
@@ -4898,8 +4898,8 @@ func TestClearablePointer_OpAssert(t *testing.T) {
 // in cross-package mode (OutPkgNameOverride="deltas").
 // Wrapper types (TagDelta, AttrsMapDelta, GroupsSliceDelta) live in the output
 // package; the zero-composite for the clearable struct field must be model.Tag{}.
-// No method wrappers are emitted in cross-package mode (E-12).
-// Covers: CL-07, E-12, HK-16.
+// No method wrappers are emitted in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
+// Covers: R-DG-016, R-DG-026, R-DG-012, R-DG-013, R-DG-019, R-DG-026.
 func TestEmitTemplate_Clearable_CrossPkg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "clearable_crosspkg_delta.go")
 	cfg := Config{
@@ -4941,9 +4941,9 @@ func TestEmitTemplate_Clearable_CrossPkg(t *testing.T) {
 			t.Errorf("struct %s must be emitted in cross-package output", want)
 		}
 	}
-	// No method wrappers in cross-package mode (E-12).
+	// No method wrappers in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 	if findMethodDecl(f, "ClearableCrossPkgSnapshot", "Apply") != nil {
-		t.Error("Apply method wrapper must not be emitted in cross-package mode (E-12)")
+		t.Error("Apply method wrapper must not be emitted in cross-package mode (R-DG-012, R-DG-013, R-DG-019)")
 	}
 	// Source-package import must be present.
 	if !strings.Contains(srcStr, "clearable_crosspkg/model") {

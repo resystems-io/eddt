@@ -1,4 +1,4 @@
-// Package nested_slice_reflect is the N-04 non-comparable emit fixture.
+// Package nested_slice_reflect is the R-DG-016, R-DG-028 non-comparable emit fixture.
 // It exercises delta.nested on a slice whose element type ([]byte) is not
 // comparable in Go, triggering the O(n²) reflect.DeepEqual fallback path
 // (§5.2, SliceElemUseReflectEq=true) and the conditional reflect import.
@@ -10,7 +10,7 @@ import eddt "go.resystems.io/eddt/runtime"
 // type ([]byte) is not comparable: the generator sets SliceElemUseReflectEq=true
 // and emits reflect.DeepEqual for element equality in both Apply and Diff.
 //
-// Delta encoding (N-04, E-15 set-difference semantics):
+// Delta encoding (R-DG-016, R-DG-028, R-DG-006, R-DG-016 set-difference semantics):
 //   - Blobs → AddedBlobs [][]byte + RemovedBlobs [][]byte
 type NestedSliceReflectSnapshot struct {
 	eddt.Header

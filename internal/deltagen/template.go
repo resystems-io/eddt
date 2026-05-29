@@ -2,8 +2,8 @@ package deltagen
 
 // template.go implements the code-emission stage (Phase 4) for delta-gen.
 // It provides text/template-driven generation of the TDelta companion struct
-// (EM-01) and, in later Phase-4 items, the Apply, Diff, Coalesce, and
-// EntityID function bodies (EM-02..EM-05).
+// (R-DG-015) and, in later Phase-4 items, the Apply, Diff, Coalesce, and
+// EntityID function bodies (R-DG-012, R-DG-013, R-DG-014, R-DG-034).
 //
 // # Architecture
 //
@@ -21,12 +21,12 @@ package deltagen
 //     (delta.nested) before rendering each field's Delta-side type via
 //     types.TypeString. Sets UseReflectEq via types.Comparable per field
 //     and NeedsReflect per snapshot for the conditional reflect-import
-//     logic (EM-03). Only non-comparable types (slice, map, complex structs)
+//     logic (R-DG-012, R-DG-013). Only non-comparable types (slice, map, complex structs)
 //     trigger reflect; comparable types including pointers use !=.
 //   - executeEmit orchestrates build → execute → go/format → WriteFile,
 //     called by generator.go's emitStage.
 //
-// # Extending for EM-02..EM-05
+// # Extending for R-DG-012, R-DG-013, R-DG-014, R-DG-034
 //
 // Add new fields to fieldView and snapshotView, new named sub-templates under
 // deltaTemplateStr, and new rendering logic in buildSnapshotView.  The
@@ -80,7 +80,7 @@ const (
 // ── View types ────────────────────────────────────────────────────────────────
 
 // templateData is the top-level input to the delta template. Fields are stable
-// across EM-01..EM-05 so sub-templates added in later items can reuse them.
+// across R-DG-015 through R-DG-034 so sub-templates added in later items can reuse them.
 type templateData struct {
 	// Version is the CLI --version string embedded in the generated file header.
 	Version string
@@ -109,16 +109,16 @@ type importSpec struct {
 // nestedTypeView is the template's view for one delta.nested companion type.
 // Emitted before the parent snapshotView's TDelta declaration.
 // nestedKind distinguishes between struct-companion types (nestedKindStruct,
-// the default) and the net-new map/slice wrapper types introduced for CL-05..07
+// the default) and the net-new map/slice wrapper types introduced for R-DG-016..07
 // clearable emission (nestedKindMapWrapper, nestedKindSliceWrapper). The zero
 // value (nestedKindStruct) preserves byte-identical emission for all existing
 // nested struct companions.
 type nestedKind int
 
 const (
-	nestedKindStruct       nestedKind = iota // existing N-01 struct companion
-	nestedKindMapWrapper                     // CL-05: <X>MapDelta wrapper for clearable map field
-	nestedKindSliceWrapper                   // CL-05: <X>SliceDelta wrapper for clearable slice field
+	nestedKindStruct       nestedKind = iota // existing R-DG-016 struct companion
+	nestedKindMapWrapper                     // R-DG-016: <X>MapDelta wrapper for clearable map field
+	nestedKindSliceWrapper                   // R-DG-016: <X>SliceDelta wrapper for clearable slice field
 )
 
 type nestedTypeView struct {
@@ -156,7 +156,7 @@ type nestedTypeView struct {
 	IsSliceWrapper bool
 
 	// Wrapper payload fields: populated only for nestedKindMapWrapper and
-	// nestedKindSliceWrapper (CL-05..07). The algorithm mirrors the existing
+	// nestedKindSliceWrapper (R-DG-016..07). The algorithm mirrors the existing
 	// applyMapField / diffMapField (and applySliceField / diffSliceField) logic
 	// but parameterised over the wrapper struct rather than the parent's sibling fields.
 
@@ -199,55 +199,55 @@ type snapshotView struct {
 	Qualifier string
 
 	// KeyName is the source field name of the entity-key field (ps.KeyVar.Name()).
-	// Used in Apply to emit "result.<KeyName> = s.<KeyName>" (EM-02).
+	// Used in Apply to emit "result.<KeyName> = s.<KeyName>" (R-DG-012, R-DG-013).
 	KeyName string
 
 	// KeyTypeName is the bare (unqualified) type name of the entity-key field,
-	// e.g. "UEKey", "IMSI", or "string" for a raw-basic key (EM-05).
+	// e.g. "UEKey", "IMSI", or "string" for a raw-basic key (R-DG-034).
 	KeyTypeName string
 
 	// KeyQualifier is the package-qualifier prefix for the key type in cross-
 	// package mode (e.g. "model."). Empty in same-package mode or when the key
 	// type is an unnamed basic (e.g. raw string). Set alongside Qualifier in
-	// executeEmit (EM-05, E-12).
+	// executeEmit (R-DG-034, R-DG-012, R-DG-013, R-DG-019).
 	KeyQualifier string
 
 	// KeyHashLines is the ordered list of runtime.Write* call strings for the
-	// EntityID function body (EM-05). One line for a scalar key; one line per
+	// EntityID function body (R-DG-034). One line for a scalar key; one line per
 	// exported sub-field in source order for a struct key.
 	KeyHashLines []string
 
 	// EmitEntityIDMethod is true when the EntityID method wrapper should be
 	// emitted on the key type: same-package mode AND the key type is a named
 	// type (Go forbids methods on unnamed basic types). When false, only the
-	// package-level EntityID function is emitted (EM-05, R-24, E-12).
+	// package-level EntityID function is emitted (R-DG-034, R-DG-012, R-DG-014, R-DG-012, R-DG-013, R-DG-019).
 	EmitEntityIDMethod bool
 
 	// EmitMethod is true when the output package matches the source package
-	// (E-12). When true, the template emits same-package method wrappers that
+	// (R-DG-012, R-DG-013, R-DG-019). When true, the template emits same-package method wrappers that
 	// delegate to the package-level Apply, Diff, and Coalesce functions
-	// (EM-02, EM-03, EM-04).
+	// (R-DG-012, R-DG-013, R-DG-012, R-DG-013, R-DG-012, R-DG-013).
 	EmitMethod bool
 
 	// NeedsReflect is true when at least one DiffFields entry uses
-	// reflect.DeepEqual for its comparison (EM-03). executeEmit uses this to
+	// reflect.DeepEqual for its comparison (R-DG-012, R-DG-013). executeEmit uses this to
 	// inject a "reflect" import only when needed.
 	NeedsReflect bool
 
 	// Fields is the ordered list of payload fields in source declaration order
 	// (excluding the entity-key field extracted into KeyName). Suppressed fields
 	// (delta.omit / delta.retired) are included with Suppressed: true so the
-	// Apply template can emit result.F = s.F propagation assignments (EM-02).
+	// Apply template can emit result.F = s.F propagation assignments (R-DG-012, R-DG-013).
 	Fields []fieldView
 
 	// DiffFields is the subset of Fields that have a Delta-side representation
 	// (i.e. non-suppressed fields). The Diff template iterates DiffFields so
-	// that suppressed fields produce no body line (EM-03).
+	// that suppressed fields produce no body line (R-DG-012, R-DG-013).
 	DiffFields []fieldView
 
 	// NestedTypes holds companion views for delta.nested struct-value fields,
 	// in bottom-up order (deepest companion type first). Emitted before the
-	// parent TDelta declaration so forward references are avoided (N-01).
+	// parent TDelta declaration so forward references are avoided (R-DG-016).
 	NestedTypes []nestedTypeView
 }
 
@@ -271,8 +271,8 @@ type fieldView struct {
 
 	// Suppressed is true for delta.omit and delta.retired fields. The
 	// Delta-side field is absent from TDelta but Apply still propagates the
-	// source value via result.F = s.F (EM-02). Suppressed fields are excluded
-	// from DiffFields and therefore produce no Diff body line (EM-03).
+	// source value via result.F = s.F (R-DG-012, R-DG-013). Suppressed fields are excluded
+	// from DiffFields and therefore produce no Diff body line (R-DG-012, R-DG-013).
 	Suppressed bool
 
 	// UseReflectEq is true when the Diff template must use reflect.DeepEqual
@@ -322,7 +322,7 @@ type fieldView struct {
 	// O(n) map[T]struct{} set path. Set by !types.Comparable(sliceT.Elem()). Only when Shape==fieldShapeSlice.
 	SliceElemUseReflectEq bool
 
-	// ── Clearable-envelope fields (CL-05..07, E-17/E-23) ─────────────────────
+	// ── Clearable-envelope fields (R-DG-016..07, R-DG-007, R-DG-016/R-DG-007) ─────────────────────
 	//
 	// The following fields are only meaningful when Shape==fieldShapeClearable.
 	// The parent Delta carries `X runtime.FieldDelta[ClearableInner]` (single field).
@@ -360,36 +360,36 @@ type fieldView struct {
 // ── Template ─────────────────────────────────────────────────────────────────
 
 // deltaTemplateStr is the text/template source for the generated Delta file.
-// EM-02 scope: type declarations (EM-01) + Apply function and method wrapper.
-// EM-03 scope: Diff function and method wrapper.
-// EM-04 scope: Coalesce function and method wrapper.
-// EM-05 scope: EntityID function and method wrapper on the key type.
-// N-01 scope:  companion Delta types and Apply/Diff for delta.nested struct fields.
+// R-DG-012, R-DG-013 scope: type declarations (R-DG-015) + Apply function and method wrapper.
+// R-DG-012, R-DG-013 scope: Diff function and method wrapper.
+// R-DG-012, R-DG-013 scope: Coalesce function and method wrapper.
+// R-DG-034 scope: EntityID function and method wrapper on the key type.
+// R-DG-016 scope:  companion Delta types and Apply/Diff for delta.nested struct fields.
 //
 // Sub-template inventory:
 //   - applyFunc:         package-level Apply function (always emitted).
 //   - applyField:        per-field Apply contribution (atomic, suppressed, or nested).
-//   - applyMethod:       same-package method wrapper delegating to Apply (E-12).
+//   - applyMethod:       same-package method wrapper delegating to Apply (R-DG-012, R-DG-013, R-DG-019).
 //   - diffFunc:          package-level Diff function (always emitted).
 //   - diffField:         per-field Diff contribution (non-suppressed fields only).
-//   - diffMethod:        same-package method wrapper delegating to Diff (E-12).
+//   - diffMethod:        same-package method wrapper delegating to Diff (R-DG-012, R-DG-013, R-DG-019).
 //   - coalesceFunc:      package-level Coalesce function (always emitted).
-//   - coalesceMethod:    same-package method wrapper delegating to Coalesce (E-12).
-//   - entityIDFunc:      package-level EntityID function (always emitted, EM-05).
-//   - entityIDMethod:    same-package method wrapper on the key type (E-12, EM-05);
+//   - coalesceMethod:    same-package method wrapper delegating to Coalesce (R-DG-012, R-DG-013, R-DG-019).
+//   - entityIDFunc:      package-level EntityID function (always emitted, R-DG-034).
+//   - entityIDMethod:    same-package method wrapper on the key type (R-DG-012, R-DG-013, R-DG-019, R-DG-034);
 //     emitted only when the key type is a named type (EmitEntityIDMethod).
-//   - nestedTypeDecl:      companion Delta struct for a delta.nested type (N-01).
-//   - nestedApplyFunc:     package-level ApplyU function for a nested type (N-01).
-//   - nestedApplyMethod:   same-package method wrapper func (u U) Apply(...) (N-01).
+//   - nestedTypeDecl:      companion Delta struct for a delta.nested type (R-DG-016).
+//   - nestedApplyFunc:     package-level ApplyU function for a nested type (R-DG-016).
+//   - nestedApplyMethod:   same-package method wrapper func (u U) Apply(...) (R-DG-016).
 //   - nestedApplyField:    per-field body line for nestedApplyFunc (uses u. receiver).
-//   - nestedDiffFunc:      package-level DiffU function for a nested type (N-01).
-//   - nestedDiffMethod:    same-package method wrapper func (u U) Diff(...) (N-01).
-//   - applyMapField:         apply body block for a delta.nested map field (N-03, uses s.).
-//   - nestedApplyMapField:   apply body block for a map field inside a nested type (N-03, uses u.).
-//   - diffMapField:          diff body block for a delta.nested map field (N-03, E-16).
-//   - applySliceField:       apply body block for a delta.nested slice field (N-04, uses s.).
-//   - nestedApplySliceField: apply body block for a slice field inside a nested type (N-04, uses u.).
-//   - diffSliceField:        diff body block for a delta.nested slice field (N-04, E-15).
+//   - nestedDiffFunc:      package-level DiffU function for a nested type (R-DG-016).
+//   - nestedDiffMethod:    same-package method wrapper func (u U) Diff(...) (R-DG-016).
+//   - applyMapField:         apply body block for a delta.nested map field (R-DG-016, uses s.).
+//   - nestedApplyMapField:   apply body block for a map field inside a nested type (R-DG-016, uses u.).
+//   - diffMapField:          diff body block for a delta.nested map field (R-DG-016, R-DG-006, R-DG-016).
+//   - applySliceField:       apply body block for a delta.nested slice field (R-DG-016, R-DG-028, uses s.).
+//   - nestedApplySliceField: apply body block for a slice field inside a nested type (R-DG-016, R-DG-028, uses u.).
+//   - diffSliceField:        diff body block for a delta.nested slice field (R-DG-016, R-DG-028, R-DG-006, R-DG-016).
 //
 // The dict FuncMap helper enables multi-value pipelines to sub-templates
 // (writer-gen pattern); it is registered up-front so later items do not need
@@ -426,7 +426,7 @@ type {{.DeltaName}} struct {
 // Apply produces the Snapshot that results from applying d to s.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderAfterApply and are propagated to the caller as a
-// non-nil error. See delta-gen-spec.md §6.4 / §7.1 (Errata E-19).
+// non-nil error. See delta-gen-spec.md §6.4 / §7.1 (Errata R-DG-012).
 func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
 	var result {{.Qualifier}}{{.Name}}
 	hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)
@@ -444,7 +444,7 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
-// package-level Apply function (E-12).
+// package-level Apply function (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Apply(d {{.DeltaName}}) ({{.Name}}, error) {
 	return Apply(s, d)
 }
@@ -454,7 +454,7 @@ func (s {{.Name}}) Apply(d {{.DeltaName}}) ({{.Name}}, error) {
 // Diff produces the minimal Delta d such that Apply(a, d) payload-equals b.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderForDiff and are propagated to the caller as a non-nil error.
-// See delta-gen-spec.md §6.5 / §7.2 (Errata E-20).
+// See delta-gen-spec.md §6.5 / §7.2 (Errata R-DG-012).
 func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 	hdr, err := runtime.HeaderForDiff(a.Header, b.Header)
 	if err != nil {
@@ -470,7 +470,7 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
-// package-level Diff function (E-12).
+// package-level Diff function (R-DG-012, R-DG-013, R-DG-019).
 func (a {{.Name}}) Diff(b {{.Name}}) ({{.DeltaName}}, error) {
 	return Diff(a, b)
 }
@@ -480,7 +480,7 @@ func (a {{.Name}}) Diff(b {{.Name}}) ({{.DeltaName}}, error) {
 // Coalesce folds a slice of TDeltas into s by iterated Apply. It is a pure
 // function; chain-envelope validations propagate from the first failing Apply
 // step. An empty slice returns (s, nil) without any runtime call. See
-// delta-gen-spec.md §7.3 / §8.3 (Errata E-21, E-19).
+// delta-gen-spec.md §7.3 / §8.3 (Errata R-DG-012, R-DG-012).
 func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
 	result := s
 	for _, d := range ds {
@@ -496,7 +496,7 @@ func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.
 
 {{define "coalesceMethod"}}
 // Coalesce is an ergonomic same-package wrapper that delegates to the
-// package-level Coalesce function (E-12).
+// package-level Coalesce function (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
 	return Coalesce(s, ds)
 }
@@ -506,7 +506,7 @@ func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
 // EntityID creates a hash for the key field: {{.KeyName}}
 //
 // It returns the deterministic content-hash EntityID of k. The hash is
-// Blake2b-256 over the canonical encoding of k's fields (E-10, RT-02). It is
+// Blake2b-256 over the canonical encoding of k's fields (R-DG-034, R-DG-035, RT-02). It is
 // a pure function: same input → same output forever.
 func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 	h := runtime.NewHash()
@@ -521,7 +521,7 @@ func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 // EntityID creates a hash for the key field: {{.KeyName}}
 //
 // It is an ergonomic same-package wrapper that delegates to the
-// package-level EntityID function (E-12).
+// package-level EntityID function (R-DG-012, R-DG-013, R-DG-019).
 func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
 	return EntityID(k)
 }
@@ -545,7 +545,7 @@ func {{.ApplyFuncName}}(u {{.Name}}, d {{.DeltaName}}) {{.Name}} {
 {{end -}}
 
 {{define "nestedApplyMethod"}}
-// Apply is an ergonomic same-package wrapper (E-12).
+// Apply is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
 func (u {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} { return {{.ApplyFuncName}}(u, d) }
 {{end -}}
 
@@ -562,12 +562,12 @@ func {{.DiffFuncName}}(a, b {{.Name}}) {{.DeltaName}} {
 {{end -}}
 
 {{define "nestedDiffMethod"}}
-// Diff is an ergonomic same-package wrapper (E-12).
+// Diff is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
 func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName}}(u, other) }
 {{end -}}
 
 {{define "applyMapFieldBody"}}
-// apply delta.nested map field {{.F.Name}} (N-03):
+// apply delta.nested map field {{.F.Name}} (R-DG-016):
 // 1. copy source map, 2. delete removed keys, 3. upsert updated entries.
 {
 	__m := make({{.F.DeltaType}}, len({{.Recv}}.{{.F.Name}}))
@@ -578,7 +578,7 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 }{{end -}}
 
 {{define "diffMapField"}}
-// diff delta.nested map field {{.Name}} (N-03, E-16 upsert semantics):
+// diff delta.nested map field {{.Name}} (R-DG-016, R-DG-006, R-DG-016 upsert semantics):
 // RemovedX = keys in a absent from b; UpdatedX = entries in b absent or changed vs a.
 // A value-changed entry appears in UpdatedX only, never in RemovedX.
 {
@@ -600,8 +600,8 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 }{{end -}}
 
 {{define "applySliceFieldBody"}}
-// apply delta.nested slice field {{.F.Name}} (N-04, E-15 set-diff semantics):
-// 1. filter removed elements, 2. append added elements (E-03 survivor order).
+// apply delta.nested slice field {{.F.Name}} (R-DG-016, R-DG-028, R-DG-006, R-DG-016 set-diff semantics):
+// 1. filter removed elements, 2. append added elements (R-DG-028 survivor order).
 {{- if .F.SliceElemUseReflectEq}}
 // Element type is not comparable: O(n²) reflect.DeepEqual fallback (§5.2).
 {
@@ -637,7 +637,7 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 {{- end}}{{end -}}
 
 {{define "diffSliceField"}}
-// diff delta.nested slice field {{.Name}} (N-04, E-15 set-diff semantics):
+// diff delta.nested slice field {{.Name}} (R-DG-016, R-DG-028, R-DG-006, R-DG-016 set-diff semantics):
 // AddedX = b.X ∖ a.X; RemovedX = a.X ∖ b.X.
 {{- if .SliceElemUseReflectEq}}
 // Element type is not comparable: O(n²) reflect.DeepEqual fallback (§5.2).
@@ -747,7 +747,7 @@ func (w {{.DeltaName}}) IsEmpty() bool {
 	return len(w.{{.WrapperUpdatedName}}) == 0 && len(w.{{.WrapperRemovedName}}) == 0
 }
 
-// {{.ApplyFuncName}} applies w to prior, returning the resulting map (N-03).
+// {{.ApplyFuncName}} applies w to prior, returning the resulting map (R-DG-016).
 func {{.ApplyFuncName}}(prior {{.WrapperMapType}}, w {{.DeltaName}}) {{.WrapperMapType}} {
 	__m := make({{.WrapperMapType}}, len(prior))
 	for __k, __v := range prior { __m[__k] = __v }
@@ -756,7 +756,7 @@ func {{.ApplyFuncName}}(prior {{.WrapperMapType}}, w {{.DeltaName}}) {{.WrapperM
 	return __m
 }
 
-// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) value-equals b (N-03, E-16).
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) value-equals b (R-DG-016, R-DG-006, R-DG-016).
 func {{.DiffFuncName}}(a, b {{.WrapperMapType}}) {{.DeltaName}} {
 	var w {{.DeltaName}}
 	for __k := range a {
@@ -788,7 +788,7 @@ type {{.DeltaName}} struct {
 func (w {{.DeltaName}}) IsEmpty() bool {
 	return len(w.{{.WrapperUpdatedName}}) == 0 && len(w.{{.WrapperRemovedName}}) == 0
 }
-{{if .WrapperUseReflectEq}}// {{.ApplyFuncName}} applies w to prior (N-04, E-15); O(n²) reflect.DeepEqual fallback (§5.2).
+{{if .WrapperUseReflectEq}}// {{.ApplyFuncName}} applies w to prior (R-DG-016, R-DG-028, R-DG-006, R-DG-016); O(n²) reflect.DeepEqual fallback (§5.2).
 func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.WrapperSliceType}} {
 	__src := prior
 	if len(w.{{.WrapperRemovedName}}) > 0 {
@@ -804,7 +804,7 @@ func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.Wrappe
 	}
 	return append(__src, w.{{.WrapperUpdatedName}}...)
 }
-// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (N-04, E-15); O(n²).
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (R-DG-016, R-DG-028, R-DG-006, R-DG-016); O(n²).
 func {{.DiffFuncName}}(a, b {{.WrapperSliceType}}) {{.DeltaName}} {
 	var w {{.DeltaName}}
 	for _, __v := range b {
@@ -823,7 +823,7 @@ func {{.DiffFuncName}}(a, b {{.WrapperSliceType}}) {{.DeltaName}} {
 	}
 	return w
 }
-{{- else}}// {{.ApplyFuncName}} applies w to prior (N-04, E-15); O(n) map[T]struct{} membership set.
+{{- else}}// {{.ApplyFuncName}} applies w to prior (R-DG-016, R-DG-028, R-DG-006, R-DG-016); O(n) map[T]struct{} membership set.
 func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.WrapperSliceType}} {
 	__src := prior
 	if len(w.{{.WrapperRemovedName}}) > 0 {
@@ -837,7 +837,7 @@ func {{.ApplyFuncName}}(prior {{.WrapperSliceType}}, w {{.DeltaName}}) {{.Wrappe
 	}
 	return append(__src, w.{{.WrapperUpdatedName}}...)
 }
-// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (N-04, E-15); O(n).
+// {{.DiffFuncName}} computes the minimal {{.DeltaName}} such that {{.ApplyFuncName}}(a, d) set-equals b (R-DG-016, R-DG-028, R-DG-006, R-DG-016); O(n).
 func {{.DiffFuncName}}(a, b {{.WrapperSliceType}}) {{.DeltaName}} {
 	var w {{.DeltaName}}
 	__aset := make(map[{{.WrapperSliceElem}}]struct{}, len(a))
@@ -885,7 +885,7 @@ var deltaTemplate = template.Must(
 // view construction and import resolution.
 type emitOpts struct {
 	// crossPackage is true when the output package differs from the source
-	// package (E-12), requiring type-reference qualification.
+	// package (R-DG-012, R-DG-013, R-DG-019), requiring type-reference qualification.
 	crossPackage bool
 
 	// aliases maps import path → caller-supplied local alias (from --pkg-alias).
@@ -1015,8 +1015,8 @@ type fieldBuildCtx struct {
 	qualifier  types.Qualifier
 	emitMethod bool
 	parentName string          // enclosing struct name, used in error messages
-	visited    map[string]bool // N-01 dedup set: prevents duplicate companion emission
-	inPath     map[string]bool // N-02 cycle-detection: active DFS ancestry chain
+	visited    map[string]bool // R-DG-016 dedup set: prevents duplicate companion emission
+	inPath     map[string]bool // R-DG-009 cycle-detection: active DFS ancestry chain
 }
 
 // fieldBuildResult is returned by buildFieldView.
@@ -1121,7 +1121,7 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 		SourceTypeStr: types.TypeString(src.Typ, ctx.qualifier),
 	}
 	needsReflect := false
-	// ShapePointer (*T): nil-equivalence + dereferenced-value comparison (R-27, E-02).
+	// ShapePointer (*T): nil-equivalence + dereferenced-value comparison (R-DG-016, R-DG-016).
 	if src.Shape == ShapePointer {
 		fv.Shape = fieldShapePointer
 		pointeeT := src.Typ.Underlying().(*types.Pointer).Elem()
@@ -1145,8 +1145,8 @@ func buildFieldView(src fieldSource, ctx fieldBuildCtx) (fieldBuildResult, error
 // forward references are avoided in the generated output.
 //
 // visited prevents duplicate emission when multiple fields share the same
-// nested type (N-01 req 09). inPath tracks the active DFS ancestry chain; an
-// entry already in inPath signals a cycle and returns an error (N-02 §3.3.2).
+// nested type (R-DG-016). inPath tracks the active DFS ancestry chain; an
+// entry already in inPath signals a cycle and returns an error (R-DG-009 §3.3.2).
 //
 // Returns (view, additional companion views from deeper nesting, error).
 func buildNestedTypeView(
@@ -1159,7 +1159,7 @@ func buildNestedTypeView(
 	inPath map[string]bool,
 ) (nestedTypeView, []nestedTypeView, error) {
 	nv := nestedTypeView{
-		Name:          qualifiedTypeName, // qualified in cross-package mode (E-12)
+		Name:          qualifiedTypeName, // qualified in cross-package mode (R-DG-012, R-DG-013, R-DG-019)
 		DeltaName:     typeName + suffixDelta,
 		ApplyFuncName: prefixApply + typeName,
 		DiffFuncName:  prefixDiff + typeName,
@@ -1253,10 +1253,10 @@ func buildNestedTypeView(
 	return nv, additional, nil
 }
 
-// buildClearableFieldView handles the delta.nested+delta.clearable case (CL-05..07,
-// E-17/E-23). It mutates sv in place, appending to sv.Fields, sv.DiffFields, and
+// buildClearableFieldView handles the delta.nested+delta.clearable case (R-DG-016..07,
+// R-DG-007, R-DG-016/R-DG-007). It mutates sv in place, appending to sv.Fields, sv.DiffFields, and
 // sv.NestedTypes as appropriate. The three shapes diverge in inner type and wrapper:
-//   - struct: inner = <SubType>Delta; reuses N-01 recursion for dedup.
+//   - struct: inner = <SubType>Delta; reuses R-DG-016 recursion for dedup.
 //   - map: inner = <FieldName>MapDelta; appends a nestedKindMapWrapper view.
 //   - slice: inner = <FieldName>SliceDelta; appends a nestedKindSliceWrapper view.
 //
@@ -1373,7 +1373,7 @@ func buildClearableFieldView(
 		if eqReflect {
 			sv.NeedsReflect = true
 		}
-		// Funnel through N-01 recursion so FooDelta/ApplyFoo/DiffFoo are emitted
+		// Funnel through R-DG-016 recursion so FooDelta/ApplyFoo/DiffFoo are emitted
 		// exactly once (deduped vs any plain delta.nested use of the same type).
 		if inPath[subTypeName] {
 			return fmt.Errorf(
@@ -1401,18 +1401,18 @@ func buildClearableFieldView(
 
 // buildSnapshotView constructs the template view for one ParsedSnapshot.
 //
-// delta.nested on struct-value shapes triggers N-01 compositional emission:
+// delta.nested on struct-value shapes triggers R-DG-016 compositional emission:
 // a companion UDelta type + ApplyU/DiffU functions are collected in
 // sv.NestedTypes (bottom-up order). delta.nested on slice/map shapes
-// returns a sentinel error referencing N-03/N-04. (delta.clearable is
-// handled in buildClearableFieldView, CL-05..07.)
+// returns a sentinel error referencing R-DG-016/R-DG-016, R-DG-028. (delta.clearable is
+// handled in buildClearableFieldView, R-DG-016..07.)
 //
-// emitMethod gates same-package method wrappers (E-12): pass true for
+// emitMethod gates same-package method wrappers (R-DG-012, R-DG-013, R-DG-019): pass true for
 // same-package output, false for cross-package.
 //
 // Suppressed fields (delta.omit / delta.retired) are included in sv.Fields
 // with Suppressed: true so the Apply template can emit result.F = s.F
-// propagation assignments (EM-02). The Delta-side type declaration template
+// propagation assignments (R-DG-012, R-DG-013). The Delta-side type declaration template
 // gates on {{not .Suppressed}} to keep them out of TDelta.
 //
 // Each admitted atomic field's DeltaType is rendered via types.TypeString on a
@@ -1421,8 +1421,8 @@ func buildClearableFieldView(
 //	scalar T        → *T
 //	pointer *T      → **T
 //	struct value T  → *T      (atomic, untagged)
-//	slice []T       → *[]T    (atomic per E-15)
-//	map[K]V         → *map[K]V (atomic per E-16)
+//	slice []T       → *[]T    (atomic per R-DG-006, R-DG-016)
+//	map[K]V         → *map[K]V (atomic per R-DG-006, R-DG-016)
 //
 // The caller must pass a qualifier derived from buildImports so that foreign
 // packages are recorded as a side effect of type rendering.
@@ -1433,7 +1433,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 		KeyName:   ps.KeyVar.Name(),
 	}
 
-	// Resolve the key type name and hash lines (EM-05).
+	// Resolve the key type name and hash lines (R-DG-034).
 	switch kt := ps.KeyVar.Type().(type) {
 	case *types.Named:
 		sv.KeyTypeName = kt.Obj().Name()
@@ -1446,8 +1446,8 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 	}
 	sv.KeyHashLines = hashLines
 
-	visited := make(map[string]bool) // dedup set for nested companion types (N-01 req 09)
-	inPath := make(map[string]bool)  // active DFS ancestry chain for cycle detection (N-02)
+	visited := make(map[string]bool) // dedup set for nested companion types (R-DG-016)
+	inPath := make(map[string]bool)  // active DFS ancestry chain for cycle detection (R-DG-009)
 
 	ctx := fieldBuildCtx{
 		qualifier:  qualifier,
@@ -1458,7 +1458,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 	}
 
 	for _, f := range ps.Fields {
-		// CL-05..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
+		// R-DG-016..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
 		// Handled before the shared dispatch since it accumulates directly into sv.
 		if f.Tag.Kind == TagKindNested && f.Tag.Clearable {
 			if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath); err != nil {
@@ -1478,7 +1478,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 			continue
 		}
 
-		// Struct-nested: caller owns cycle detection and recursion (N-01/N-02).
+		// Struct-nested: caller owns cycle detection and recursion (R-DG-016/R-DG-009).
 		if res.IsNested {
 			sv.Fields = append(sv.Fields, res.FV)
 			sv.DiffFields = append(sv.DiffFields, res.FV)
@@ -1510,7 +1510,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 
 		sv.Fields = append(sv.Fields, res.FV)
 		// DiffFields excludes suppressed fields so the Diff template emits no body
-		// line for them (EM-03).
+		// line for them (R-DG-012, R-DG-013).
 		sv.DiffFields = append(sv.DiffFields, res.FV)
 		if res.NeedsReflect {
 			sv.NeedsReflect = true
@@ -1529,7 +1529,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 //     buildImports.
 //  3. Translate each ParsedSnapshot to a snapshotView via buildSnapshotView
 //     (this side-effects the qualifier to record foreign packages).
-//  4. Inject the "reflect" import if any view has NeedsReflect set (EM-03),
+//  4. Inject the "reflect" import if any view has NeedsReflect set (R-DG-012, R-DG-013),
 //     then materialise the import list via getImports().
 //  5. Execute deltaTemplate into a buffer.
 //  6. Format the buffer with go/format.Source (syntax errors include the raw
@@ -1544,7 +1544,7 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 	// Step 2: build the qualifier, import-recorder, and extra-import injector.
 	qualifier, getImports, recordExtra := buildImports(snapshots, opts)
 
-	// emitMethod gates same-package method wrappers (E-12); precomputed once.
+	// emitMethod gates same-package method wrappers (R-DG-012, R-DG-013, R-DG-019); precomputed once.
 	emitMethod := !g.CrossPackage
 
 	// Step 3: translate each snapshot into a template view.
@@ -1567,11 +1567,11 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 			}
 		}
 
-		// EmitMethod gates the same-package method wrappers (E-12, EM-02..EM-04).
+		// EmitMethod gates the same-package method wrappers (R-DG-012, R-DG-013, R-DG-019).
 		sv.EmitMethod = emitMethod
 
 		// EmitEntityIDMethod additionally requires the key type to be a named
-		// type: Go forbids defining methods on unnamed basic types (EM-05, R-24).
+		// type: Go forbids defining methods on unnamed basic types (R-DG-034, R-DG-012, R-DG-014).
 		_, isNamed := ps.KeyVar.Type().(*types.Named)
 		sv.EmitEntityIDMethod = sv.EmitMethod && isNamed
 

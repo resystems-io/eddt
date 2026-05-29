@@ -15,7 +15,7 @@ package deltagen
 //   - Go import paths (everything else, e.g. "go.resystems.io/eddt/runtime") are
 //     batched into a single packages.Load call resolved from the invoking module's
 //     go.mod. They must already appear in go.mod; if not, formatImportPathErrors
-//     returns an error containing "go get" remediation guidance (R-11).
+//     returns an error containing "go get" remediation guidance (R-DG-037).
 //
 // # Why NeedDeps is required
 //
@@ -184,7 +184,7 @@ func loadPackages(inputPkgs []string, log *slog.Logger) ([]*packages.Package, er
 }
 
 // resolveOutputPkg determines the output package name and whether the generator
-// is in cross-package mode (E-12).
+// is in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 //
 // If outPkgNameOverride is empty the output package defaults to the name of the
 // first loaded source package and crossPackage is false. If an override is given

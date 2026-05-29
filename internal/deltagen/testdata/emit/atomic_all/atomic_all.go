@@ -1,7 +1,7 @@
 // Package atomic_all provides a Snapshot fixture exercising every atomic-row
-// emission case for EM-01. One field per payload shape, plus the three
+// emission case for R-DG-015. One field per payload shape, plus the three
 // Phase-4-relevant tag families (delta.omit, delta.retired, delta.commutative).
-// delta.nested is deliberately absent — it is a Phase-5 concern (N-01).
+// delta.nested is deliberately absent — it is a Phase-5 concern (R-DG-016).
 package atomic_all
 
 import eddt "go.resystems.io/eddt/runtime"
@@ -10,14 +10,14 @@ import eddt "go.resystems.io/eddt/runtime"
 type Inner struct{ A, B int32 }
 
 // AtomicAllSnapshot covers every payload shape in the harmonised §1.6.3
-// atomic column (E-14 / E-15 / E-16) plus presence-axis and reserved tags:
+// atomic column (R-DG-004, R-DG-005, R-DG-006 / R-DG-006, R-DG-016 / R-DG-006, R-DG-016) plus presence-axis and reserved tags:
 //
 //   - Key      string       — entity.key; extracted by parse stage, not in Delta
 //   - Scalar   int32        — ShapeScalar; emits SetScalar *int32
 //   - Pointer  *string      — ShapePointer; emits SetPointer **string
 //   - Struct   Inner        — ShapeStructValue (atomic); emits SetStruct *Inner
-//   - Slice    []byte       — ShapeSlice (atomic per E-15); emits SetSlice *[]uint8
-//   - Map      map[string]int32 — ShapeMap (atomic per E-16); emits SetMap *map[string]int32
+//   - Slice    []byte       — ShapeSlice (atomic per R-DG-006, R-DG-016); emits SetSlice *[]uint8
+//   - Map      map[string]int32 — ShapeMap (atomic per R-DG-006, R-DG-016); emits SetMap *map[string]int32
 //   - Omitted  string       — delta.omit; suppressed from Delta
 //   - Retired  string       — delta.retired; suppressed from Delta
 //   - Commute  int32        — delta.commutative; emits as if untagged (§9.5)

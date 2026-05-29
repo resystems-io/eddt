@@ -1,9 +1,9 @@
-// Package clearable_struct is the CL-05..07 emit fixture for a
+// Package clearable_struct is the R-DG-016..07 emit fixture for a
 // delta.nested+delta.clearable field whose inner shape is a named struct type.
 //
 // The generated Delta carries `Location runtime.FieldDelta[AddressDelta]`
 // (one field, not inline siblings). The existing AddressDelta companion + ApplyAddress /
-// DiffAddress funcs are emitted once (N-01 dedup). The field's Apply emits an Op
+// DiffAddress funcs are emitted once (R-DG-016 dedup). The field's Apply emits an Op
 // switch; the Diff emits the three-branch predicate (eq / retract / assert).
 //
 // The fixture is consumed by TestEmitTemplate_Clearable_Struct_SamePkg and

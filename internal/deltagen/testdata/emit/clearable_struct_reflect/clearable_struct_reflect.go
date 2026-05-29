@@ -1,4 +1,4 @@
-// Package clearable_struct_reflect is the HK-16 emit fixture for a
+// Package clearable_struct_reflect is the R-DG-026 emit fixture for a
 // delta.nested+delta.clearable field whose inner struct is non-comparable
 // (contains a slice field), exercising the ClearableStructEqReflect=true branch
 // in template.go.

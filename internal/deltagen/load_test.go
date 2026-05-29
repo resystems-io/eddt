@@ -2,8 +2,8 @@ package deltagen
 
 // load_test.go exercises the package loading stage (G-02) in four groups:
 //
-//   A. Filesystem path loading  — R-10
-//   B. Import path loading      — R-10, R-11
+//   A. Filesystem path loading  — R-DG-037
+//   B. Import path loading      — R-DG-037, R-DG-037
 //   C. Dependency loading       — validates NeedDeps / NeedImports correctness
 //   D. Helper unit tests        — isFilesystemPath, FindPkgByPath
 //
@@ -46,7 +46,7 @@ func writeTempModule(t *testing.T, dir, modulePath, goSrc string) {
 // TestLoad_ValidFilesystemPath verifies that a well-formed filesystem path
 // loads successfully and that the returned package name matches the Go package
 // declaration in the source file.
-// Covers: R-10
+// Covers: R-DG-037
 func TestLoad_ValidFilesystemPath(t *testing.T) {
 	dir := t.TempDir()
 	writeTempModule(t, dir, "testpkg", `package testpkg
@@ -71,7 +71,7 @@ type Snapshot struct {
 
 // TestLoad_MultipleFilesystemPaths verifies that two distinct filesystem paths
 // each residing in their own module are both loaded and appear in the result.
-// Covers: R-10
+// Covers: R-DG-037
 func TestLoad_MultipleFilesystemPaths(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
@@ -98,7 +98,7 @@ func TestLoad_MultipleFilesystemPaths(t *testing.T) {
 // TestLoad_InvalidFilesystemPath verifies that a non-existent filesystem path
 // produces an error whose message contains "failed to load package directory",
 // matching the error format that TestCLI_InvalidPackage asserts.
-// Covers: R-10
+// Covers: R-DG-037
 func TestLoad_InvalidFilesystemPath(t *testing.T) {
 	_, err := loadPackages([]string{"/does/not/exist/surely"}, slog.Default())
 	if err == nil {
@@ -113,7 +113,7 @@ func TestLoad_InvalidFilesystemPath(t *testing.T) {
 // with a deliberate syntax error is reported as a load failure rather than
 // silently producing an empty package list, and that the error message surfaces
 // the actual loader diagnostic (not just a count).
-// Covers: R-10, HK-03
+// Covers: R-DG-037, R-DG-037
 func TestLoad_PackageSyntaxError(t *testing.T) {
 	dir := t.TempDir()
 	// Deliberately broken Go source — missing closing brace.
@@ -124,7 +124,7 @@ func TestLoad_PackageSyntaxError(t *testing.T) {
 		t.Fatal("expected error for package with syntax errors, got nil")
 	}
 	// The error must surface the actual loader diagnostic so the user can act,
-	// not just "had N error(s)" with no further detail (HK-03 regression guard).
+	// not just "had N error(s)" with no further detail (R-DG-037 regression guard).
 	msg := err.Error()
 	if !strings.Contains(msg, "expected") && !strings.Contains(msg, "syntax") && !strings.Contains(msg, "broken") {
 		t.Errorf("error message should contain a loader diagnostic (expected/syntax/filename); got: %s", msg)
@@ -136,7 +136,7 @@ func TestLoad_PackageSyntaxError(t *testing.T) {
 // TestLoad_ImportPath verifies that a valid Go import path that exists in this
 // module's go.mod (the eddt runtime package) loads successfully and that the
 // returned package carries the correct name.
-// Covers: R-10, R-11
+// Covers: R-DG-037, R-DG-037
 func TestLoad_ImportPath(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -155,7 +155,7 @@ func TestLoad_ImportPath(t *testing.T) {
 // produces an error containing "go get" remediation guidance and that the error
 // does NOT contain "failed to load package directory" (which would indicate the
 // import path was misidentified as a filesystem path).
-// Covers: R-11
+// Covers: R-DG-037
 func TestLoad_ImportPathNotInGoMod(t *testing.T) {
 	// Create a minimal throw-away module in a temp dir and make it the working
 	// directory for this test. This ensures the import path is resolved against
@@ -199,7 +199,7 @@ func TestLoad_ImportPathNotInGoMod(t *testing.T) {
 // it asserts that after loading the eddt runtime package the Header type can be
 // looked up from the package's type scope — exactly the operation the parse
 // stage (G-03) will perform to identify embedded runtime.Header fields.
-// Covers: R-10 (NeedDeps correctness)
+// Covers: R-DG-037 (NeedDeps correctness)
 func TestLoad_DepsIncluded(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -228,7 +228,7 @@ func TestLoad_DepsIncluded(t *testing.T) {
 
 // TestLoad_FindPkgByPath verifies FindPkgByPath for both the present and absent
 // cases so that the helper's traversal behaviour is independently verified.
-// Covers: R-10
+// Covers: R-DG-037
 func TestLoad_FindPkgByPath(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -290,7 +290,7 @@ func TestLoad_IsFilesystemPath(t *testing.T) {
 // TestResolve_NoOverride verifies that when no --pkg-name override is supplied
 // the output package name equals the source package name and crossPackage is
 // false.
-// Covers: R-09, R-10
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-037
 func TestResolve_NoOverride(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -308,7 +308,7 @@ func TestResolve_NoOverride(t *testing.T) {
 
 // TestResolve_OverrideMatchingSource verifies that when --pkg-name is set to
 // the same value as the source package name crossPackage is false.
-// Covers: R-09, R-10
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-037
 func TestResolve_OverrideMatchingSource(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -327,7 +327,7 @@ func TestResolve_OverrideMatchingSource(t *testing.T) {
 // TestResolve_OverrideDiffering verifies that when --pkg-name is set to a
 // value different from the source package name crossPackage is true and the
 // returned name equals the override.
-// Covers: R-09, R-10
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-037
 func TestResolve_OverrideDiffering(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
 	if err != nil {
@@ -346,7 +346,7 @@ func TestResolve_OverrideDiffering(t *testing.T) {
 // TestResolve_MultiPkgInput verifies that when multiple packages are loaded
 // the first package's name determines the source for cross-package detection,
 // regardless of subsequent package names.
-// Covers: R-10
+// Covers: R-DG-037
 func TestResolve_MultiPkgInput(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()

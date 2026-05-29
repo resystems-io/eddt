@@ -1,8 +1,8 @@
 package deltagen
 
-// conformance_test.go implements C-02, C-03, and C-04 corpus conformance property tests.
+// conformance_test.go implements R-DG-019, R-DG-019, and R-DG-019 corpus conformance property tests.
 //
-// C-02 (TestConformance_RoundTrip): For each corpus case, generates the delta
+// R-DG-019 (TestConformance_RoundTrip): For each corpus case, generates the delta
 // source and injects a testing/quick round-trip property test:
 //
 //	Apply(a, Diff(a, b)) == b
@@ -10,9 +10,9 @@ package deltagen
 // where a and b are valid sequential chain entries (same EntityID/ChainID,
 // b.Sequence = a.Sequence + 1, nil Provenance).  Full snapshot equality is
 // the invariant for baseline and struct_key; composite uses set-membership
-// equality (toSortedUnique) for the Groups field (N-04, E-15).
+// equality (toSortedUnique) for the Groups field (R-DG-016, R-DG-028, R-DG-006, R-DG-016).
 //
-// C-03 (TestConformance_Identity): For each corpus case, generates the delta
+// R-DG-019 (TestConformance_Identity): For each corpus case, generates the delta
 // source and injects a testing/quick identity-diff property test:
 //
 //	reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)
@@ -22,9 +22,9 @@ package deltagen
 // nil) and Apply must preserve every field unchanged.  Full snapshot equality
 // (reflect.DeepEqual) is the correct invariant for all three corpus cases — no
 // toSortedUnique required (identity diff produces zero additions/removals, so
-// N-04 slice order is preserved exactly).
+// R-DG-016, R-DG-028 slice order is preserved exactly).
 //
-// C-04 (TestConformance_Coalesce): For each corpus case, generates the delta
+// R-DG-019 (TestConformance_Coalesce): For each corpus case, generates the delta
 // source and injects a testing/quick coalesce-as-fold property test:
 //
 //	Coalesce(s0, [d1,d2,d3]) == s3
@@ -32,23 +32,23 @@ package deltagen
 // where s0 is a zero-payload seed and s1/s2/s3 are built from random payloads
 // p1/p2/p3.  Both chunkability split points are verified in the same prop
 // function.  baseline and struct_key use reflect.DeepEqual; composite uses
-// snapshotEqual with toSortedUnique for Groups (N-04 E-15 set-membership).
+// snapshotEqual with toSortedUnique for Groups (R-DG-016, R-DG-028 R-DG-006, R-DG-016 set-membership).
 //
 // Test matrix:
 //
-//	TestConformance_RoundTrip/BaselineSnapshot           (C-02)
-//	TestConformance_RoundTrip/ClearableCompositeSnapshot (C-02)
-//	TestConformance_RoundTrip/CompositeSnapshot          (C-02)
-//	TestConformance_RoundTrip/SessionSnapshot            (C-02)
-//	TestConformance_Identity/BaselineSnapshot            (C-03)
-//	TestConformance_Identity/ClearableCompositeSnapshot  (C-03)
-//	TestConformance_Identity/CompositeSnapshot           (C-03)
-//	TestConformance_Identity/SessionSnapshot             (C-03)
-//	TestConformance_Coalesce/BaselineSnapshot            (C-04)
-//	TestConformance_Coalesce/ClearableCompositeSnapshot  (C-04)
-//	TestConformance_Coalesce/CompositeSnapshot           (C-04)
-//	TestConformance_Coalesce/SessionSnapshot             (C-04)
-//	TestConformance_TruthTable/ClearableCompositeSnapshot (CL-08 §5.4)
+//	TestConformance_RoundTrip/BaselineSnapshot           (R-DG-019)
+//	TestConformance_RoundTrip/ClearableCompositeSnapshot (R-DG-019)
+//	TestConformance_RoundTrip/CompositeSnapshot          (R-DG-019)
+//	TestConformance_RoundTrip/SessionSnapshot            (R-DG-019)
+//	TestConformance_Identity/BaselineSnapshot            (R-DG-019)
+//	TestConformance_Identity/ClearableCompositeSnapshot  (R-DG-019)
+//	TestConformance_Identity/CompositeSnapshot           (R-DG-019)
+//	TestConformance_Identity/SessionSnapshot             (R-DG-019)
+//	TestConformance_Coalesce/BaselineSnapshot            (R-DG-019)
+//	TestConformance_Coalesce/ClearableCompositeSnapshot  (R-DG-019)
+//	TestConformance_Coalesce/CompositeSnapshot           (R-DG-019)
+//	TestConformance_Coalesce/SessionSnapshot             (R-DG-019)
+//	TestConformance_TruthTable/ClearableCompositeSnapshot (R-DG-026 §5.4)
 
 import (
 	"os"
@@ -56,7 +56,7 @@ import (
 	"testing"
 )
 
-// ── conformanceAxis: 2-D test-source table (HK-13) ───────────────────────────
+// ── conformanceAxis: 2-D test-source table (R-DG-023) ───────────────────────────
 
 // conformanceAxis groups the injected test file, run pattern, and per-corpus
 // test source strings for one property axis (roundtrip / identity / coalesce /
@@ -136,7 +136,7 @@ func runCorpusProperty(t *testing.T, tc corpusCase, generatedSrc []byte, axis co
 	})
 }
 
-// TestConformance_RoundTrip is the C-02 property test.
+// TestConformance_RoundTrip is the R-DG-019 property test.
 //
 // For each corpus case it generates the delta source, injects a
 // testing/quick round-trip property test into an isolated temp module,
@@ -147,7 +147,7 @@ func runCorpusProperty(t *testing.T, tc corpusCase, generatedSrc []byte, axis co
 // where a and b are valid sequential chain entries (same EntityID/ChainID,
 // b.Sequence = a.Sequence + 1, nil Provenance).  The full snapshot —
 // Header and payload — is compared, with the exception of delta.nested
-// slice fields (N-04, E-15) for which set-membership equality is the
+// slice fields (R-DG-016, R-DG-028, R-DG-006, R-DG-016) for which set-membership equality is the
 // correct invariant.
 func TestConformance_RoundTrip(t *testing.T) {
 	axis := conformanceAxes["roundtrip"]
@@ -254,7 +254,7 @@ type compositePayload struct {
 
 // toSortedUnique returns a sorted, deduplicated copy of ss.
 //
-// N-04 set-diff semantics (E-15): Apply(a, Diff(a, b)).Groups contains the
+// R-DG-016, R-DG-028 set-diff semantics (R-DG-006, R-DG-016): Apply(a, Diff(a, b)).Groups contains the
 // same unique elements as b.Groups but element order may differ (surviving
 // a-elements in a-order; b-additions appended in b-order).  Duplicates in b
 // are normalised to one entry by Diff (map-based membership set).
@@ -276,9 +276,9 @@ func toSortedUnique(ss []string) []string {
 //
 //   - Header:  reflect.DeepEqual (full; Provenance is nil on both sides).
 //   - Key:     == (fixed string, same in both).
-//   - Details: == (comparable struct, N-01 exact round-trip).
-//   - Labels:  reflect.DeepEqual (exact key-value equality, N-03).
-//   - Groups:  toSortedUnique equality (set-membership, N-04 E-15).
+//   - Details: == (comparable struct, R-DG-016 exact round-trip).
+//   - Labels:  reflect.DeepEqual (exact key-value equality, R-DG-016).
+//   - Groups:  toSortedUnique equality (set-membership, R-DG-016, R-DG-028 R-DG-006, R-DG-016).
 //   - Rank:    == (atomic scalar).
 func snapshotEqual(got, b composite.CompositeSnapshot) bool {
 	return reflect.DeepEqual(got.Header, b.Header) &&
@@ -291,7 +291,7 @@ func snapshotEqual(got, b composite.CompositeSnapshot) bool {
 
 // TestRoundTrip_Property asserts snapshotEqual(Apply(a, Diff(a, b)), b) for
 // 1000 random compositePayload pairs.  Groups uses set-membership equality
-// per N-04 E-15; all other fields use strict equality.
+// per R-DG-016, R-DG-028 R-DG-006, R-DG-016; all other fields use strict equality.
 func TestRoundTrip_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
 	now := time.Now()
@@ -330,7 +330,7 @@ func TestRoundTrip_Property(t *testing.T) {
 // — full snapshot equality including Header — for 1000 random sessionPayload pairs.
 //
 // The struct-valued Key is fixed to the same value in both a and b, confirming
-// that the struct-key EntityID hash (EM-05) does not interfere with Diff/Apply.
+// that the struct-key EntityID hash (R-DG-034) does not interfere with Diff/Apply.
 const structKeyRoundTripTest = `package struct_key_test
 
 import (
@@ -386,9 +386,9 @@ func TestRoundTrip_Property(t *testing.T) {
 }
 `
 
-// ── C-03: identity-diff property tests ───────────────────────────────────────
+// ── R-DG-019: identity-diff property tests ───────────────────────────────────────
 
-// TestConformance_Identity is the C-03 property test.
+// TestConformance_Identity is the R-DG-019 property test.
 //
 // For each corpus case it generates the delta source, injects a
 // testing/quick identity-diff property test into an isolated temp module,
@@ -400,7 +400,7 @@ func TestRoundTrip_Property(t *testing.T) {
 // The diff produces a zero-payload delta (all Set* nil); Apply must preserve
 // every field unchanged.  Full snapshot equality (including Header) is the
 // correct assertion for all three corpus cases — no toSortedUnique needed
-// because identity diff produces zero additions/removals, so N-04 slice order
+// because identity diff produces zero additions/removals, so R-DG-016, R-DG-028 slice order
 // is preserved exactly.
 func TestConformance_Identity(t *testing.T) {
 	axis := conformanceAxes["identity"]
@@ -451,7 +451,7 @@ type baselinePayload struct {
 //
 // Priority is reassigned to a fresh *int32 allocation with the same value so
 // that a.Priority and aprime.Priority point to different addresses. This closes
-// the documented gap (E-02/CL-10): struct-copy aliasing masks pointer-identity
+// the documented gap (R-DG-016/R-DG-026): struct-copy aliasing masks pointer-identity
 // bugs, and testing/quick never produces equal-value/different-address pointers.
 func TestIdentity_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
@@ -469,7 +469,7 @@ func TestIdentity_Property(t *testing.T) {
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
 		// Reassign Priority to a distinct allocation with the same value so the
-		// Diff minimality check below is not masked by pointer aliasing (CL-10).
+		// Diff minimality check below is not masked by pointer aliasing (R-DG-026).
 		if a.Priority != nil {
 			v := *a.Priority
 			aprime.Priority = &v
@@ -524,7 +524,7 @@ type compositePayload struct {
 // TestIdentity_Property asserts reflect.DeepEqual(Apply(a, Diff(a, aprime)), aprime)
 // for 1000 random compositePayload values (full equality including Header).
 // aprime is a struct copy of a with aprime.Header.Sequence = a.Sequence + 1.
-// N-01/N-03/N-04 all produce zero-payload deltas; Apply must preserve every
+// R-DG-016/R-DG-016/R-DG-016, R-DG-028 all produce zero-payload deltas; Apply must preserve every
 // field without interference across the three delta.nested shapes.
 func TestIdentity_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
@@ -561,7 +561,7 @@ func TestIdentity_Property(t *testing.T) {
 // — full snapshot equality including Header — for 1000 random sessionPayload values.
 //
 // The struct-valued Key is fixed in both a and aprime, confirming that the
-// struct-key EntityID hash (EM-05) does not interfere with payload Diff/Apply.
+// struct-key EntityID hash (R-DG-034) does not interfere with payload Diff/Apply.
 const structKeyIdentityTest = `package struct_key_test
 
 import (
@@ -614,9 +614,9 @@ func TestIdentity_Property(t *testing.T) {
 }
 `
 
-// ── C-04: coalesce-as-fold property tests ────────────────────────────────────
+// ── R-DG-019: coalesce-as-fold property tests ────────────────────────────────────
 
-// TestConformance_Coalesce is the C-04 property test.
+// TestConformance_Coalesce is the R-DG-019 property test.
 //
 // For each corpus case it generates the delta source, injects a
 // testing/quick coalesce-as-fold property test into an isolated temp module,
@@ -753,7 +753,7 @@ func TestCoalesce_Property(t *testing.T) {
 // corpus case.  It asserts fold equivalence and chunkability at both split points
 // for 1000 random (p1, p2, p3) triples.
 //
-// Groups uses snapshotEqual with toSortedUnique (N-04 E-15 set-membership):
+// Groups uses snapshotEqual with toSortedUnique (R-DG-016, R-DG-028 R-DG-006, R-DG-016 set-membership):
 // multi-step set-diffs preserve the group SET but not ORDER.
 const compositeCoalesceTest = `package composite_test
 
@@ -788,7 +788,7 @@ func snap(fixedID eddt.EntityID, seq uint64, now time.Time, p compositePayload) 
 }
 
 // toSortedUnique returns a sorted, deduplicated copy of ss.
-// N-04 set-diff semantics: Apply preserves the group SET but not ORDER.
+// R-DG-016, R-DG-028 set-diff semantics: Apply preserves the group SET but not ORDER.
 func toSortedUnique(ss []string) []string {
 	seen := make(map[string]bool, len(ss))
 	out := make([]string, 0, len(ss))
@@ -814,7 +814,7 @@ func snapshotEqual(got, want composite.CompositeSnapshot) bool {
 }
 
 // TestCoalesce_Property asserts fold equivalence and chunkability for 1000
-// random (p1, p2, p3) triples.  Groups uses set-membership equality (N-04 E-15).
+// random (p1, p2, p3) triples.  Groups uses set-membership equality (R-DG-016, R-DG-028 R-DG-006, R-DG-016).
 func TestCoalesce_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
 	now := time.Now()
@@ -908,7 +908,7 @@ type clearableCompositePayload struct {
 
 // toSortedUnique returns a sorted, deduplicated copy of ss.
 //
-// N-04 set-diff semantics (E-15): Apply(a, Diff(a, b)).Groups contains the
+// R-DG-016, R-DG-028 set-diff semantics (R-DG-006, R-DG-016): Apply(a, Diff(a, b)).Groups contains the
 // same unique elements as b.Groups but element order may differ.
 func toSortedUnique(ss []string) []string {
 	seen := make(map[string]bool, len(ss))
@@ -930,7 +930,7 @@ func toSortedUnique(ss []string) []string {
 //   - Location: reflect.DeepEqual (struct value; OpAssert carries inner AddressDelta).
 //   - Tags:     reflect.DeepEqual (direct; Option A ensures nil-only triggers OpRetract,
 //               and testing/quick never generates nil maps, so all quick cases round-trip exactly).
-//   - Groups:   toSortedUnique equality (nil/empty-slice equivalent; set-membership N-04 E-15).
+//   - Groups:   toSortedUnique equality (nil/empty-slice equivalent; set-membership R-DG-016, R-DG-028 R-DG-006, R-DG-016).
 //   - Count:    == (atomic scalar).
 func snapshotEqual(got, b clearable_composite.ClearableCompositeSnapshot) bool {
 	return reflect.DeepEqual(got.Header, b.Header) &&
@@ -1049,7 +1049,7 @@ func TestIdentity_Property(t *testing.T) {
 // clearable_composite corpus case.  It asserts fold equivalence and chunkability
 // at both split points for 1000 random (p1, p2, p3) triples.
 //
-// Groups uses snapshotEqual with toSortedUnique (N-04 E-15 set-membership):
+// Groups uses snapshotEqual with toSortedUnique (R-DG-016, R-DG-028 R-DG-006, R-DG-016 set-membership):
 // multi-step set-diffs preserve the group SET but not ORDER.
 const clearableCompositeCoalesceTest = `package clearable_composite_test
 
@@ -1105,7 +1105,7 @@ func toSortedUnique(ss []string) []string {
 // The coalesce seed s0 has nil Tags.  When all deltas in the fold are OpIgnore
 // for Tags (e.g. nil→{}→{}→{} chains produce empty inner diffs), the coalesced
 // result preserves nil while sN.Tags is an empty-but-non-nil map from
-// testing/quick.  nil and {} are semantically equivalent per E-17, so normTags
+// testing/quick.  nil and {} are semantically equivalent per R-DG-007, R-DG-016, so normTags
 // equalizes them for the fold-equivalence check.
 func normTags(m map[string]string) map[string]string {
 	if len(m) == 0 {
@@ -1115,8 +1115,8 @@ func normTags(m map[string]string) map[string]string {
 }
 
 // snapshotEqual reports whether got and want satisfy the correct invariant:
-// full equality for Header, Key, Location, Count; normTags for Tags (E-17 nil/empty fold edge);
-// set-membership for Groups (N-04 E-15).
+// full equality for Header, Key, Location, Count; normTags for Tags (R-DG-007, R-DG-016 nil/empty fold edge);
+// set-membership for Groups (R-DG-016, R-DG-028 R-DG-006, R-DG-016).
 func snapshotEqual(got, want clearable_composite.ClearableCompositeSnapshot) bool {
 	return reflect.DeepEqual(got.Header, want.Header) &&
 		got.Key == want.Key &&
@@ -1127,7 +1127,7 @@ func snapshotEqual(got, want clearable_composite.ClearableCompositeSnapshot) boo
 }
 
 // TestCoalesce_Property asserts fold equivalence and chunkability for 1000
-// random (p1, p2, p3) triples.  Groups uses set-membership equality (N-04 E-15).
+// random (p1, p2, p3) triples.  Groups uses set-membership equality (R-DG-016, R-DG-028 R-DG-006, R-DG-016).
 func TestCoalesce_Property(t *testing.T) {
 	fixedID := eddt.EntityID{1}
 	now := time.Now()
@@ -1194,7 +1194,7 @@ func TestCoalesce_Property(t *testing.T) {
 // for 1000 random (p1, p2, p3) triples.
 //
 // The struct-valued Key is fixed across all snapshots, confirming that the
-// struct-key EntityID hash (EM-05) does not corrupt payload Diff/Apply across a fold.
+// struct-key EntityID hash (R-DG-034) does not corrupt payload Diff/Apply across a fold.
 const structKeyCoalesceTest = `package struct_key_test
 
 import (
@@ -1287,7 +1287,7 @@ func TestCoalesce_Property(t *testing.T) {
 }
 `
 
-// ── HK-16: struct_key_clearable property tests ───────────────────────────────
+// ── R-DG-026: struct_key_clearable property tests ───────────────────────────────
 
 // structKeyClearableRoundTripTest is the injected round-trip property test for
 // the struct_key_clearable corpus case.  It asserts snapshotEqual(Apply(a, Diff(a,b)), b)
@@ -1333,7 +1333,7 @@ func toSortedUnique(ss []string) []string {
 }
 
 // snapshotEqual applies correct invariants per field shape.
-// Tags uses toSortedUnique (N-04 set-diff semantics, E-15).
+// Tags uses toSortedUnique (R-DG-016, R-DG-028 set-diff semantics, R-DG-006, R-DG-016).
 func snapshotEqual(got, b struct_key_clearable.StructKeyClearableSnapshot) bool {
 	return reflect.DeepEqual(got.Header, b.Header) &&
 		got.Key == b.Key &&
@@ -1473,7 +1473,7 @@ func toSortedUnique(ss []string) []string {
 // The coalesce seed s0 has nil Labels.  When all deltas in the fold carry
 // OpIgnore for Labels (nil→{}→{}→{} chains), the coalesced result preserves
 // nil while sN.Labels is an empty-but-non-nil map from testing/quick.
-// nil and {} are semantically equivalent per E-17.
+// nil and {} are semantically equivalent per R-DG-007, R-DG-016.
 func normMap(m map[string]string) map[string]string {
 	if len(m) == 0 {
 		return nil
@@ -1545,9 +1545,9 @@ func TestCoalesce_Property(t *testing.T) {
 }
 `
 
-// ── CL-08 §5.4 truth-table test ──────────────────────────────────────────────
+// ── R-DG-026 §5.4 truth-table test ──────────────────────────────────────────────
 
-// TestConformance_TruthTable is the CL-08 deterministic §5.4 truth-table test.
+// TestConformance_TruthTable is the R-DG-026 deterministic §5.4 truth-table test.
 //
 // For each corpus case that has at least one clearable field it generates the
 // delta source, injects a table-driven truth-table test into an isolated temp
@@ -1990,9 +1990,9 @@ func TestTruthTable_All(t *testing.T) {
 }
 `
 
-// ── HK-17: deterministic nil-vs-empty coverage ───────────────────────────────
+// ── R-DG-023: deterministic nil-vs-empty coverage ───────────────────────────────
 
-// TestConformance_NilEqualsEmpty is the HK-17 deterministic E-17 nil ≙ empty
+// TestConformance_NilEqualsEmpty is the R-DG-023 deterministic R-DG-007, R-DG-016 nil ≙ empty
 // test for nested (non-clearable) map and slice fields.
 //
 // testing/quick never generates nil maps or slices, so the nil ≙ empty
@@ -2022,10 +2022,10 @@ func TestConformance_NilEqualsEmpty(t *testing.T) {
 
 // compositeNilEmptyTest is the injected deterministic nil ≙ empty test for the
 // composite corpus case.  It exercises all four nil/empty/populated transitions
-// for the nested map (Labels, N-03) and nested slice (Groups, N-04) fields.
+// for the nested map (Labels, R-DG-016) and nested slice (Groups, R-DG-016, R-DG-028) fields.
 //
 // testing/quick never generates nil maps or slices, so these cases require
-// explicit deterministic coverage (HK-17).
+// explicit deterministic coverage (R-DG-023).
 const compositeNilEmptyTest = `package composite_test
 
 import (
@@ -2040,7 +2040,7 @@ func hdrNE(seq uint64) eddt.Header {
 	return eddt.Header{EntityID: eddt.EntityID{1}, ChainID: "c", Sequence: seq, EffectiveAt: time.Now()}
 }
 
-// TestNilEqualsEmpty_Property exercises E-17 nil ≙ empty for the nested
+// TestNilEqualsEmpty_Property exercises R-DG-007, R-DG-016 nil ≙ empty for the nested
 // map (Labels) and nested slice (Groups) fields.
 func TestNilEqualsEmpty_Property(t *testing.T) {
 	id := eddt.EntityID{1}
@@ -2056,7 +2056,7 @@ func TestNilEqualsEmpty_Property(t *testing.T) {
 		wantNilGroups bool
 	}
 	tests := []tc{
-		// §E-17: nil ≙ empty — no delta produced for nil→nil, nil→empty, empty→nil.
+		// §R-DG-007, R-DG-016: nil ≙ empty — no delta produced for nil→nil, nil→empty, empty→nil.
 		{"nil_to_nil",   nil, nil, nil, nil, true, true},
 		{"nil_to_empty", nil, map[string]string{}, nil, []string{}, true, true},
 		{"empty_to_nil", map[string]string{}, nil, []string{}, nil, true, true},

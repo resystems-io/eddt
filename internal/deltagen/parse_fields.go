@@ -78,7 +78,7 @@ func parseFields(
 						"nested types must be sub-structures, not chain anchors (§3.3.2)",
 					structName, field.Name(), field.Type())
 			}
-			// N-02: cycle guard — seed path with the snapshot struct name so the
+			// R-DG-009: cycle guard — seed path with the snapshot struct name so the
 			// error message reads "SnapshotName → A → B → A".
 			if err := validateNestedAcyclic(field.Type(), []string{structName}, headerType); err != nil {
 				return nil, nil, fmt.Errorf("field %s.%s: %w", structName, field.Name(), err)
@@ -123,7 +123,7 @@ func containsHeaderEmbed(t types.Type, headerType types.Type) bool {
 // snapshot struct name seeds it, so the error reads "Snapshot → A → B → A").
 //
 // For struct-value shapes Go's type checker prevents cycles in source code; this
-// function provides the infrastructure that N-03/N-04 will extend for map/slice
+// function provides the infrastructure that R-DG-016/R-DG-016, R-DG-028 will extend for map/slice
 // paths, and gives a clear diagnostic for programmatically-constructed cycles.
 func validateNestedAcyclic(t types.Type, path []string, headerType types.Type) error {
 	named, ok := t.(*types.Named)
@@ -154,7 +154,7 @@ func validateNestedAcyclic(t types.Type, path []string, headerType types.Type) e
 		}
 		shape, err := classifyShape(field.Type())
 		if err != nil || shape != ShapeStructValue {
-			continue // non-struct shapes handled by N-03/N-04
+			continue // non-struct shapes handled by R-DG-016/R-DG-016, R-DG-028
 		}
 		if err := validateNestedAcyclic(field.Type(), newPath, headerType); err != nil {
 			return err
@@ -169,7 +169,7 @@ func validateNestedAcyclic(t types.Type, path []string, headerType types.Type) e
 // that named types (e.g. type Status int32) are correctly classified by their
 // structural nature rather than their name. Map types are accepted and
 // classified as ShapeMap; untagged maps are admitted with the atomic default
-// per the harmonised three-axis model (refinements §1.6.3, Errata E-16).
+// per the harmonised three-axis model (refinements §1.6.3, Errata R-DG-006, R-DG-016).
 func classifyShape(t types.Type) (FieldShape, error) {
 	switch t.Underlying().(type) {
 	case *types.Basic:

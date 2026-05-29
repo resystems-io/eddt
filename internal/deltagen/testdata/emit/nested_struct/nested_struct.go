@@ -1,4 +1,4 @@
-// Package nested_struct is the primary N-01 fixture: a Snapshot with a single
+// Package nested_struct is the primary R-DG-016 fixture: a Snapshot with a single
 // delta.nested struct-value field and one sibling atomic field.
 package nested_struct
 

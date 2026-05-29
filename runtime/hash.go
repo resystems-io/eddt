@@ -10,7 +10,7 @@ import (
 
 // NewHash returns a new Blake2b-256 hasher for use in EntityID() methods
 // emitted by delta-gen. The hash function is fixed forever; changing it
-// would invalidate all stored EntityIDs (Errata E-10).
+// would invalidate all stored EntityIDs (Errata R-DG-034, R-DG-035).
 //
 // Generated EntityID() methods follow this pattern:
 //

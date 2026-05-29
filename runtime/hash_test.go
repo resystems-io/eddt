@@ -22,7 +22,7 @@ func rawBlake2b256(data []byte) EntityID {
 // TestNewHashAndFinalise verifies that NewHash + Finalise produce a 32-byte
 // EntityID and that two calls with identical inputs produce the same result.
 func TestNewHashAndFinalise(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	h1 := NewHash()
 	h1.Write([]byte("determinism"))
 	id1 := Finalise(h1)
@@ -42,7 +42,7 @@ func TestNewHashAndFinalise(t *testing.T) {
 // TestWriteUint8CrossValidation verifies WriteUint8 produces the same hash as
 // writing the raw byte directly to blake2b.
 func TestWriteUint8CrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	const v uint8 = 0xAB
 	expected := rawBlake2b256([]byte{v})
 
@@ -57,7 +57,7 @@ func TestWriteUint8CrossValidation(t *testing.T) {
 
 // TestWriteUint16CrossValidation verifies WriteUint16 encodes big-endian.
 func TestWriteUint16CrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	const v uint16 = 0x1234
 	var buf [2]byte
 	binary.BigEndian.PutUint16(buf[:], v)
@@ -74,7 +74,7 @@ func TestWriteUint16CrossValidation(t *testing.T) {
 
 // TestWriteUint32CrossValidation verifies WriteUint32 encodes big-endian.
 func TestWriteUint32CrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	const v uint32 = 0xDEADBEEF
 	var buf [4]byte
 	binary.BigEndian.PutUint32(buf[:], v)
@@ -91,7 +91,7 @@ func TestWriteUint32CrossValidation(t *testing.T) {
 
 // TestWriteUint64CrossValidation verifies WriteUint64 encodes big-endian.
 func TestWriteUint64CrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	const v uint64 = 0xCAFEBABEDEAD1234
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], v)
@@ -108,7 +108,7 @@ func TestWriteUint64CrossValidation(t *testing.T) {
 
 // TestWriteBoolCrossValidation verifies WriteBool emits 0x00/0x01.
 func TestWriteBoolCrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	for _, tc := range []struct {
 		v    bool
 		want byte
@@ -131,7 +131,7 @@ func TestWriteBoolCrossValidation(t *testing.T) {
 // TestWriteStringCrossValidation verifies WriteString emits an 8-byte big-endian
 // length prefix followed by the UTF-8 string bytes.
 func TestWriteStringCrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	const s = "hello"
 	var lenBuf [8]byte
 	binary.BigEndian.PutUint64(lenBuf[:], uint64(len(s)))
@@ -149,7 +149,7 @@ func TestWriteStringCrossValidation(t *testing.T) {
 
 // TestWriteNilMarkerCrossValidation verifies WriteNilMarker emits 0x00/0x01.
 func TestWriteNilMarkerCrossValidation(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	absentID := rawBlake2b256([]byte{0x00})
 	presentID := rawBlake2b256([]byte{0x01})
 
@@ -176,7 +176,7 @@ func TestWriteNilMarkerCrossValidation(t *testing.T) {
 // EntityIDs — specifically testing that length-prefixed strings prevent prefix
 // collisions (e.g. "ab"+"c" != "a"+"bc").
 func TestEntityIDDistinct(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	hABC := NewHash()
 	WriteString(hABC, "ab")
 	WriteString(hABC, "c")
@@ -196,7 +196,7 @@ func TestEntityIDDistinct(t *testing.T) {
 // These values are computed from the canonical Blake2b-256 encoding and must
 // not change unless the hash scheme is intentionally revised.
 func TestKnownVectors(t *testing.T) {
-	// Covers: R-08
+	// Covers: R-DG-034
 	//
 	// Each vector was derived by computing the raw Blake2b-256 over the exact
 	// byte sequence that the helpers emit, then hardcoding the hex digest here.

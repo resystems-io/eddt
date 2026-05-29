@@ -4,7 +4,7 @@
 // to prove that EntityID emission is stable to source declaration order:
 // the emitter sorts sub-fields lexicographically by name, so the generated
 // Write* calls are identical to those for entityid_struct_key despite the
-// different source order (EM-05).
+// different source order (R-DG-034).
 package entityid_struct_key_reversed
 
 import eddt "go.resystems.io/eddt/runtime"

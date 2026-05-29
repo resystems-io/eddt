@@ -1,8 +1,8 @@
-// Package clearable_composite is the CL-08 conformance corpus fixture for a
+// Package clearable_composite is the R-DG-026 conformance corpus fixture for a
 // Snapshot with all three delta.nested+delta.clearable inner shapes together.
 //
 // It exercises:
-//   - struct clearable (Location Address): struct-valued N-01 companion reuse,
+//   - struct clearable (Location Address): struct-valued R-DG-016 companion reuse,
 //     comparable struct so no reflect.DeepEqual fallback in the wrapper.
 //   - map clearable (Tags map[string]string): net-new TagsMapDelta wrapper with
 //     IsEmpty() / ApplyTagsMapDelta / DiffTagsMapDelta helpers.
@@ -11,8 +11,8 @@
 //   - atomic coexistence (Count int32): plain atomic field beside all three
 //     clearable fields, verifying no cross-field interference.
 //
-// The fixture is consumed by all four TestConformance_* tests (C-02 round-trip,
-// C-03 identity-diff, C-04 coalesce-as-fold, plus the CL-08 dedicated
+// The fixture is consumed by all four TestConformance_* tests (R-DG-019 round-trip,
+// R-DG-019 identity-diff, R-DG-019 coalesce-as-fold, plus the R-DG-026 dedicated
 // TestConformance_TruthTable for §5.4 rows).
 package clearable_composite
 

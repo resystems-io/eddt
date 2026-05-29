@@ -1,6 +1,6 @@
 // Package with_map provides a Snapshot fixture with a map payload field, used
 // to verify that maps are classified as ShapeMap without a parse-time error.
-// Under the harmonised model (refinements §1.6.3, Errata E-16), untagged
+// Under the harmonised model (refinements §1.6.3, Errata R-DG-006, R-DG-016), untagged
 // maps are admitted and emit atomically; no tag-combination constraint applies.
 package with_map
 
@@ -13,7 +13,7 @@ type MapKey struct{ Name string }
 // MapSnapshot has a map[string]string payload field plus a conforming
 // entity.key field. The parser must classify Tags as ShapeMap and return
 // it without error. Under the harmonised three-axis model (refinements
-// §1.6.3, Errata E-16), untagged maps are admitted with the atomic
+// §1.6.3, Errata R-DG-006, R-DG-016), untagged maps are admitted with the atomic
 // default (SetX *map[K]V emission); no tag-combination constraint
 // applies. G-04 removes Key from ParsedSnapshot.Fields, leaving exactly
 // one payload field (Tags).

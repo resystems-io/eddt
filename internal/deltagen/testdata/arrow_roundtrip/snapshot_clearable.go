@@ -3,14 +3,14 @@ package arrowroundtrip
 import eddt "go.resystems.io/eddt/runtime"
 
 // ARAddress is a comparable struct used as the clearable struct inner type.
-// Being comparable, delta-gen emits the N-01 companion (ARAddressDelta) with
+// Being comparable, delta-gen emits the R-DG-016 companion (ARAddressDelta) with
 // no reflect.DeepEqual fallback.
 type ARAddress struct {
 	Street string
 	City   string
 }
 
-// ARClearable covers the CL-09 V-model INT step: all three nested+clearable
+// ARClearable covers the R-DG-016, R-DG-019 V-model INT step: all three nested+clearable
 // inner shapes (struct / map / slice) in a single Snapshot.
 type ARClearable struct {
 	eddt.Header

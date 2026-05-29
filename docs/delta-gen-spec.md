@@ -543,7 +543,7 @@ offending Snapshot type.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §4.2; E-09 (Header identity by type, not by name)
+- **Source (A5):** Upstream spec §4.2
 - **Rationale (A1):** Every Snapshot must carry exactly one chain envelope; zero leaves the generated `Apply` and `Diff` with no chain context to validate against, and more than one makes the choice of which `Header` to use ambiguous, silently corrupting provenance accumulation.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-01` Snapshot Parser
@@ -748,7 +748,7 @@ properties of the artefacts that downstream code binds to.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** Upstream spec §6.1; CG-01, CG-02, CG-03
+- **Source (A5):** Upstream spec §6.1; R-DG-020, R-DG-038
 - **Rationale (A1):** Method syntax on the Snapshot type allows callers to write `snap.Apply(d)` rather than `pkg.Apply(snap, d)`, which improves readability at call sites that already hold a `snap` variable.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -765,7 +765,7 @@ properties of the artefacts that downstream code binds to.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** EM-05; observed implementation (`EmitEntityIDMethod`)
+- **Source (A5):** R-DG-034; observed implementation (`EmitEntityIDMethod`)
 - **Rationale (A1):** Go does not permit methods on unnamed types; emitting an `EntityID` method on a Snapshot with an unnamed key type produces a compile error.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -821,7 +821,7 @@ respectively.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-002` Cross-Layer Schema Harmonisation; `N-DG-005` Operational Performance
-- **Source (A5):** Upstream spec §5; R-01, R-02, R-03, R-07, N-01, N-03, N-04, CL-01; observed implementation (emission table)
+- **Source (A5):** Upstream spec §5; R-DG-029, R-DG-030, R-DG-032, R-DG-028, R-DG-026; observed implementation (emission table)
 - **Rationale (A1):** The field representation is the core output contract for downstream consumers; any deviation from Table 1 is a breaking change for code that reads or writes the generated Delta type.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -837,7 +837,7 @@ respectively.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** CG-03; observed implementation
+- **Source (A5):** R-DG-038; observed implementation
 - **Rationale (A1):** Different projects have different preferences for whether generated code is consolidated (easier to manage) or per-type (easier to diff and review); both modes are needed for broad adoption.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-04` Generator CLI
@@ -856,7 +856,7 @@ respectively.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** CG-03; observed implementation (`deriveOutPath`)
+- **Source (A5):** R-DG-038; observed implementation (`deriveOutPath`)
 - **Rationale (A1):** Consistent, predictable output file names allow `//go:generate` directives and CI scripts to refer to generated files without coupling to the exact struct name casing.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
@@ -890,7 +890,7 @@ respectively.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-003` System Traceability
-- **Source (A5):** Upstream spec §8.4; R-29; observed implementation
+- **Source (A5):** Upstream spec §8.4; R-DG-024; observed implementation
 - **Rationale (A1):** Byte-identical regeneration is required for generated source to be manageable under version control and verifiable in CI; a non-deterministic generator forces re-committing generated files on every run, obscuring genuine changes.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -925,7 +925,7 @@ defers to), unless otherwise noted.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §8.1; R-28
+- **Source (A5):** Upstream spec §8.1
 - **Rationale (A1):** Round-trip is the central law justifying that `Diff` is a faithful encoding of the change from `a` to `b`; without it, downstream coalescing, replay, and audit reconstruction lose ground truth. The law jointly constrains `Diff` (must not drop or fabricate field changes) and `Apply` (must not touch fields the delta did not address).
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -942,7 +942,7 @@ defers to), unless otherwise noted.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety; `N-DG-005` Operational Performance
-- **Source (A5):** Upstream spec §8.2; E-06
+- **Source (A5):** Upstream spec §8.2
 - **Rationale (A1):** A `Diff` that emits spurious field updates for equal payloads wastes wire bandwidth, triggers needless downstream processing, and violates the minimality invariant on which delta compaction (Coalesce) relies.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -960,7 +960,7 @@ defers to), unless otherwise noted.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §8.3; EM-04
+- **Source (A5):** Upstream spec §8.3; R-DG-012, R-DG-013
 - **Rationale (A1):** Fold-equivalence means `Coalesce` can replace a sequence of `Apply` calls without referencing intermediate snapshots. Partition-independence (a corollary of fold-equivalence) means a backlog consumer can chunk the delta list at any boundary and resume from the intermediate result, enabling incremental catch-up without centralised coordination.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -989,7 +989,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §5.4; CL-08
+- **Source (A5):** Upstream spec §5.4
 - **Rationale (A1):** The clearable semantics provide an explicit retract mechanism that nil-pointer presence cannot express for composite fields; the five-row truth-table defines the complete semantics that both `Diff` and `Apply` must honour consistently.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1006,7 +1006,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** E-17; E-15; E-16; N-04
+- **Source (A5):** R-DG-007, R-DG-006, R-DG-016, R-DG-028
 - **Rationale (A1):** Go's zero value for a slice or map is `nil`, but an initialised empty slice or map is semantically equivalent; treating them as different would produce spurious `Added`/`Removed` payload for initialisation artefacts.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -1026,7 +1026,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §5.3; N-04; E-15
+- **Source (A5):** Upstream spec §5.3; R-DG-006, R-DG-016
 - **Rationale (A1):** Slice fields used to model membership sets (e.g. group membership lists) cannot guarantee order across producers; the set-membership invariant ensures correct convergence regardless of the order in which additions and removals arrive.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -1048,7 +1048,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Chain-lifecycle spec §6.1; R-05; R-06; R-09; R-10; R-11
+- **Source (A5):** Chain-lifecycle spec §6.1; R-DG-030, R-DG-031, R-DG-036, R-DG-037, R-DG-038
 - **Rationale (A1):** Each precondition guards a distinct chain-safety invariant: EntityID equality prevents cross-entity corruption, ChainID equality prevents cross-chain application, Sequence strict-monotonicity prevents duplicate or backwards application, EffectiveAt non-decrease enforces domain-time ordering, and Closed rejection prevents extension of a terminated chain.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1067,7 +1067,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Chain-lifecycle spec §6.2; R-05; R-06
+- **Source (A5):** Chain-lifecycle spec §6.2; R-DG-029, R-DG-031
 - **Rationale (A1):** Computing a diff between snapshots on different chains or with non-monotonic Sequence would produce a semantically meaningless delta whose `Apply` would violate the round-trip invariant (R-DG-023).
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1083,7 +1083,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** E-10; R-05; R-06
+- **Source (A5):** R-DG-034, R-DG-035; R-DG-029, R-DG-030
 - **Rationale (A1):** A zero `EntityID` arises when a caller populates the `Header` without hashing the entity key; silently applying a delta against a zero-identity snapshot would corrupt EntityID-keyed routing and subscription state throughout the system.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1099,7 +1099,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-003` System Traceability; `N-DG-004` Chain Safety
-- **Source (A5):** Chain-lifecycle spec §3.2.1; R-27
+- **Source (A5):** Chain-lifecycle spec §3.2.1; R-DG-016
 - **Rationale (A1):** `Provenance` is the audit trail of lineage entries for a Snapshot; append-only accumulation ensures that any past contributor to a Snapshot's state can be identified from the current Snapshot alone, without replaying the full delta chain.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1137,7 +1137,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-003` System Traceability; `N-DG-004` Chain Safety
-- **Source (A5):** E-10; EM-05
+- **Source (A5):** R-DG-035
 - **Rationale (A1):** `EntityID` is the global routing key for all delta-based operations; content-determination from a stable field order ensures that two independent producers for the same real-world entity compute the same `EntityID` without coordination.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
@@ -1153,7 +1153,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** E-10; observed implementation (`runtime.EntityID`)
+- **Source (A5):** R-DG-034; observed implementation (`runtime.EntityID`)
 - **Rationale (A1):** A fixed-width representation with a defined sentinel allows consumers to test validity with a single equality check without importing type-specific logic; the constraint that valid hashes are non-zero is enforced jointly by R-DG-031.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-03` Runtime Library
@@ -1177,7 +1177,7 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** CG-01; observed implementation (`RunE`)
+- **Source (A5):** R-DG-020; observed implementation (`RunE`)
 - **Rationale (A1):** Supporting both positional arguments and the `--type` flag allows `//go:generate` directives to use whichever form is most readable; requiring a non-empty union prevents silent no-op invocations.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
@@ -1194,7 +1194,7 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** CG-02; observed implementation (`inputPkgs`)
+- **Source (A5):** R-DG-038; observed implementation (`inputPkgs`)
 - **Rationale (A1):** Supporting both filesystem paths and import paths allows the generator to be used from both `//go:generate` directives (typically relative paths) and standalone tooling (typically import paths).
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
@@ -1210,7 +1210,6 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** CG-03; observed implementation
 - **Rationale (A1):** The output mode flag is the only user-visible control over where generated source lands; an absent flag that silently picks a mode could overwrite unexpected paths, so the default (multi-file) is stated explicitly.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
@@ -1228,7 +1227,7 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-002` Cross-Layer Schema Harmonisation
-- **Source (A5):** C-05 (cross-package); observed implementation (`parsePkgAliases`)
+- **Source (A5):** R-DG-019 (cross-package); observed implementation (`parsePkgAliases`)
 - **Rationale (A1):** Cross-package generation is required when the Delta type must live in a different package from the Snapshot (e.g. a public API package); import aliases resolve ambiguous package names in the generated import block.
 - **V&V method (A2):** Test
 - **Allocation (A8):** `S-DG-04` Generator CLI
@@ -1416,33 +1415,11 @@ normative obligation.
 
 <!-- Reference links generated by scripts/refs-linkify.py -->
 
-[c-05]: eddt-needs.md#
-[e-06]: eddt-needs.md#
-[e-09]: eddt-needs.md#
-[e-10]: eddt-needs.md#
-[e-15]: eddt-needs.md#
-[e-16]: eddt-needs.md#
-[e-17]: eddt-needs.md#
-[n-01]: eddt-needs.md#
-[n-03]: eddt-needs.md#
-[n-04]: eddt-needs.md#
 [n-ecol-007]: eddt-needs.md#n-ecol-007
 [n-eddt-002]: eddt-needs.md#n-eddt-002
 [n-eddt-005]: eddt-needs.md#n-eddt-005
 [n-eddt-007]: eddt-needs.md#n-eddt-007
 [n-eddt-008]: eddt-needs.md#n-eddt-008
 [n-eddt-010]: eddt-needs.md#n-eddt-010
-[r-01]: eddt-needs.md#
-[r-02]: eddt-needs.md#
-[r-03]: eddt-needs.md#
-[r-05]: eddt-needs.md#
-[r-06]: eddt-needs.md#
-[r-07]: eddt-needs.md#
-[r-09]: eddt-needs.md#
-[r-10]: eddt-needs.md#
-[r-11]: eddt-needs.md#
-[r-27]: eddt-needs.md#
-[r-28]: eddt-needs.md#
-[r-29]: eddt-needs.md#
 
 <!-- /Reference links -->

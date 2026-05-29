@@ -1,7 +1,7 @@
 package deltagen
 
 // key.go implements the hash-line renderer used by the EntityID emission stage
-// (EM-05). It maps a key type (primitive or struct) to a slice of
+// (R-DG-034). It maps a key type (primitive or struct) to a slice of
 // runtime.Write* call strings, one per field, in lexicographic field-name
 // order (not source declaration order — reordering sub-fields in the source
 // struct is therefore not a breaking change to existing EntityIDs).
@@ -20,7 +20,7 @@ import (
 //     intentionally ignored so that reordering sub-fields in the upstream
 //     struct definition is not a breaking change to existing EntityIDs.
 //
-// Used by buildSnapshotView to populate snapshotView.KeyHashLines (EM-05).
+// Used by buildSnapshotView to populate snapshotView.KeyHashLines (R-DG-034).
 func buildKeyHashLines(keyType types.Type, keyShape FieldShape) ([]string, error) {
 	switch keyShape {
 	case ShapeScalar:
@@ -34,7 +34,7 @@ func buildKeyHashLines(keyType types.Type, keyShape FieldShape) ([]string, error
 		st, ok := keyType.Underlying().(*types.Struct)
 		if !ok {
 			return nil, fmt.Errorf(
-				"EM-05: key type %s has ShapeStructValue but non-struct underlying",
+				"R-DG-034: key type %s has ShapeStructValue but non-struct underlying",
 				keyType)
 		}
 
@@ -56,14 +56,14 @@ func buildKeyHashLines(keyType types.Type, keyShape FieldShape) ([]string, error
 		for _, fe := range fields {
 			line, err := keyHashLine(fe.typ, "k."+fe.name)
 			if err != nil {
-				return nil, fmt.Errorf("EM-05: key field %q: %w", fe.name, err)
+				return nil, fmt.Errorf("R-DG-034: key field %q: %w", fe.name, err)
 			}
 			lines = append(lines, line)
 		}
 		return lines, nil
 
 	default:
-		return nil, fmt.Errorf("EM-05: unsupported key shape %v for hash-line generation", keyShape)
+		return nil, fmt.Errorf("R-DG-034: unsupported key shape %v for hash-line generation", keyShape)
 	}
 }
 
@@ -76,7 +76,7 @@ func keyHashLine(t types.Type, recvExpr string) (string, error) {
 	b, ok := t.Underlying().(*types.Basic)
 	if !ok {
 		return "", fmt.Errorf(
-			"EM-05: key field has unsupported underlying type %q; "+
+			"R-DG-034: key field has unsupported underlying type %q; "+
 				"only basic comparable types are hashable in this phase",
 			t)
 	}
@@ -115,7 +115,7 @@ func keyHashLine(t types.Type, recvExpr string) (string, error) {
 		return fmt.Sprintf("runtime.WriteUint64(h, uint64(%s))", recvExpr), nil
 	default:
 		return "", fmt.Errorf(
-			"EM-05: key field has unsupported underlying type %q; "+
+			"R-DG-034: key field has unsupported underlying type %q; "+
 				"only basic comparable types are hashable in this phase",
 			t)
 	}

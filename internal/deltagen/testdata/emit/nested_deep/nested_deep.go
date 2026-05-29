@@ -1,4 +1,4 @@
-// Package nested_deep is the N-01 two-level nesting fixture. Level1 carries a
+// Package nested_deep is the R-DG-016 two-level nesting fixture. Level1 carries a
 // delta.nested Level2 sub-field, and the root Snapshot carries a delta.nested
 // Level1 field. Both Level2Delta and Level1Delta must be emitted.
 package nested_deep

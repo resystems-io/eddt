@@ -47,7 +47,7 @@ func isZeroHeader(h Header) bool {
 // TestHeaderAfterApply_HappyPath verifies every output field of HeaderAfterApply
 // against the field-by-field assignment rules in chain-lifecycle-spec.md §6.1.
 func TestHeaderAfterApply_HappyPath(t *testing.T) {
-	// Covers: R-05
+	// Covers: R-DG-029, R-DG-031
 	chainID := "chain-abc"
 	entity := eid(0x01)
 
@@ -125,7 +125,7 @@ func TestHeaderAfterApply_HappyPath(t *testing.T) {
 // they are checked. Each subtest passes a pair (s, d) that violates exactly one
 // invariant and expects a non-nil error and a zero-value result Header.
 func TestHeaderAfterApply_Validation(t *testing.T) {
-	// Covers: R-05
+	// Covers: R-DG-029, R-DG-031
 	entity := eid(0x01)
 	closedAt := ts(0)
 
@@ -154,13 +154,13 @@ func TestHeaderAfterApply_Validation(t *testing.T) {
 		wantErrFrag string // substring that must appear in the error message
 	}{
 		{
-			// Errata E-10: snapshot with all-zero EntityID is always invalid.
+			// Errata R-DG-034, R-DG-035: snapshot with all-zero EntityID is always invalid.
 			name:        "snapshot_EntityID_zero",
 			mutate:      func(s, _ *Header) { s.EntityID = EntityID{} },
 			wantErrFrag: "snapshot EntityID is zero",
 		},
 		{
-			// Errata E-10: delta with all-zero EntityID is always invalid.
+			// Errata R-DG-034, R-DG-035: delta with all-zero EntityID is always invalid.
 			name:        "delta_EntityID_zero",
 			mutate:      func(_, d *Header) { d.EntityID = EntityID{} },
 			wantErrFrag: "delta EntityID is zero",
@@ -237,7 +237,7 @@ func TestHeaderAfterApply_Validation(t *testing.T) {
 // are accepted. The spec requires d.EffectiveAt >= s.EffectiveAt (non-decrease,
 // not strict increase), so simultaneous changes sharing one instant are valid.
 func TestHeaderAfterApply_EffectiveAt_Equal(t *testing.T) {
-	// Covers: R-05 (boundary between valid and invalid for Inv. 7)
+	// Covers: R-DG-029, R-DG-031 (boundary between valid and invalid for Inv. 7)
 	entity := eid(0x01)
 	instant := ts(3)
 
@@ -254,7 +254,7 @@ func TestHeaderAfterApply_EffectiveAt_Equal(t *testing.T) {
 // monotonicity (d.Sequence > s.Sequence) is required; skipped Sequences become
 // taint entries in the consumer state machine, not a rejection reason here.
 func TestHeaderAfterApply_SequenceGap(t *testing.T) {
-	// Covers: R-05 (gap-tolerant apply, Inv. 6)
+	// Covers: R-DG-029, R-DG-031 (gap-tolerant apply, Inv. 6)
 	entity := eid(0x01)
 
 	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0)}
@@ -274,7 +274,7 @@ func TestHeaderAfterApply_SequenceGap(t *testing.T) {
 // This preserves the zero-value convention and avoids spurious non-nil Provenance
 // slices on Headers that have never had any lineage recorded.
 func TestHeaderAfterApply_Provenance_NilInputs(t *testing.T) {
-	// Covers: R-05 (Provenance concatenation edge case)
+	// Covers: R-DG-029, R-DG-031 (Provenance concatenation edge case)
 	entity := eid(0x01)
 
 	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0)}
@@ -293,7 +293,7 @@ func TestHeaderAfterApply_Provenance_NilInputs(t *testing.T) {
 // TestHeaderAfterApply_Provenance_OneNil verifies that when one side's Provenance
 // is nil the result equals the non-nil side's entries only.
 func TestHeaderAfterApply_Provenance_OneNil(t *testing.T) {
-	// Covers: R-05 (Provenance concatenation, one-nil case)
+	// Covers: R-DG-029, R-DG-031 (Provenance concatenation, one-nil case)
 	entity := eid(0x01)
 	prov := []Provenance{{Solution: "only", Component: "c", Instance: "i", PublishedAt: ts(0)}}
 
@@ -327,7 +327,7 @@ func TestHeaderAfterApply_Provenance_OneNil(t *testing.T) {
 // appending to an input slice after the call would silently corrupt the result,
 // violating the append-only contract of chain-lifecycle §3.2.1.
 func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
-	// Covers: R-05 (Provenance slice aliasing safety)
+	// Covers: R-DG-029, R-DG-031 (Provenance slice aliasing safety)
 	entity := eid(0x01)
 	provS := []Provenance{{Solution: "s-entry", Component: "c", Instance: "i", PublishedAt: ts(0)}}
 	provD := []Provenance{{Solution: "d-entry", Component: "c", Instance: "i", PublishedAt: ts(1)}}
@@ -357,7 +357,7 @@ func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
 // TestHeaderForDiff_HappyPath verifies every output field of HeaderForDiff
 // against the field-by-field assignment rules in chain-lifecycle-spec.md §6.2.
 func TestHeaderForDiff_HappyPath(t *testing.T) {
-	// Covers: R-06
+	// Covers: R-DG-030
 	entity := eid(0x01)
 	chainID := "chain-xyz"
 
@@ -410,7 +410,7 @@ func TestHeaderForDiff_HappyPath(t *testing.T) {
 // non-nil Provenance slices, the result's Provenance is nil. The call site is
 // responsible for appending its own lineage entries (chain-lifecycle §6.2).
 func TestHeaderForDiff_ProvenanceAlwaysNil(t *testing.T) {
-	// Covers: R-06
+	// Covers: R-DG-030
 	entity := eid(0x01)
 	prov := []Provenance{{Solution: "s", Component: "c", Instance: "i", PublishedAt: ts(0)}}
 
@@ -429,7 +429,7 @@ func TestHeaderForDiff_ProvenanceAlwaysNil(t *testing.T) {
 // TestHeaderForDiff_Validation exercises every validation rule. Each subtest
 // passes a pair (a, b) that violates exactly one invariant.
 func TestHeaderForDiff_Validation(t *testing.T) {
-	// Covers: R-06
+	// Covers: R-DG-030
 	entity := eid(0x01)
 
 	base := func() (Header, Header) {
@@ -503,7 +503,7 @@ func TestHeaderForDiff_Validation(t *testing.T) {
 // (>= not >) precisely to support this, unlike HeaderAfterApply which requires
 // strict increase.
 func TestHeaderForDiff_SequenceEqual(t *testing.T) {
-	// Covers: R-06 (boundary — equal Sequences allowed unlike HeaderAfterApply)
+	// Covers: R-DG-030 (boundary — equal Sequences allowed unlike HeaderAfterApply)
 	entity := eid(0x01)
 	instant := ts(5)
 
@@ -522,7 +522,7 @@ func TestHeaderForDiff_SequenceEqual(t *testing.T) {
 // TestHeaderForDiff_EffectiveAt_Equal confirms that equal EffectiveAt values
 // are accepted (>= not >, same as HeaderAfterApply).
 func TestHeaderForDiff_EffectiveAt_Equal(t *testing.T) {
-	// Covers: R-06 (boundary — equal EffectiveAt accepted)
+	// Covers: R-DG-030 (boundary — equal EffectiveAt accepted)
 	entity := eid(0x01)
 	instant := ts(2)
 

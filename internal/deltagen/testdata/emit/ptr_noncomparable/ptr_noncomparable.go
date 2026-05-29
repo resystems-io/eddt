@@ -7,7 +7,7 @@ type SliceBag struct {
 	Tags []string
 }
 
-// PtrNonComparableSnapshot exercises the PointeeUseReflectEq path (CL-10):
+// PtrNonComparableSnapshot exercises the PointeeUseReflectEq path (R-DG-026):
 // a *SliceBag field whose pointee is non-comparable, so Diff must emit
 // reflect.DeepEqual(*a.Bag, *b.Bag) inside the nil-equivalence guard.
 type PtrNonComparableSnapshot struct {

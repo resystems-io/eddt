@@ -1,9 +1,9 @@
 package deltagen
 
-// integration_arrow_test.go implements C-06: cross-generator integration
+// integration_arrow_test.go implements R-DG-019: cross-generator integration
 // round-trip — delta-gen × arrow-writer-gen × arrow-reader-gen.
 //
-// C-06 verifies the cross-subsystem contract: the type shapes delta-gen emits
+// R-DG-019 verifies the cross-subsystem contract: the type shapes delta-gen emits
 // are compatible with the arrow generators' supported field-shape vocabulary,
 // end-to-end.  All three generators are invoked programmatically via their Go
 // APIs; no CLI subprocesses.  The replace directive in the temp module's go.mod
@@ -14,11 +14,11 @@ package deltagen
 //
 // Test matrix:
 //
-//	TestIntegration_ArrowRoundTrip/ScalarAndStruct    PASS  (C-06)
-//	TestIntegration_ArrowRoundTrip/ShapePointer       PASS  (C-08)
-//	TestIntegration_ArrowRoundTrip/ShapeSliceAtomic   PASS  (C-08)
-//	TestIntegration_ArrowRoundTrip/ShapeMapAtomic     PASS  (C-08)
-//	TestIntegration_ArrowRoundTrip/NestedClearable    PASS  (CL-09)
+//	TestIntegration_ArrowRoundTrip/ScalarAndStruct    PASS  (R-DG-019)
+//	TestIntegration_ArrowRoundTrip/ShapePointer       PASS  (R-DG-019)
+//	TestIntegration_ArrowRoundTrip/ShapeSliceAtomic   PASS  (R-DG-019)
+//	TestIntegration_ArrowRoundTrip/ShapeMapAtomic     PASS  (R-DG-019)
+//	TestIntegration_ArrowRoundTrip/NestedClearable    PASS  (R-DG-016, R-DG-019)
 
 import (
 	"fmt"
@@ -152,7 +152,7 @@ func runArrowPipeline(t *testing.T, opts arrowPipelineOpts) {
 	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", opts.runPattern, ".")
 }
 
-// arrowRoundTripCheck runs the C-06 ARSnapshot pipeline: delta-gen + arrow gens
+// arrowRoundTripCheck runs the R-DG-019 ARSnapshot pipeline: delta-gen + arrow gens
 // + Arrow round-trip inner test.
 func arrowRoundTripCheck(t *testing.T) {
 	t.Helper()
@@ -229,7 +229,7 @@ func TestARSnapshotDeltaRoundTrip(t *testing.T) {
 }
 `
 
-// arrowExtendedRoundTripCheck runs the C-08 ARExtended pipeline: delta-gen +
+// arrowExtendedRoundTripCheck runs the R-DG-019 ARExtended pipeline: delta-gen +
 // arrow gens + Arrow round-trip + DuckDB Parquet verification.
 func arrowExtendedRoundTripCheck(t *testing.T) {
 	t.Helper()
@@ -381,7 +381,7 @@ func TestARExtendedDeltaRoundTrip(t *testing.T) {
 }
 `
 
-// arrowClearableRoundTripCheck runs the CL-09 ARClearable pipeline: delta-gen +
+// arrowClearableRoundTripCheck runs the R-DG-016, R-DG-019 ARClearable pipeline: delta-gen +
 // arrow gens + Arrow round-trip + DuckDB Parquet verification for all three
 // Op states across struct / map / slice clearable shapes.
 func arrowClearableRoundTripCheck(t *testing.T) {

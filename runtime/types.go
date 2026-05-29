@@ -4,9 +4,9 @@
 //
 // Scope: this package delivers the baseline (Phases 1–6) types and functions.
 // The tri-state clearable extension — FieldDelta[T], FieldDeltaOp, and the
-// three Op* constants — is added in Phase 7 (CL-01). The single-type-parameter
-// ApplyFieldDelta from the spec is superseded (E-23); the per-field Apply
-// switch is generator-emitted (CL-06).
+// three Op* constants — is added in Phase 7 (R-DG-026). The single-type-parameter
+// ApplyFieldDelta from the spec is superseded (R-DG-007); the per-field Apply
+// switch is generator-emitted (R-DG-016).
 package runtime
 
 import "time"
@@ -14,7 +14,7 @@ import "time"
 // EntityID is a fixed-width content-hash of a Snapshot's entity key struct,
 // computed by delta-gen-emitted EntityID() methods using the hash helpers in
 // hash.go. The uniform [32]byte type allows cross-chain entity-equality checks
-// to be expressed as plain == comparisons (Errata E-10).
+// to be expressed as plain == comparisons (Errata R-DG-034, R-DG-035).
 type EntityID [32]byte
 
 // IsZero reports whether the EntityID is the zero value (all bytes zero).
@@ -25,7 +25,7 @@ func (e EntityID) IsZero() bool { return e == EntityID{} }
 // It encodes chain identity, sequence position, bitemporal timestamps, anchor
 // fields (for chain birth/termination linking), and accumulated lineage.
 //
-// Per Errata E-10, Header carries EntityID [32]byte rather than a typed entity
+// Per Errata R-DG-034, R-DG-035, Header carries EntityID [32]byte rather than a typed entity
 // key — the domain-specific key struct is embedded directly in the Snapshot and
 // marked eddt:"entity.key"; delta-gen emits the EntityID() method on that struct.
 type Header struct {
@@ -115,7 +115,7 @@ const (
 )
 
 // FieldDelta is the tri-state carrier for a clearable Delta field
-// (delta-gen-spec §6.3 / chain-lifecycle §3.3). Per Errata E-23 the only
+// (delta-gen-spec §6.3 / chain-lifecycle §3.3). Per Errata R-DG-007 the only
 // clearable form is compositional, so T is always a generated inner *delta*
 // type, never the Snapshot field type.
 type FieldDelta[T any] struct {

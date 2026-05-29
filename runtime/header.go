@@ -9,7 +9,7 @@ import (
 // invocation, where s is the prior Snapshot's Header and d is the applied
 // Delta's Header. It performs all chain-envelope validations mandated by
 // chain-lifecycle-spec.md §6.1 plus the EntityID zero-rejection required by
-// Errata E-10. Delta-gen-emitted Apply methods call this function exactly once
+// Errata R-DG-034, R-DG-035. Delta-gen-emitted Apply methods call this function exactly once
 // and must not replicate or bypass these validations (delta-gen-spec.md §6.4).
 //
 // On success the returned Header carries:
@@ -22,7 +22,7 @@ import (
 // non-nil error describing the violated invariant. The caller's Apply method
 // must propagate the error; it must not use the zero Header.
 func HeaderAfterApply(s, d Header) (Header, error) {
-	// 1. Reject zero EntityIDs (Errata E-10).
+	// 1. Reject zero EntityIDs (Errata R-DG-034, R-DG-035).
 	//    An all-zero EntityID signals that the caller forgot to populate the
 	//    entity key struct with its content-hash, or that a zero-value Header
 	//    was passed in. Both inputs are checked independently so the error
@@ -113,7 +113,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 // HeaderForDiff produces the Header for the Delta d such that Apply(a, d) == b,
 // where a and b are two Snapshots on the same chain. It performs the validations
 // mandated by chain-lifecycle-spec.md §6.2 plus EntityID zero-rejection (Errata
-// E-10). Delta-gen-emitted Diff methods call this function exactly once and must
+// R-DG-034, R-DG-035). Delta-gen-emitted Diff methods call this function exactly once and must
 // not replicate or bypass these validations (delta-gen-spec.md §6.5).
 //
 // On success the returned Header carries:
@@ -131,7 +131,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 // On any validation failure HeaderForDiff returns a zero Header and a non-nil
 // error. The caller's Diff method must propagate the error.
 func HeaderForDiff(a, b Header) (Header, error) {
-	// 1. Reject zero EntityIDs (Errata E-10).
+	// 1. Reject zero EntityIDs (Errata R-DG-034, R-DG-035).
 	//    Same rationale as HeaderAfterApply: zero EntityID indicates an
 	//    uninitialized key struct rather than a valid entity.
 	if a.EntityID.IsZero() {

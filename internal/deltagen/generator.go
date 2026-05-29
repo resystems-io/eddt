@@ -2,7 +2,7 @@
 // Snapshot struct annotated with eddt:"entity.key" and delta.* struct tags and
 // emits the companion Delta type together with the package-level functions
 // Apply, Diff, Coalesce, and EntityID. When the output package matches the
-// source package, optional ergonomic method wrappers are also emitted (E-12).
+// source package, optional ergonomic method wrappers are also emitted (R-DG-012, R-DG-013, R-DG-019).
 //
 // The generator pipeline has four stages, each delivered by its own item in
 // the implementation plan:
@@ -16,7 +16,7 @@
 //     ParsedSnapshot.KeyVar and excluded from Fields. Per-struct key-field
 //     overrides are supplied via Generator.KeyFields (G-06).
 //   - Tag    (Phase 3): parse and validate eddt: tag values on payload fields.
-//   - Emit    (Phase 4): render the TDelta type (EM-01) and, in later items,
+//   - Emit    (Phase 4): render the TDelta type (R-DG-015) and, in later items,
 //     Apply, Diff, Coalesce, EntityID bodies via text/template (template.go).
 package deltagen
 
@@ -85,7 +85,7 @@ type Generator struct {
 
 	// CrossPackage is true when OutPkgName differs from the source package name.
 	// When true, the parse stage excludes unexported fields and the emit stage
-	// omits ergonomic method wrappers (E-12).
+	// omits ergonomic method wrappers (R-DG-012, R-DG-013, R-DG-019).
 	CrossPackage bool
 }
 
@@ -132,7 +132,7 @@ func (g *Generator) log() *slog.Logger {
 //     and excluded from Fields. Per-struct key-field overrides are carried via
 //     KeyFields.
 //   - Tag    (tag.go):      parse and validate eddt: tag values.
-//   - Emit    (template.go): render the TDelta struct (EM-01) and, in later
+//   - Emit    (template.go): render the TDelta struct (R-DG-015) and, in later
 //     Phase-4 items, Apply/Diff/Coalesce/EntityID bodies.
 func (g *Generator) Run() error {
 	pkgs, err := g.loadStage()
@@ -210,9 +210,9 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 }
 
 // emitStage renders the Delta type and associated functions for each snapshot.
-// EM-01 emits the TDelta struct (embedded runtime.Header + per-field atomic
+// R-DG-015 emits the TDelta struct (embedded runtime.Header + per-field atomic
 // Set<Name> declarations) via the text/template pipeline in template.go.
-// Apply, Diff, Coalesce, and EntityID bodies land in EM-02..EM-05.
+// Apply, Diff, Coalesce, and EntityID bodies land in R-DG-012, R-DG-013, R-DG-014, R-DG-034.
 func (g *Generator) emitStage(snapshots []*ParsedSnapshot) error {
 	return executeEmit(snapshots, g)
 }

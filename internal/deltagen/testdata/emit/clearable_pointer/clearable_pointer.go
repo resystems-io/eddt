@@ -1,4 +1,4 @@
-// Package clearable_pointer is the HK-16 emit fixture for a
+// Package clearable_pointer is the R-DG-026 emit fixture for a
 // delta.nested+delta.clearable struct field whose inner struct contains a
 // pointer sub-field.
 //

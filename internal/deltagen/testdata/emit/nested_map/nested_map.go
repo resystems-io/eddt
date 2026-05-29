@@ -1,4 +1,4 @@
-// Package nested_map is the N-03 emit fixture. NestedMapSnapshot exercises
+// Package nested_map is the R-DG-016 emit fixture. NestedMapSnapshot exercises
 // two map fields:
 //
 //   - Tags uses a scalar value type (map[string]string); generated Diff uses !=.
@@ -23,7 +23,7 @@ type Entry struct {
 
 // NestedMapSnapshot is the root Snapshot processed by the generator.
 //
-// Delta encoding for map fields (N-03, E-16 upsert semantics):
+// Delta encoding for map fields (R-DG-016, R-DG-006, R-DG-016 upsert semantics):
 //   - Tags  → UpdatedTags map[string]string + RemovedTags []string
 //   - Scores → UpdatedScores map[string]Entry  + RemovedScores []string
 //   - Count remains an atomic *int32 field in TDelta (unchanged field handling).
@@ -31,9 +31,9 @@ type NestedMapSnapshot struct {
 	eddt.Header
 	// Key is the entity key used for EntityID computation.
 	Key string `eddt:"entity.key"`
-	// Tags is a string→string map encoded with element-wise delta (N-03).
+	// Tags is a string→string map encoded with element-wise delta (R-DG-016).
 	Tags map[string]string `eddt:"delta.nested"`
-	// Scores is a string→Entry map encoded with element-wise delta (N-03).
+	// Scores is a string→Entry map encoded with element-wise delta (R-DG-016).
 	// Entry is comparable, so the generated Diff uses != for value comparison.
 	Scores map[string]Entry `eddt:"delta.nested"`
 	// Count is a plain atomic field; changes produce SetCount *int32 in TDelta.

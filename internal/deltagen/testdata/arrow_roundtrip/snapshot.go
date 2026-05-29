@@ -1,4 +1,4 @@
-// Package arrowroundtrip is the C-06 cross-generator integration fixture.
+// Package arrowroundtrip is the R-DG-019 cross-generator integration fixture.
 //
 // snapshot.go covers the delta-gen field shapes that are currently compatible
 // with arrow-gen:
@@ -8,7 +8,7 @@
 //
 // ShapePointer (**T), ShapeSlice (*[]T), and ShapeMap (*map[K]V) are excluded
 // from this file because arrow-gen does not yet support those pointer-wrapped
-// compound types.  See snapshot_extended.go and PR-03 / C-08.
+// compound types.  See snapshot_extended.go and R-DG-023 / R-DG-019.
 package arrowroundtrip
 
 import eddt "go.resystems.io/eddt/runtime"
@@ -19,7 +19,7 @@ type ARMeta struct {
 	Version int32
 }
 
-// ARSnapshot is the C-06 round-trip Snapshot fixture.
+// ARSnapshot is the R-DG-019 round-trip Snapshot fixture.
 // It covers only the delta-gen shapes currently compatible with arrow-gen.
 type ARSnapshot struct {
 	eddt.Header

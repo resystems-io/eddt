@@ -12,7 +12,7 @@ package deltagen
 //   F.2 Shape classification — each supported shape is classified correctly.
 //   F.3 Header error cases — no Header, multiple Headers, struct not found.
 //   F.4 Unsupported field shapes — func, chan, interface each rejected.
-//   F.5 Map field — classified as ShapeMap without error (T-02 validates tag).
+//   F.5 Map field — classified as ShapeMap without error (R-DG-006, R-DG-007 validates tag).
 //   F.6 Cross-package field filtering — unexported fields excluded when
 //       ParseOpts.CrossPackage is true.
 //   F.7 ParseOpts equivalence — zero value behaves identically to explicit
@@ -54,7 +54,7 @@ import (
 // one embedded runtime.Header field and enumerates all payload fields from the
 // ValidSnapshot fixture. It does not assert individual shapes (that is
 // TestParse_ShapeClassification); it asserts structural correctness only.
-// Covers: R-12, R-13
+// Covers: R-DG-002, R-DG-003
 func TestParse_ValidSnapshot(t *testing.T) {
 	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
@@ -86,7 +86,7 @@ func TestParse_ValidSnapshot(t *testing.T) {
 // TestParse_ShapeClassification verifies that each field in ValidSnapshot is
 // assigned the expected FieldShape. This is the authoritative test for the
 // classifyShape function.
-// Covers: R-13
+// Covers: R-DG-003
 func TestParse_ShapeClassification(t *testing.T) {
 	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
@@ -124,7 +124,7 @@ func TestParse_ShapeClassification(t *testing.T) {
 
 // TestParse_StructNotFound verifies that requesting a struct name that does
 // not exist in the loaded package produces a descriptive error.
-// Covers: R-12
+// Covers: R-DG-002
 func TestParse_StructNotFound(t *testing.T) {
 	pkgs := loadFixture(t, "valid")
 
@@ -140,7 +140,7 @@ func TestParse_StructNotFound(t *testing.T) {
 // TestParse_NoHeader verifies that a struct without an embedded runtime.Header
 // field produces an error containing "no embedded runtime.Header". The runtime
 // package is loaded alongside the fixture so that headerTypeFor succeeds.
-// Covers: R-12
+// Covers: R-DG-002
 func TestParse_NoHeader(t *testing.T) {
 	// Load the fixture package together with the runtime package so the Header
 	// type is available for comparison even though no_header does not import it.
@@ -160,7 +160,7 @@ func TestParse_NoHeader(t *testing.T) {
 
 // TestParse_MultipleHeaders verifies that a struct with two runtime.Header
 // fields produces an error containing "multiple".
-// Covers: R-12
+// Covers: R-DG-002
 func TestParse_MultipleHeaders(t *testing.T) {
 	pkgs := loadFixture(t, "multi_header")
 
@@ -175,7 +175,7 @@ func TestParse_MultipleHeaders(t *testing.T) {
 
 // TestParse_UnsupportedFieldShapes verifies that func, chan, and interface
 // payload fields each produce a generation-time error.
-// Covers: R-13
+// Covers: R-DG-003
 func TestParse_UnsupportedFieldShapes(t *testing.T) {
 	cases := []struct {
 		fixture    string
@@ -204,9 +204,9 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 
 // TestParse_MapField verifies that a map payload field is classified as
 // ShapeMap without a parse-time error. Under the harmonised three-axis
-// model (refinements §1.6.3, Errata E-16), untagged maps are admitted
+// model (refinements §1.6.3, Errata R-DG-006, R-DG-016), untagged maps are admitted
 // with the atomic default; no tag-combination constraint applies.
-// Covers: R-13, R-17
+// Covers: R-DG-003, R-DG-006, R-DG-007
 func TestParse_MapField(t *testing.T) {
 	snap := parseFixture(t, "with_map", "MapSnapshot", ParseOpts{})
 
@@ -222,7 +222,7 @@ func TestParse_MapField(t *testing.T) {
 // crossPackage=true excludes unexported fields from the result. The fixture
 // MixedSnapshot has two exported and one unexported payload fields; only the
 // two exported ones should appear in cross-package mode.
-// Covers: R-10, E-12
+// Covers: R-DG-037, R-DG-012, R-DG-013, R-DG-019
 func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 	pkgs := loadFixture(t, "mixed_exported")
 
@@ -263,7 +263,7 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 // These guarantees keep the call-site signature stable: G-06 can route the
 // CLI value through ParseOpts.KeyFieldOverride without changing the parser's
 // observable behaviour for tag-conforming Snapshots.
-// Covers: R-12, R-13, R-14
+// Covers: R-DG-002, R-DG-003, R-DG-010
 func TestParse_ParseOptsEquivalence(t *testing.T) {
 	pkgs := loadFixture(t, "valid")
 
@@ -311,7 +311,7 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 // key-field discovery with a struct-valued key. ValidSnapshot has a `Key UEKey
 // \`eddt:"entity.key"\“ field; parseSnapshot must surface UEKey via KeyVar
 // and exclude it from Fields (so the payload count stays at 8).
-// Covers: R-14, R-18
+// Covers: R-DG-010, R-DG-010
 func TestParse_KeyField_TagFoundStruct(t *testing.T) {
 	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 
@@ -330,9 +330,9 @@ func TestParse_KeyField_TagFoundStruct(t *testing.T) {
 }
 
 // TestParse_KeyField_TagFoundScalar verifies that a named-basic (scalar) type
-// is accepted as the entity-key type. The relaxation captured in E-10 is that
+// is accepted as the entity-key type. The relaxation captured in R-DG-034, R-DG-035 is that
 // any value-typed comparable type works — not just structs.
-// Covers: R-14, R-18
+// Covers: R-DG-010, R-DG-010
 func TestParse_KeyField_TagFoundScalar(t *testing.T) {
 	snap := parseFixture(t, "scalar_key", "ScalarKeySnapshot", ParseOpts{})
 
@@ -352,7 +352,7 @@ func TestParse_KeyField_TagFoundScalar(t *testing.T) {
 // selects the named field even when it carries no entity.key tag. The
 // no_key fixture has no entity.key tag at all; the override path is the
 // only way to identify a key for that Snapshot.
-// Covers: R-14, R-18, E-13
+// Covers: R-DG-010, R-DG-010, R-DG-040
 func TestParse_KeyField_OverrideOK(t *testing.T) {
 	snap := parseFixture(t, "no_key", "NoKeySnapshot", ParseOpts{KeyFieldOverride: "Peer"})
 
@@ -370,7 +370,7 @@ func TestParse_KeyField_OverrideOK(t *testing.T) {
 
 // TestParse_KeyField_NoKey verifies that a Snapshot without an entity.key
 // tag and without a CLI override is rejected with a descriptive error.
-// Covers: R-14
+// Covers: R-DG-010
 func TestParse_KeyField_NoKey(t *testing.T) {
 	pkgs := loadFixture(t, "no_key")
 
@@ -385,7 +385,7 @@ func TestParse_KeyField_NoKey(t *testing.T) {
 
 // TestParse_KeyField_MultiKey verifies that two fields tagged entity.key
 // in the same Snapshot produce an error containing "multiple".
-// Covers: R-14, R-18
+// Covers: R-DG-010, R-DG-010
 func TestParse_KeyField_MultiKey(t *testing.T) {
 	pkgs := loadFixture(t, "multi_key")
 
@@ -402,7 +402,7 @@ func TestParse_KeyField_MultiKey(t *testing.T) {
 // is rejected. Pointer equality is identity, not value equality, so a
 // pointer-typed key would let two Snapshots with equal key contents hash
 // to different EntityIDs.
-// Covers: R-14
+// Covers: R-DG-010
 func TestParse_KeyField_Pointer(t *testing.T) {
 	pkgs := loadFixture(t, "key_pointer")
 
@@ -419,7 +419,7 @@ func TestParse_KeyField_Pointer(t *testing.T) {
 // underlying struct contains a non-comparable (slice) field is rejected,
 // and that the error names the offending sub-field so the Snapshot author
 // can locate the problem quickly.
-// Covers: R-14, R-18
+// Covers: R-DG-010, R-DG-010
 func TestParse_KeyField_NonComparable(t *testing.T) {
 	pkgs := loadFixture(t, "key_with_slice")
 
@@ -437,7 +437,7 @@ func TestParse_KeyField_NonComparable(t *testing.T) {
 
 // TestParse_KeyField_OverrideMissing verifies that a KeyFieldOverride naming
 // a field not present in the struct produces a descriptive error.
-// Covers: R-14, E-13
+// Covers: R-DG-010, R-DG-040
 func TestParse_KeyField_OverrideMissing(t *testing.T) {
 	pkgs := loadFixture(t, "valid")
 
@@ -455,7 +455,7 @@ func TestParse_KeyField_OverrideMissing(t *testing.T) {
 // The tagged field falls back into payload Fields rather than being silently
 // discarded. The parser does not warn; the CLI layer (G-06) emits a
 // --verbose warning.
-// Covers: R-14, E-13
+// Covers: R-DG-010, R-DG-040
 func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
 	// ValidSnapshot has `Key UEKey \`eddt:"entity.key"\`` AND a comparable
 	// struct field `Location LocationInfo` (no tag). The override picks
@@ -485,9 +485,9 @@ func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
 }
 
 // TestParse_TagWiring verifies that ParsedField.Tag is populated from the
-// raw tag string by walkFields (T-02). ValidSnapshot has no delta.* tags,
+// raw tag string by walkFields (R-DG-006, R-DG-007). ValidSnapshot has no delta.* tags,
 // so every payload field carries Tag.Kind = TagKindNone.
-// Covers: R-15
+// Covers: R-DG-004, R-DG-005
 func TestParse_TagWiring(t *testing.T) {
 	snap := parseFixture(t, "valid", "ValidSnapshot", ParseOpts{})
 	for _, f := range snap.Fields {
@@ -501,7 +501,7 @@ func TestParse_TagWiring(t *testing.T) {
 // TestParse_TagShapeGate_NestedOK verifies the harmonised granularity-axis
 // gate admits delta.nested on every composite shape (struct value, slice,
 // map). One Snapshot per shape.
-// Covers: R-15, R-17 (E-14)
+// Covers: R-DG-004, R-DG-005, R-DG-006, R-DG-007 (R-DG-004, R-DG-005, R-DG-006)
 func TestParse_TagShapeGate_NestedOK(t *testing.T) {
 	cases := []struct {
 		structName string
@@ -528,7 +528,7 @@ func TestParse_TagShapeGate_NestedOK(t *testing.T) {
 // TestParse_TagShapeGate_NestedReject verifies the harmonised granularity-
 // axis gate rejects delta.nested on non-composite shapes (scalar, pointer).
 // Error must mention "composite" so the message is actionable.
-// Covers: R-15, R-17 (E-14)
+// Covers: R-DG-004, R-DG-005, R-DG-006, R-DG-007 (R-DG-004, R-DG-005, R-DG-006)
 func TestParse_TagShapeGate_NestedReject(t *testing.T) {
 	cases := []struct {
 		structName string
@@ -553,8 +553,8 @@ func TestParse_TagShapeGate_NestedReject(t *testing.T) {
 // TestParse_CombinedTags verifies that a Snapshot carrying entity.key and
 // delta.* tags simultaneously produces correct Tag.Kind and Tag.Raw values
 // for every payload field — proving all eddt: tags flow through the same
-// parsed-tag code path after the T-03 migration.
-// Covers: R-15, R-18
+// parsed-tag code path after the R-DG-006, R-DG-007 migration.
+// Covers: R-DG-004, R-DG-005, R-DG-010
 func TestParse_CombinedTags(t *testing.T) {
 	snap := parseFixture(t, "combined_tags", "CombinedTagsSnapshot", ParseOpts{})
 
@@ -631,7 +631,7 @@ func parseFixture(t *testing.T, fixture, structName string, opts ParseOpts) *Par
 // TestParse_NestedFieldEmbedHeader verifies that a delta.nested field whose
 // type embeds runtime.Header is rejected at parse time with a §3.3.2 error
 // (nested types must be sub-structures, not chain anchors).
-// Covers: N-01 req 07
+// Covers: R-DG-008
 func TestParse_NestedFieldEmbedHeader(t *testing.T) {
 	pkgs := loadFixture(t, "nested_header_embed")
 	_, err := parseSnapshot(pkgs, "NestedHeaderEmbedSnapshot", ParseOpts{})
@@ -651,7 +651,7 @@ func TestParse_NestedFieldEmbedHeader(t *testing.T) {
 // (A.F → B, B.G → A). Struct-value cycles cannot be expressed in valid Go source
 // because the compiler rejects invalid recursive types, so this test constructs
 // the cycle directly via go/types.
-// Covers: N-02
+// Covers: R-DG-009
 func TestParse_NestedCycleDetected(t *testing.T) {
 	pkg := types.NewPackage("test/cycle", "cycle")
 

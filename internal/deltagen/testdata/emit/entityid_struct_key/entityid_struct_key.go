@@ -2,7 +2,7 @@
 // entity key containing two sub-fields of different underlying types (string
 // and uint64). Used by TestEmitTemplate_StructKey_SamePkg to verify that the
 // EntityID function body emits two runtime.Write* calls in source order and
-// that the same-package method wrapper is generated (EM-05).
+// that the same-package method wrapper is generated (R-DG-034).
 package entityid_struct_key
 
 import eddt "go.resystems.io/eddt/runtime"

@@ -1,4 +1,4 @@
-// Package clearable_slice is the CL-05..07 emit fixture for a
+// Package clearable_slice is the R-DG-016..07 emit fixture for a
 // delta.nested+delta.clearable field whose inner shape is a slice.
 //
 // The generated Delta carries `Groups runtime.FieldDelta[GroupsSliceDelta]` (one field).

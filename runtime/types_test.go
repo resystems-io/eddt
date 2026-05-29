@@ -8,7 +8,7 @@ import (
 // TestEntityIDIsZero verifies the zero-value detection helper used by
 // HeaderAfterApply and HeaderForDiff to reject uninitialized EntityIDs.
 func TestEntityIDIsZero(t *testing.T) {
-	// Covers: R-04
+	// Covers: R-DG-035
 	var zero EntityID
 	if !zero.IsZero() {
 		t.Error("zero EntityID should be zero")
@@ -31,7 +31,7 @@ func TestEntityIDIsZero(t *testing.T) {
 // TestEntityIDEquality verifies that EntityID comparison is uniform ==
 // (the key property that makes cross-chain entity continuity checks simple).
 func TestEntityIDEquality(t *testing.T) {
-	// Covers: R-04, Errata E-10
+	// Covers: R-DG-035, Errata R-DG-034, R-DG-035
 	var a, b EntityID
 	if a != b {
 		t.Error("two zero EntityIDs should be equal")
@@ -50,7 +50,7 @@ func TestEntityIDEquality(t *testing.T) {
 // TestHeaderZeroValue confirms the zero value of Header is well-formed
 // (no panics on access, nil pointer fields are nil).
 func TestHeaderZeroValue(t *testing.T) {
-	// Covers: R-01
+	// Covers: R-DG-029, R-DG-030
 	var h Header
 	if h.PreviousChainID != nil {
 		t.Error("PreviousChainID should be nil on zero Header")
@@ -71,7 +71,7 @@ func TestHeaderZeroValue(t *testing.T) {
 
 // TestProvenanceZeroValue confirms the zero value of Provenance is well-formed.
 func TestProvenanceZeroValue(t *testing.T) {
-	// Covers: R-02
+	// Covers: R-DG-032
 	var p Provenance
 	if p.ValidUntil != nil {
 		t.Error("ValidUntil should be nil on zero Provenance")
@@ -86,7 +86,7 @@ func TestProvenanceZeroValue(t *testing.T) {
 
 // TestSequenceRange confirms inclusive Start/End semantics compile correctly.
 func TestSequenceRange(t *testing.T) {
-	// Covers: R-02
+	// Covers: R-DG-032
 	r := SequenceRange{Start: 3, End: 7}
 	if r.Start != 3 || r.End != 7 {
 		t.Errorf("unexpected SequenceRange: %+v", r)
@@ -96,7 +96,7 @@ func TestSequenceRange(t *testing.T) {
 // TestFieldDeltaOpValues locks the wire-encoding order of the Op constants and
 // confirms that OpIgnore is the zero value of FieldDeltaOp.
 func TestFieldDeltaOpValues(t *testing.T) {
-	// Covers: R-03, delta-gen-spec §6.3
+	// Covers: R-DG-016, delta-gen-spec §6.3
 	if OpIgnore != 0 {
 		t.Errorf("OpIgnore must be 0 (zero value), got %d", OpIgnore)
 	}
@@ -115,7 +115,7 @@ func TestFieldDeltaOpValues(t *testing.T) {
 // TestFieldDeltaZeroValue confirms that a zero-valued FieldDelta is an explicit
 // no-op (Op == OpIgnore, Value is the zero of T).
 func TestFieldDeltaZeroValue(t *testing.T) {
-	// Covers: R-03
+	// Covers: R-DG-016
 	var fd FieldDelta[int32]
 	if fd.Op != OpIgnore {
 		t.Errorf("zero FieldDelta.Op must be OpIgnore, got %d", fd.Op)
@@ -128,7 +128,7 @@ func TestFieldDeltaZeroValue(t *testing.T) {
 // TestFieldDeltaEquality confirms that FieldDelta[T] is comparable when T is
 // comparable, and that Op and Value are both considered by ==.
 func TestFieldDeltaEquality(t *testing.T) {
-	// Covers: R-03
+	// Covers: R-DG-016
 	a := FieldDelta[int32]{Op: OpAssert, Value: 7}
 	b := FieldDelta[int32]{Op: OpAssert, Value: 7}
 	if a != b {
@@ -157,7 +157,7 @@ func TestFieldDeltaEquality(t *testing.T) {
 // TestHeaderProvenanceAccumulation verifies that appending to Provenance
 // preserves source order (the append-only contract from chain-lifecycle §3.2.1).
 func TestHeaderProvenanceAccumulation(t *testing.T) {
-	// Covers: R-01, R-02
+	// Covers: R-DG-029, R-DG-030, R-DG-032
 	now := time.Now()
 	p1 := Provenance{PublishedAt: now, Solution: "sol-a", Component: "c1", Instance: "i1"}
 	p2 := Provenance{PublishedAt: now, Solution: "sol-b", Component: "c2", Instance: "i2"}

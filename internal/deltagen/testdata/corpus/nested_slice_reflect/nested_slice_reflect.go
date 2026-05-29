@@ -1,4 +1,4 @@
-// Package nested_slice_reflect is the HK-18 benchmark corpus fixture for a
+// Package nested_slice_reflect is the R-DG-016, R-DG-026 benchmark corpus fixture for a
 // delta.nested slice field with non-comparable element type ([]byte).
 //
 // The generator sets SliceElemUseReflectEq=true and emits reflect.DeepEqual

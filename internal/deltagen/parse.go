@@ -2,7 +2,7 @@ package deltagen
 
 // parse.go implements the second stage of the delta-gen pipeline: parsing a
 // named Snapshot struct into a structured description that the tag-handling
-// (T-01 through T-03) and emit (Phase 4) stages consume.
+// (R-DG-004, R-DG-005 through R-DG-006, R-DG-007) and emit (Phase 4) stages consume.
 //
 // # The parse pipeline
 //
@@ -22,7 +22,7 @@ package deltagen
 //     single embedded runtime.Header from the candidate payload fields.
 //     In cross-package mode (ParseOpts.CrossPackage == true), unexported
 //     fields are silently dropped because they are inaccessible from
-//     outside the source package (E-12). Each candidate field's Go type is
+//     outside the source package (R-DG-012, R-DG-013, R-DG-019). Each candidate field's Go type is
 //     classified into one of five shapes (scalar, pointer, struct value,
 //     slice, map); function, channel, and interface fields are rejected.
 //
@@ -39,7 +39,7 @@ package deltagen
 // # What this file does NOT do
 //
 // Tag parsing and tag-combination validation are separate concerns delivered
-// by T-01 through T-03. This file records only the raw eddt: tag string so
+// by R-DG-004, R-DG-005 through R-DG-006, R-DG-007. This file records only the raw eddt: tag string so
 // those stages can act on it. Key-field semantic validation (presence,
 // comparable type) is delivered by parseKeyField in this file.
 //
@@ -59,7 +59,7 @@ import (
 
 // FieldShape classifies the structural Go type shape of a Snapshot payload
 // field. The classification drives Delta-side field generation in the emit
-// stage and tag-combination validation in T-02.
+// stage and tag-combination validation in R-DG-006, R-DG-007.
 type FieldShape int
 
 const (
@@ -79,7 +79,7 @@ const (
 	ShapeSlice
 
 	// ShapeMap covers all map types: map[K]V. Maps are only valid in
-	// combination with delta.omit; that constraint is enforced by T-02.
+	// combination with delta.omit; that constraint is enforced by R-DG-006, R-DG-007.
 	ShapeMap
 )
 
@@ -139,7 +139,7 @@ type ParsedSnapshot struct {
 
 	// KeyShape is the structural shape of the entity-key field (ShapeScalar or
 	// ShapeStructValue). Used by the emit stage to select the hash strategy for
-	// EntityID generation (EM-05): one Write* call for scalar keys, one per
+	// EntityID generation (R-DG-034): one Write* call for scalar keys, one per
 	// exported sub-field for struct keys.
 	KeyShape FieldShape
 
@@ -160,7 +160,7 @@ type ParsedSnapshot struct {
 // additions remain backward-compatible.
 type ParseOpts struct {
 	// CrossPackage is true when the generator output package differs from
-	// the source package (E-12). It instructs parseFields to silently drop
+	// the source package (R-DG-012, R-DG-013, R-DG-019). It instructs parseFields to silently drop
 	// unexported fields, which would otherwise be inaccessible from the
 	// generated code.
 	CrossPackage bool

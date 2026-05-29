@@ -1,6 +1,6 @@
 package deltagen
 
-// benchmark_test.go implements C-07: subprocess benchmark harness for the
+// benchmark_test.go implements R-DG-012, R-DG-021: subprocess benchmark harness for the
 // three generated operations — Apply, Diff, and Coalesce.
 //
 // Each outer test function generates a delta source for a corpus case, writes
@@ -9,7 +9,7 @@ package deltagen
 // throughput numbers.  No regression assertions are made; the baseline is
 // recorded in the commit message.
 //
-// Test matrix (C-07):
+// Test matrix (R-DG-012, R-DG-021):
 //
 //	TestBenchmark_Baseline   — BenchmarkApply / BenchmarkDiff / BenchmarkCoalesce
 //	TestBenchmark_Composite  — BenchmarkApply / BenchmarkDiff / BenchmarkCoalesce
@@ -25,7 +25,7 @@ import (
 
 // TestBenchmark_Baseline runs Apply, Diff, and Coalesce benchmarks against the
 // baseline corpus case (all five atomic shapes).
-// Covers: C-07, HK-18 (baseline + composite pre-HK-18 coverage retained).
+// Covers: R-DG-012, R-DG-021, R-DG-016, R-DG-026 (baseline + composite pre-R-DG-016, R-DG-026 coverage retained).
 func TestBenchmark_Baseline(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "delta.go")
 	cfg := Config{
@@ -65,7 +65,7 @@ func TestBenchmark_Composite(t *testing.T) {
 // TestBenchmark_ClearableComposite runs Apply, Diff, and Coalesce benchmarks
 // against the clearable_composite corpus case (struct+map+slice clearable fields).
 // Exercises the Op-switch hot path in Apply and the IsEmpty checks in Diff.
-// Covers: C-07, HK-18.
+// Covers: R-DG-012, R-DG-021, R-DG-016, R-DG-026.
 func TestBenchmark_ClearableComposite(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "delta.go")
 	cfg := Config{
@@ -85,8 +85,8 @@ func TestBenchmark_ClearableComposite(t *testing.T) {
 
 // TestBenchmark_StructKey runs Apply, Diff, and Coalesce benchmarks against the
 // struct_key corpus case (struct-valued entity key with multi-field EntityID hash).
-// Exercises the EntityID hash path (EM-05) on every Diff call.
-// Covers: C-07, HK-18.
+// Exercises the EntityID hash path (R-DG-034) on every Diff call.
+// Covers: R-DG-012, R-DG-021, R-DG-016, R-DG-026.
 func TestBenchmark_StructKey(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "delta.go")
 	cfg := Config{
@@ -108,7 +108,7 @@ func TestBenchmark_StructKey(t *testing.T) {
 // against the nested_slice_reflect corpus fixture ([][]byte delta.nested slice
 // with non-comparable element type).  Exercises the O(n²) reflect.DeepEqual
 // fallback path (§5.2, SliceElemUseReflectEq=true).
-// Covers: C-07, HK-18.
+// Covers: R-DG-012, R-DG-021, R-DG-016, R-DG-026.
 func TestBenchmark_NestedSliceReflect(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "delta.go")
 	cfg := Config{
@@ -289,8 +289,8 @@ func BenchmarkCoalesce(b *testing.B) {
 
 // compositeBenchmarkTest is the inner benchmark for the composite corpus case.
 //
-// Covers delta.nested shapes: Details ContactDetails (N-01),
-// Labels map[string]string (N-03), Groups []string (N-04), Rank int32 (atomic).
+// Covers delta.nested shapes: Details ContactDetails (R-DG-016),
+// Labels map[string]string (R-DG-016), Groups []string (R-DG-016, R-DG-028), Rank int32 (atomic).
 const compositeBenchmarkTest = `package composite_test
 
 import (
@@ -435,7 +435,7 @@ func BenchmarkCoalesce(b *testing.B) {
 
 // structKeyBenchmarkTest is the inner benchmark for the struct_key corpus case.
 //
-// Covers the struct-valued entity key shape and multi-field EntityID hash (EM-05).
+// Covers the struct-valued entity key shape and multi-field EntityID hash (R-DG-034).
 // BenchmarkEntityID directly measures the hash throughput; BenchmarkDiff exercises
 // the same path implicitly on every call.
 const structKeyBenchmarkTest = `package struct_key_test

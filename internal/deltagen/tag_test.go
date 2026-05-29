@@ -1,7 +1,7 @@
 package deltagen
 
-// tag_test.go exercises the eddt: tag parser (T-01) and the harmonised
-// tag-validation gate (T-02).
+// tag_test.go exercises the eddt: tag parser (R-DG-004, R-DG-005) and the harmonised
+// tag-validation gate (R-DG-006, R-DG-007).
 
 import (
 	"strings"
@@ -9,7 +9,7 @@ import (
 )
 
 // TestParseTag covers all Group T parseTag cases.
-// Covers: R-15 (partial), E-07
+// Covers: R-DG-004, R-DG-005 (partial), R-DG-005
 func TestParseTag(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -36,7 +36,7 @@ func TestParseTag(t *testing.T) {
 			wantOpts: map[string]string{"since": "2026-01-15"},
 		},
 		{
-			// Unknown option keys are preserved without acting on them (E-07).
+			// Unknown option keys are preserved without acting on them (R-DG-005).
 			name:     "T08_UnknownOption",
 			input:    "delta.nested,extra=foo",
 			wantKind: TagKindNested,
@@ -56,7 +56,7 @@ func TestParseTag(t *testing.T) {
 			wantOpts: map[string]string{"mode": "lww"},
 		},
 		{
-			// entity.key with an unknown option: option is preserved (E-07).
+			// entity.key with an unknown option: option is preserved (R-DG-005).
 			name:     "T11_EntityKeyOption",
 			input:    "entity.key,scope=global",
 			wantKind: TagKindEntityKey,
@@ -79,7 +79,7 @@ func TestParseTag(t *testing.T) {
 		},
 		{
 			// delta.clearable alone → secondary tag recognised, Kind stays None.
-			// Semantic validation (Clearable ⟹ Nested) is enforced in CL-04.
+			// Semantic validation (Clearable ⟹ Nested) is enforced in R-DG-007.
 			name:          "T14_ClearableAlone",
 			input:         "delta.clearable",
 			wantKind:      TagKindNone,
@@ -100,7 +100,7 @@ func TestParseTag(t *testing.T) {
 			wantOpts: map[string]string{"since": "2026-01-15"},
 			wantRaw:  "delta.retired,since=2026-01-15",
 		},
-		// CL-03 cases
+		// R-DG-004, R-DG-007 cases
 		{
 			// Primary + secondary: standard combined clearable tag.
 			name:          "T17_NestedClearable",
@@ -187,7 +187,7 @@ func TestParseTag(t *testing.T) {
 }
 
 // TestValidateTagShape exercises the harmonised granularity-axis gate.
-// Covers: R-17 (E-14)
+// Covers: R-DG-006, R-DG-007 (R-DG-004, R-DG-005, R-DG-006)
 func TestValidateTagShape(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -221,9 +221,9 @@ func TestValidateTagShape(t *testing.T) {
 	}
 }
 
-// TestValidateTagCombination exercises the E-23 envelope-axis predicate:
+// TestValidateTagCombination exercises the R-DG-007 envelope-axis predicate:
 // Clearable ⟹ Kind == TagKindNested.
-// Covers: CL-04 (E-23)
+// Covers: R-DG-007 (R-DG-007)
 func TestValidateTagCombination(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -269,7 +269,7 @@ func TestValidateTagCombination(t *testing.T) {
 
 // TestTagKindIsSecondary locks the IsSecondary classifier: only
 // TagKindClearable is secondary; every other kind is primary.
-// Covers: CL-03 (R-03 secondary-tag invariant — Kind never holds clearable).
+// Covers: R-DG-004, R-DG-007 (R-DG-016 secondary-tag invariant — Kind never holds clearable).
 func TestTagKindIsSecondary(t *testing.T) {
 	secondary := []TagKind{TagKindClearable}
 	for _, k := range secondary {

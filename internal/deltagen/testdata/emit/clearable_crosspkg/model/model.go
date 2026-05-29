@@ -1,4 +1,4 @@
-// Package model is the HK-16 clearable cross-package emit fixture.
+// Package model is the R-DG-026 clearable cross-package emit fixture.
 //
 // When delta-gen is invoked with OutPkgNameOverride="deltas" the generated
 // file belongs to package "deltas" and must qualify source-package types:
@@ -7,7 +7,7 @@
 //   - The zero-composite for the clearable struct field is model.Tag{}.
 //   - TagDelta, AttrsMapDelta, and GroupsSliceDelta live in the output package
 //     so they need no qualifier.
-//   - No method wrappers are emitted in cross-package mode (E-12).
+//   - No method wrappers are emitted in cross-package mode (R-DG-012, R-DG-013, R-DG-019).
 //
 // The fixture is consumed by TestEmitTemplate_Clearable_CrossPkg.
 package model

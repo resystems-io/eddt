@@ -1,6 +1,6 @@
 package deltagen
 
-// corpus_test.go implements C-01: conformance corpus tests.
+// corpus_test.go implements R-DG-019: conformance corpus tests.
 //
 // Three representative Snapshot fixtures under testdata/corpus/ cover the full
 // baseline surface area of the generator.  Each corpus case is exercised by
@@ -10,10 +10,10 @@ package deltagen
 //   - Generate: the generator runs without error and writes a file.
 //   - Compile:  the generated output builds in an isolated module (go build).
 //
-// The Compile subtest uses go build (not go test) because C-01's scope is
-// compilation correctness only.  Behavioural correctness is tested in C-02..C-07.
+// The Compile subtest uses go build (not go test) because R-DG-019's scope is
+// compilation correctness only.  Behavioural correctness is tested in R-DG-019..R-DG-012, R-DG-021.
 //
-// Test matrix (C-01):
+// Test matrix (R-DG-019):
 //   TestCorpus_All/BaselineSnapshot/Parse
 //   TestCorpus_All/BaselineSnapshot/Generate
 //   TestCorpus_All/BaselineSnapshot/Compile
@@ -35,7 +35,7 @@ import (
 	"testing"
 )
 
-// corpusCase describes one entry in the C-01 conformance corpus.
+// corpusCase describes one entry in the R-DG-019 conformance corpus.
 type corpusCase struct {
 	// dir is the subdirectory under testdata/corpus/.
 	dir string
@@ -45,24 +45,24 @@ type corpusCase struct {
 	pkg string
 }
 
-// corpus is the authoritative C-01 conformance corpus.
+// corpus is the authoritative R-DG-019 conformance corpus.
 //
 // Every case must parse without error, generate without error, and compile
 // in an isolated module.
 var corpus = []corpusCase{
 	// baseline: all 5 atomic shapes + all baseline presence tags + scalar key.
 	{dir: "baseline", name: "BaselineSnapshot", pkg: "baseline"},
-	// clearable_composite: delta.nested+delta.clearable on struct+map+slice + atomic (CL-08).
+	// clearable_composite: delta.nested+delta.clearable on struct+map+slice + atomic (R-DG-026).
 	{dir: "clearable_composite", name: "ClearableCompositeSnapshot", pkg: "clearable_composite"},
 	// composite: delta.nested on struct + map + slice together + atomic coexistence.
 	{dir: "composite", name: "CompositeSnapshot", pkg: "composite"},
-	// struct_key: struct-valued entity.key, multi-field EntityID hash (EM-05).
+	// struct_key: struct-valued entity.key, multi-field EntityID hash (R-DG-034).
 	{dir: "struct_key", name: "SessionSnapshot", pkg: "struct_key"},
-	// struct_key_clearable: struct key + all three clearable shapes coexisting (HK-16).
+	// struct_key_clearable: struct key + all three clearable shapes coexisting (R-DG-026).
 	{dir: "struct_key_clearable", name: "StructKeyClearableSnapshot", pkg: "struct_key_clearable"},
 }
 
-// TestCorpus_All is the C-01 table-driven test.
+// TestCorpus_All is the R-DG-019 table-driven test.
 //
 // For each corpus case it runs three subtests: Parse, Generate, and Compile.
 // Compile is skipped (not failed) if Generate did not produce output.

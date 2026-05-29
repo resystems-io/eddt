@@ -1,4 +1,4 @@
-// Package clearable_map is the CL-05..07 emit fixture for a
+// Package clearable_map is the R-DG-016..07 emit fixture for a
 // delta.nested+delta.clearable field whose inner shape is a map.
 //
 // The generated Delta carries `Tags runtime.FieldDelta[TagsMapDelta]` (one field).

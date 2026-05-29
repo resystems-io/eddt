@@ -1,4 +1,4 @@
-// Package clearable_map_reflect is the CL-05..07 emit fixture for a
+// Package clearable_map_reflect is the R-DG-016..07 emit fixture for a
 // delta.nested+delta.clearable map field with a non-comparable value type.
 //
 // The map value type (Bag, which contains a slice) is not comparable, so the

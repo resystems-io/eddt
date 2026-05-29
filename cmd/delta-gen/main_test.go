@@ -14,7 +14,7 @@ import (
 
 // TestCLI_MissingStructs verifies that omitting both --type and positional args
 // produces the "at least one target struct" error from RunE.
-// Covers: R-09
+// Covers: R-DG-036, R-DG-037, R-DG-038
 func TestCLI_MissingStructs(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
@@ -34,8 +34,8 @@ func TestCLI_MissingStructs(t *testing.T) {
 // TestCLI_EmitsDeltaType verifies that a valid invocation runs the full
 // pipeline end-to-end and writes a generated file containing the TDelta struct
 // declaration. The valid fixture provides a conforming Snapshot with an
-// eddt:"entity.key" field so parse succeeds and EM-01 emits ValidSnapshotDelta.
-// Covers: R-09
+// eddt:"entity.key" field so parse succeeds and R-DG-015 emits ValidSnapshotDelta.
+// Covers: R-DG-036, R-DG-037, R-DG-038
 func TestCLI_EmitsDeltaType(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
@@ -53,7 +53,7 @@ func TestCLI_EmitsDeltaType(t *testing.T) {
 
 // TestCLI_Help verifies that --help exits 0 and the output mentions every
 // flag that callers of delta-gen depend on.
-// Covers: R-09
+// Covers: R-DG-036, R-DG-037, R-DG-038
 func TestCLI_Help(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -80,7 +80,7 @@ func TestCLI_Help(t *testing.T) {
 // guidance (from formatImportPathErrors in load.go) and does not produce a
 // "failed to load package directory" error (which would indicate the import
 // path was wrongly classified as a filesystem path).
-// Covers: R-11
+// Covers: R-DG-037
 func TestCLI_ImportPathNotInGoMod(t *testing.T) {
 
 	tmpDir := t.TempDir()
@@ -132,7 +132,7 @@ func TestCLI_ImportPathNotInGoMod(t *testing.T) {
 
 // TestParseKeyFields_SingleBare verifies that a single bare FieldName expands
 // to every struct in --type.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_SingleBare(t *testing.T) {
 	got, err := parseKeyFields([]string{"Peer"}, []string{"NoKeySnapshot"})
 	if err != nil {
@@ -145,7 +145,7 @@ func TestParseKeyFields_SingleBare(t *testing.T) {
 
 // TestParseKeyFields_SinglePerStruct verifies that a StructName=FieldName entry
 // maps exactly the named struct.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_SinglePerStruct(t *testing.T) {
 	got, err := parseKeyFields([]string{"NoKeySnapshot=Peer"}, []string{"NoKeySnapshot"})
 	if err != nil {
@@ -158,7 +158,7 @@ func TestParseKeyFields_SinglePerStruct(t *testing.T) {
 
 // TestParseKeyFields_PerStructWinsOverBare verifies that a per-struct entry
 // overrides a bare entry for the same struct.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_PerStructWinsOverBare(t *testing.T) {
 	// Bare says "NoSuchField" for all structs; per-struct overrides to "Location".
 	got, err := parseKeyFields(
@@ -177,7 +177,7 @@ func TestParseKeyFields_PerStructWinsOverBare(t *testing.T) {
 // entries for different structs are both mapped correctly. This covers the
 // comma-separated form --key-field "ThingA=Key,ThingB=Name" as Cobra delivers
 // it: ["ThingA=Key", "ThingB=Name"].
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_TwoPerStructDifferentStructs(t *testing.T) {
 	got, err := parseKeyFields(
 		[]string{"ThingA=Key", "ThingB=Name"},
@@ -197,7 +197,7 @@ func TestParseKeyFields_TwoPerStructDifferentStructs(t *testing.T) {
 // TestParseKeyFields_DuplicateBareError verifies that two different bare values
 // for the same set of structs produce an error rather than silently picking the
 // last one.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_DuplicateBareError(t *testing.T) {
 	_, err := parseKeyFields([]string{"Peer", "Status"}, []string{"NoKeySnapshot"})
 	if err == nil {
@@ -210,7 +210,7 @@ func TestParseKeyFields_DuplicateBareError(t *testing.T) {
 
 // TestParseKeyFields_UnrecognisedStruct verifies that a per-struct entry whose
 // StructName is not listed in --type is rejected at parse time.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestParseKeyFields_UnrecognisedStruct(t *testing.T) {
 	_, err := parseKeyFields([]string{"NotAStruct=Location"}, []string{"ValidSnapshot"})
 	if err == nil {
@@ -226,8 +226,8 @@ func TestParseKeyFields_UnrecognisedStruct(t *testing.T) {
 // TestCLI_KeyField_BareAccepted verifies that a bare --key-field value is
 // accepted by the CLI and wired through to the generator: the no_key fixture
 // has no entity.key tag, so without the override parse would fail; with the
-// override parse succeeds and EM-01 emits NoKeySnapshotDelta.
-// Covers: R-09, E-13
+// override parse succeeds and R-DG-015 emits NoKeySnapshotDelta.
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_BareAccepted(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "no_key_delta.go")
 	cmd := newRootCmd()
@@ -246,7 +246,7 @@ func TestCLI_KeyField_BareAccepted(t *testing.T) {
 
 // TestCLI_KeyField_PerStructAccepted verifies that the StructName=FieldName form
 // is accepted and behaves identically to the bare form when there is one struct.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_PerStructAccepted(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "no_key_delta.go")
 	cmd := newRootCmd()
@@ -266,8 +266,8 @@ func TestCLI_KeyField_PerStructAccepted(t *testing.T) {
 // TestCLI_KeyField_PerStructWinsOverBare verifies end-to-end that a per-struct
 // --key-field overrides a bare --key-field for the same struct. The bare value
 // "NoSuchField" is superseded by "ValidSnapshot=Bearer", so parse succeeds
-// and EM-01 emits ValidSnapshotDelta.
-// Covers: R-09, E-13
+// and R-DG-015 emits ValidSnapshotDelta.
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
@@ -288,7 +288,7 @@ func TestCLI_KeyField_PerStructWinsOverBare(t *testing.T) {
 // TestCLI_KeyField_UnrecognisedStructError verifies that --key-field with a
 // StructName not in --type produces a startup error before any package
 // loading occurs.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{
@@ -313,7 +313,7 @@ func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 // field. After G-08 the warning fires unconditionally (at Warn level) without
 // requiring --verbose. The valid fixture has Key tagged entity.key; overriding
 // to Bearer triggers the conflict.
-// Covers: R-09, E-13
+// Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	// Redirect os.Stderr to capture the slog Warn output. The slog handler is
 	// constructed inside RunE after os.Stderr has been replaced, so it writes
@@ -343,7 +343,7 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 		t.Fatalf("io.Copy: %v", copyErr)
 	}
 
-	// EM-01 lands: the generator now succeeds; the conflict warning still fires.
+	// R-DG-015 lands: the generator now succeeds; the conflict warning still fires.
 	if runErr != nil {
 		t.Errorf("expected successful run after conflict warning, got: %v", runErr)
 	}
@@ -364,11 +364,11 @@ func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
 	}
 }
 
-// ── CG-02: positional args ────────────────────────────────────────────────────
+// ── R-DG-038: positional args ────────────────────────────────────────────────────
 
 // TestCLI_PositionalStructArg verifies that struct names passed as positional
 // arguments (without --type) are accepted and generate correctly.
-// Covers: CG-02
+// Covers: R-DG-038
 func TestCLI_PositionalStructArg(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
@@ -387,7 +387,7 @@ func TestCLI_PositionalStructArg(t *testing.T) {
 // unioned: a struct passed via --type is merged with one passed as a positional
 // arg, and both are available as targets.  Uses a single package with two
 // snapshot types so both resolve in the same type universe.
-// Covers: CG-02
+// Covers: R-DG-038
 func TestCLI_PositionalAndTypeMerge(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "delta.go")
 	cmd := newRootCmd()
@@ -405,12 +405,12 @@ func TestCLI_PositionalAndTypeMerge(t *testing.T) {
 	assertDeltaFile(t, outPath, "SecondSnapshotDelta")
 }
 
-// ── CG-03: auto-derived output paths ─────────────────────────────────────────
+// ── R-DG-038: auto-derived output paths ─────────────────────────────────────────
 
 // TestCLI_AutoDerivedOutPath verifies that omitting --out causes the output
 // filename to be auto-derived as <snake_case_struct>_delta.go in the current
 // working directory.
-// Covers: CG-03
+// Covers: R-DG-038
 func TestCLI_AutoDerivedOutPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, err := os.Getwd()
@@ -435,7 +435,7 @@ func TestCLI_AutoDerivedOutPath(t *testing.T) {
 
 // TestCLI_MultiTypeAutoDerivedSplit verifies that when multiple struct names
 // are passed without --out, each struct is written to its own auto-derived file.
-// Covers: CG-03
+// Covers: R-DG-038
 func TestCLI_MultiTypeAutoDerivedSplit(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, err := os.Getwd()
@@ -465,7 +465,7 @@ func TestCLI_MultiTypeAutoDerivedSplit(t *testing.T) {
 
 // TestCLI_ExplicitOutOverridesAutoDerive verifies that when --out is given,
 // the named file is used (not an auto-derived name), even for a single struct.
-// Covers: CG-03
+// Covers: R-DG-038
 func TestCLI_ExplicitOutOverridesAutoDerive(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "custom_name.go")
 	cmd := newRootCmd()
@@ -481,12 +481,12 @@ func TestCLI_ExplicitOutOverridesAutoDerive(t *testing.T) {
 	assertDeltaFile(t, outPath, "ValidSnapshotDelta")
 }
 
-// ── CG-03: deriveOutPath unit tests ──────────────────────────────────────────
+// ── R-DG-038: deriveOutPath unit tests ──────────────────────────────────────────
 
 // TestDeriveOutPath_Cases exercises the snake_case derivation helper across
 // representative struct names including acronyms, digit boundaries, and
 // short names.
-// Covers: CG-03
+// Covers: R-DG-038
 func TestDeriveOutPath_Cases(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"UESnapshot", "ue_snapshot_delta.go"},
@@ -507,11 +507,11 @@ func TestDeriveOutPath_Cases(t *testing.T) {
 	}
 }
 
-// ── CG-01: --type flag + -t short alias ──────────────────────────────────────
+// ── R-DG-020: --type flag + -t short alias ──────────────────────────────────────
 
 // TestCLI_TypeFlag verifies that --type is accepted as the replacement for
 // --structs and produces a valid generated file.
-// Covers: CG-01
+// Covers: R-DG-020
 func TestCLI_TypeFlag(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
@@ -527,7 +527,7 @@ func TestCLI_TypeFlag(t *testing.T) {
 }
 
 // TestCLI_TypeFlagShort verifies that -t (the short form of --type) is accepted.
-// Covers: CG-01
+// Covers: R-DG-020
 func TestCLI_TypeFlagShort(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "valid_delta.go")
 	cmd := newRootCmd()
