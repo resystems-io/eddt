@@ -20,9 +20,9 @@
 
 include ../../../lib/make/markdown.mk
 
-.PHONY: test test-mermaid test-toc test-markdown-pdf clean
+.PHONY: test test-mermaid test-toc test-markdown-pdf test-markdown-table clean
 
-test: test-mermaid test-toc test-markdown-pdf
+test: test-mermaid test-toc test-markdown-pdf test-markdown-table
 
 test-mermaid:
 	python3 test_mermaid.py
@@ -32,6 +32,9 @@ test-toc:
 
 test-markdown-pdf:
 	python3 test_markdown_pdf.py
+
+test-markdown-table:
+	python3 test_markdown_table.py
 
 clean: mermaid-clean
 	rm -f *.pdf
