@@ -23,6 +23,7 @@ SOURCES = arrow-reader-gen.md \
           arrow-writer-gen-nesting.md \
           arrow-writer-gen-refinements.md \
           delta-gen-refinements.md \
+          delta-gen-spec.md \
           eddt-context.md \
           eddt-glossary.md \
           eddt-needs.md \
@@ -43,7 +44,8 @@ PDFS = $(SOURCES:.md=.pdf)
 # The delta-gen-refinements.md doc uses flat R-NN identifiers that
 # produce duplicate-definition errors and will be superseded by the
 # forthcoming delta-gen-spec.md with R-DG-NN / N-DG-NN identifiers.
-INDEXES = eddt-needs.md
+INDEXES = eddt-needs.md \
+          delta-gen-spec.md
 
 # refs-linkify maintains the unified cross-reference block at the
 # foot of each source. Idempotent: repeated runs produce no change
