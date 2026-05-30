@@ -169,7 +169,7 @@ func validateNestedAcyclic(t types.Type, path []string, headerType types.Type) e
 // that named types (e.g. type Status int32) are correctly classified by their
 // structural nature rather than their name. Map types are accepted and
 // classified as ShapeMap; untagged maps are admitted with the atomic default
-// per the harmonised three-axis model (refinements §1.6.3, Errata R-DG-006, R-DG-016).
+// per the harmonised three-axis model (refinements §1.6.3, R-DG-006, R-DG-016).
 func classifyShape(t types.Type) (FieldShape, error) {
 	switch t.Underlying().(type) {
 	case *types.Basic:

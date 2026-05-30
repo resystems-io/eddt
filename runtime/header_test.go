@@ -154,13 +154,13 @@ func TestHeaderAfterApply_Validation(t *testing.T) {
 		wantErrFrag string // substring that must appear in the error message
 	}{
 		{
-			// Errata R-DG-034, R-DG-035: snapshot with all-zero EntityID is always invalid.
+			// R-DG-034, R-DG-035: snapshot with all-zero EntityID is always invalid.
 			name:        "snapshot_EntityID_zero",
 			mutate:      func(s, _ *Header) { s.EntityID = EntityID{} },
 			wantErrFrag: "snapshot EntityID is zero",
 		},
 		{
-			// Errata R-DG-034, R-DG-035: delta with all-zero EntityID is always invalid.
+			// R-DG-034, R-DG-035: delta with all-zero EntityID is always invalid.
 			name:        "delta_EntityID_zero",
 			mutate:      func(_, d *Header) { d.EntityID = EntityID{} },
 			wantErrFrag: "delta EntityID is zero",

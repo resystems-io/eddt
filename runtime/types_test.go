@@ -31,7 +31,7 @@ func TestEntityIDIsZero(t *testing.T) {
 // TestEntityIDEquality verifies that EntityID comparison is uniform ==
 // (the key property that makes cross-chain entity continuity checks simple).
 func TestEntityIDEquality(t *testing.T) {
-	// Covers: R-DG-035, Errata R-DG-034, R-DG-035
+	// Covers: R-DG-035, R-DG-034, R-DG-035
 	var a, b EntityID
 	if a != b {
 		t.Error("two zero EntityIDs should be equal")
@@ -96,7 +96,7 @@ func TestSequenceRange(t *testing.T) {
 // TestFieldDeltaOpValues locks the wire-encoding order of the Op constants and
 // confirms that OpIgnore is the zero value of FieldDeltaOp.
 func TestFieldDeltaOpValues(t *testing.T) {
-	// Covers: R-DG-016, delta-gen-spec §6.3
+	// Covers: R-DG-016, delta-gen-spec §5.2
 	if OpIgnore != 0 {
 		t.Errorf("OpIgnore must be 0 (zero value), got %d", OpIgnore)
 	}

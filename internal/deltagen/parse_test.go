@@ -204,7 +204,7 @@ func TestParse_UnsupportedFieldShapes(t *testing.T) {
 
 // TestParse_MapField verifies that a map payload field is classified as
 // ShapeMap without a parse-time error. Under the harmonised three-axis
-// model (refinements §1.6.3, Errata R-DG-006, R-DG-016), untagged maps are admitted
+// model (refinements §1.6.3, R-DG-006, R-DG-016), untagged maps are admitted
 // with the atomic default; no tag-combination constraint applies.
 // Covers: R-DG-003, R-DG-006, R-DG-007
 func TestParse_MapField(t *testing.T) {

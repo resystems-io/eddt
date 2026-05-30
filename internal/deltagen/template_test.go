@@ -846,7 +846,7 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 // TestEmitTemplate_AtomicApply_CrossPackage verifies Apply emission in
 // cross-package mode: source-package types are qualified in the function
 // signature, and no method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
-// Covers: R-DG-012, R-DG-012, R-DG-013, R-DG-019
+// Covers: R-DG-012, R-DG-013, R-DG-019
 func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "cross_pkg_delta.go")
 

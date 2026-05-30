@@ -14,7 +14,7 @@ import "time"
 // EntityID is a fixed-width content-hash of a Snapshot's entity key struct,
 // computed by delta-gen-emitted EntityID() methods using the hash helpers in
 // hash.go. The uniform [32]byte type allows cross-chain entity-equality checks
-// to be expressed as plain == comparisons (Errata R-DG-034, R-DG-035).
+// to be expressed as plain == comparisons (R-DG-034, R-DG-035).
 type EntityID [32]byte
 
 // IsZero reports whether the EntityID is the zero value (all bytes zero).
@@ -25,7 +25,7 @@ func (e EntityID) IsZero() bool { return e == EntityID{} }
 // It encodes chain identity, sequence position, bitemporal timestamps, anchor
 // fields (for chain birth/termination linking), and accumulated lineage.
 //
-// Per Errata R-DG-034, R-DG-035, Header carries EntityID [32]byte rather than a typed entity
+// Per R-DG-034, R-DG-035, Header carries EntityID [32]byte rather than a typed entity
 // key — the domain-specific key struct is embedded directly in the Snapshot and
 // marked eddt:"entity.key"; delta-gen emits the EntityID() method on that struct.
 type Header struct {
@@ -104,7 +104,7 @@ type SequenceRange struct {
 }
 
 // FieldDeltaOp tags the operation carried by a FieldDelta on a clearable
-// Delta field (delta-gen-spec §6.3). OpIgnore is the zero value, so a
+// Delta field (delta-gen-spec §5.2). OpIgnore is the zero value, so a
 // zero-valued FieldDelta is an explicit no-op.
 type FieldDeltaOp uint8
 
@@ -115,7 +115,7 @@ const (
 )
 
 // FieldDelta is the tri-state carrier for a clearable Delta field
-// (delta-gen-spec §6.3 / chain-lifecycle §3.3). Per Errata R-DG-007 the only
+// (delta-gen-spec §5.2 / chain-lifecycle §3.3). Per R-DG-007 the only
 // clearable form is compositional, so T is always a generated inner *delta*
 // type, never the Snapshot field type.
 type FieldDelta[T any] struct {

@@ -56,7 +56,7 @@ const (
 
 	// TagKindClearable corresponds to eddt:"delta.clearable". It is a SECONDARY
 	// tag: it never occupies ParsedTag.Kind (which holds the single primary tag)
-	// — instead it sets ParsedTag.Clearable. Per Errata R-DG-007 it is admissible
+	// — instead it sets ParsedTag.Clearable. Per R-DG-007 it is admissible
 	// only combined with delta.nested; that constraint is enforced in R-DG-007.
 	TagKindClearable
 )
@@ -102,7 +102,7 @@ func (k TagKind) IsSecondary() bool { return k == TagKindClearable }
 // ParsedTag is the structured result of parsing a single eddt: tag value.
 // It carries the recognised TagKind and any comma-separated key=value options
 // present after the tag value. Unknown option keys are preserved without
-// acting on them (Errata R-DG-005).
+// acting on them (R-DG-005).
 type ParsedTag struct {
 	Kind TagKind
 
@@ -187,7 +187,7 @@ func parseTag(raw string) (ParsedTag, error) {
 }
 
 // validateTagShape returns an error if a tag is incompatible with a field
-// shape under the harmonised three-axis model (refinements §1.6.3; Errata
+// shape under the harmonised three-axis model (refinements §1.6.3;
 // R-DG-004, R-DG-005, R-DG-006, R-DG-007, R-DG-016, R-DG-007).
 //
 // Baseline rules (this function in Phase 3):
@@ -216,7 +216,7 @@ func validateTagShape(tag ParsedTag, shape FieldShape) error {
 	return nil
 }
 
-// validateTagCombination enforces the envelope-axis constraint from Errata
+// validateTagCombination enforces the envelope-axis constraint from
 // R-DG-007: a field carrying the secondary delta.clearable modifier MUST also
 // carry the primary delta.nested tag. Tri-state is the implicit norm for
 // every other field shape — atomic, pointer, and struct-value fields already

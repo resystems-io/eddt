@@ -119,7 +119,7 @@ type PumpSnapshotDelta struct {
 // Apply produces the Snapshot that results from applying d to s.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderAfterApply and are propagated to the caller as a
-// non-nil error. See delta-gen-spec.md §6.4 / §7.1 (Errata R-DG-012).
+// non-nil error. See delta-gen-spec.md §5.2 (R-DG-012).
 func Apply(s PumpSnapshot, d PumpSnapshotDelta) (PumpSnapshot, error) {
 	var result PumpSnapshot
 	hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)
@@ -160,7 +160,7 @@ func (s PumpSnapshot) Apply(d PumpSnapshotDelta) (PumpSnapshot, error) {
 // Diff produces the minimal Delta d such that Apply(a, d) payload-equals b.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderForDiff and are propagated to the caller as a non-nil error.
-// See delta-gen-spec.md §6.5 / §7.2 (Errata R-DG-012).
+// See delta-gen-spec.md §5.2 (R-DG-012).
 func Diff(a, b PumpSnapshot) (PumpSnapshotDelta, error) {
 	hdr, err := runtime.HeaderForDiff(a.Header, b.Header)
 	if err != nil {
@@ -193,7 +193,7 @@ func (a PumpSnapshot) Diff(b PumpSnapshot) (PumpSnapshotDelta, error) {
 // Coalesce folds a slice of TDeltas into s by iterated Apply. It is a pure
 // function; chain-envelope validations propagate from the first failing Apply
 // step. An empty slice returns (s, nil) without any runtime call. See
-// delta-gen-spec.md §7.3 / §8.3 (Errata R-DG-012, R-DG-012).
+// delta-gen-spec.md §5.2 (R-DG-012).
 func Coalesce(s PumpSnapshot, ds []PumpSnapshotDelta) (PumpSnapshot, error) {
 	result := s
 	for _, d := range ds {
