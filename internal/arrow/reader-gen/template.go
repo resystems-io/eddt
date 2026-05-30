@@ -969,32 +969,24 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 `
 
-var readerTemplate = template.Must(template.New("reader").Funcs(template.FuncMap{
-	"dict": func(values ...any) map[string]any {
-		m := make(map[string]any)
-		for i := 0; i < len(values); i += 2 {
-			m[values[i].(string)] = values[i+1]
-		}
-		return m
-	},
-	"stripPtr": func(s string) string {
+// readerTemplateFuncs returns the FuncMap for the reader template, composing
+// the shared base functions from gencommon with reader-specific helpers.
+func readerTemplateFuncs() template.FuncMap {
+	m := gencommon.TemplateFuncs()
+	m["stripPtr"] = func(s string) string {
 		if len(s) > 0 && s[0] == '*' {
 			return s[1:]
 		}
 		return s
-	},
-	"lowerFirst": func(s string) string {
-		if len(s) == 0 {
-			return s
-		}
-		return strings.ToLower(s[:1]) + s[1:]
-	},
-	"isDictCandidate": func(arrowArrayType string) bool {
+	}
+	m["isDictCandidate"] = func(arrowArrayType string) bool {
 		return arrowArrayType == "*array.String" || arrowArrayType == "*array.Binary"
-	},
-	"add":    func(a, b int) int { return a + b },
-	"repeat": func(s string, n int) string { return strings.Repeat(s, n) },
-}).Parse(readerTemplateStr))
+	}
+	m["repeat"] = func(s string, n int) string { return strings.Repeat(s, n) }
+	return m
+}
+
+var readerTemplate = template.Must(template.New("reader").Funcs(readerTemplateFuncs()).Parse(readerTemplateStr))
 
 type templateData struct {
 	PackageName        string

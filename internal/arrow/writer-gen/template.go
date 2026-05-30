@@ -3,8 +3,6 @@ package writergen
 import (
 	"bytes"
 	"fmt"
-	"go/format"
-	"os"
 	"path/filepath"
 	"text/template"
 
@@ -211,16 +209,7 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 {{- end}}
 `
 
-var writerTemplate = template.Must(template.New("writer").Funcs(template.FuncMap{
-	"dict": func(values ...any) map[string]any {
-		m := make(map[string]any)
-		for i := 0; i < len(values); i += 2 {
-			m[values[i].(string)] = values[i+1]
-		}
-		return m
-	},
-	"add": func(a, b int) int { return a + b },
-}).Parse(writerTemplateStr))
+var writerTemplate = template.Must(template.New("writer").Funcs(gencommon.TemplateFuncs()).Parse(writerTemplateStr))
 
 type templateData struct {
 	PackageName   string
@@ -288,16 +277,5 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Format Source
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("failed to format generated source: %w\nSource:\n%s", err, buf.String())
-	}
-
-	// Write Output
-	if err := os.WriteFile(g.OutPath, formatted, 0644); err != nil {
-		return fmt.Errorf("failed to write output file: %w", err)
-	}
-
-	return nil
+	return gencommon.WriteFormattedGo(g.OutPath, &buf)
 }

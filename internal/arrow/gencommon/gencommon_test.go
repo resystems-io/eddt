@@ -411,3 +411,62 @@ func TestResolveOutputContext(t *testing.T) {
 		}
 	})
 }
+
+func TestMergeImports(t *testing.T) {
+	imp := func(path, alias string) ImportInfo { return ImportInfo{Path: path, Alias: alias} }
+
+	tests := []struct {
+		name string
+		dst  []ImportInfo
+		add  []ImportInfo
+		want []ImportInfo
+	}{
+		{
+			name: "empty-add",
+			dst:  []ImportInfo{imp("a", "")},
+			add:  nil,
+			want: []ImportInfo{imp("a", "")},
+		},
+		{
+			name: "empty-dst",
+			dst:  nil,
+			add:  []ImportInfo{imp("b", "")},
+			want: []ImportInfo{imp("b", "")},
+		},
+		{
+			name: "no-overlap",
+			dst:  []ImportInfo{imp("a", "")},
+			add:  []ImportInfo{imp("b", "")},
+			want: []ImportInfo{imp("a", ""), imp("b", "")},
+		},
+		{
+			name: "dedup-exact-match",
+			dst:  []ImportInfo{imp("a", ""), imp("b", "")},
+			add:  []ImportInfo{imp("b", ""), imp("c", "")},
+			want: []ImportInfo{imp("a", ""), imp("b", ""), imp("c", "")},
+		},
+		{
+			name: "order-preserved",
+			// "c" and "a" are in add; only "c" is new. Append order: dst first, then new.
+			dst:  []ImportInfo{imp("b", ""), imp("d", "")},
+			add:  []ImportInfo{imp("c", ""), imp("a", ""), imp("d", "")},
+			want: []ImportInfo{imp("b", ""), imp("d", ""), imp("c", ""), imp("a", "")},
+		},
+		{
+			name: "first-alias-wins",
+			// dst has "a" with no alias; add has "a" with alias — dst entry is kept unchanged.
+			dst:  []ImportInfo{imp("a", "")},
+			add:  []ImportInfo{imp("a", "aliased")},
+			want: []ImportInfo{imp("a", "")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeImports(tt.dst, tt.add)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("MergeImports() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

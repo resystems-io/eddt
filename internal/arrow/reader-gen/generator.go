@@ -3,8 +3,6 @@ package readergen
 import (
 	"bytes"
 	"fmt"
-	"go/format"
-	"os"
 	"path/filepath"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
@@ -70,34 +68,12 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 
 	// Collect extra imports needed by ConvertBackExpr (e.g. "time", protobuf packages).
-	extraImports := gencommon.CollectConvertBackImports(structs)
-	if len(extraImports) > 0 {
-		existing := map[string]bool{}
-		for _, imp := range imports {
-			existing[imp.Path] = true
-		}
-		for _, imp := range extraImports {
-			if !existing[imp.Path] {
-				imports = append(imports, imp)
-				existing[imp.Path] = true
-			}
-		}
-	}
+	imports = gencommon.MergeImports(imports, gencommon.CollectConvertBackImports(structs))
 
 	// Compute unmarshal flag and collect unmarshal imports (e.g. "net/netip").
 	hasUnmarshal := gencommon.HasUnmarshalFields(structs)
 	if hasUnmarshal {
-		unmarshalImports := gencommon.CollectUnmarshalImports(structs)
-		existing := map[string]bool{}
-		for _, imp := range imports {
-			existing[imp.Path] = true
-		}
-		for _, imp := range unmarshalImports {
-			if !existing[imp.Path] {
-				imports = append(imports, imp)
-				existing[imp.Path] = true
-			}
-		}
+		imports = gencommon.MergeImports(imports, gencommon.CollectUnmarshalImports(structs))
 	}
 
 	// Warn about Stringer-only fields (no unmarshal inverse).
@@ -123,14 +99,5 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("failed to format generated source: %w\nSource:\n%s", err, buf.String())
-	}
-
-	if err := os.WriteFile(g.OutPath, formatted, 0644); err != nil {
-		return fmt.Errorf("failed to write output file: %w", err)
-	}
-
-	return nil
+	return gencommon.WriteFormattedGo(g.OutPath, &buf)
 }
