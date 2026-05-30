@@ -1,7 +1,6 @@
 package writergen
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -3158,16 +3157,7 @@ type Snapshot struct {
 // the setup directly rather than this helper.
 func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string, pkgOverride string) (tmpDir, outPath string) {
 	t.Helper()
-	tmpDir = t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
-		t.Fatalf("Failed to write dummy.go: %v", err)
-	}
-
-	modContent := "module dummy\n\ngo 1.25.0\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("Failed to write go.mod: %v", err)
-	}
+	tmpDir = arrowtest.SetupModule(t, goCode)
 
 	outPath = filepath.Join(tmpDir, "dummy_arrow_writer.go")
 	g := NewGenerator([]string{tmpDir}, targetStructs, outPath, false, nil)
@@ -3182,41 +3172,16 @@ func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string, p
 	return tmpDir, outPath
 }
 
-// runInnerTest writes the inner test harness code, fetches dependencies, and
-// executes `go test`. An optional testRunFilter can restrict which inner test
-// function runs (pass "" to run all).
+// runInnerTest writes the inner test harness code, fetches Arrow and DuckDB
+// dependencies, and executes `go test`. An optional testRunFilter can restrict
+// which inner test function runs (pass "" to run all).
+// Delegates to arrowtest.RunInnerTest with DuckDBDep (needed by writer-gen tests).
 func runInnerTest(t *testing.T, tmpDir, testCode, testRunFilter string) {
-	t.Helper()
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("Failed to write dummy_test.go: %v", err)
-	}
-
-	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-	runCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
-	runCmd(t, tmpDir, "go", "mod", "tidy")
-
-	args := []string{"test", "-v"}
-	if testRunFilter != "" {
-		args = append(args, "-run", testRunFilter)
-	}
-	args = append(args, ".")
-	runCmd(t, tmpDir, "go", args...)
+	arrowtest.RunInnerTest(t, tmpDir, testCode, testRunFilter, arrowtest.DuckDBDep)
 }
 
 // runCmd is a helper for running external commands during integration tests.
-func runCmd(t *testing.T, dir, command string, args ...string) {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = dir
-	var outBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
-
-	err := cmd.Run()
-	outputStr := outBuf.String()
-	t.Logf("Running command: %s %s\nOutput:\n%s", command, strings.Join(args, " "), outputStr)
-
-	if err != nil {
-		t.Fatalf("Command '%s %s' failed: %v\nOutput: %s", command, strings.Join(args, " "), err, outputStr)
-	}
+// Delegates to arrowtest.RunCmd.
+func runCmd(t testing.TB, dir, command string, args ...string) {
+	arrowtest.RunCmd(t, dir, command, args...)
 }
