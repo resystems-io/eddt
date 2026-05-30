@@ -4,7 +4,7 @@ GOSRC=$(shell find . -name '*.go')
 # record the *parent* repo's commit, not this module's.
 BUILDVCS := $(if $(shell git rev-parse --show-superproject-working-tree 2>/dev/null),-buildvcs=false,)
 
-all: build/eddt build/parquet-annotator build/arrow-writer-gen build/arrow-reader-gen build/delta-gen
+all: docs build/eddt build/parquet-annotator build/arrow-writer-gen build/arrow-reader-gen build/delta-gen
 
 build/eddt: $(GOSRC) | build
 	go build $(BUILDVCS) -o $@ ./cmd/eddt
@@ -24,10 +24,16 @@ build/delta-gen: $(GOSRC) | build
 build:
 	mkdir -p build
 
-clean:
+docs:
+	$(MAKE) -C docs
+
+docs-clean:
+	$(MAKE) -C docs clean
+
+clean: docs-clean
 	@rm -rf build
 
 test:
 	go test ./...
 
-.PHONY: test
+.PHONY: test clean test docs docs-clean
