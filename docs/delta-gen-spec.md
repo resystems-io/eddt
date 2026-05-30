@@ -59,6 +59,7 @@ complete.
   - [8.5 Cross-package mode and unexported fields (R-DG-016)](#85-cross-package-mode-and-unexported-fields-r-dg-016)
   - [8.6 Nested companion type emission ordering (R-DG-021)](#86-nested-companion-type-emission-ordering-r-dg-021)
   - [8.7 Verbose flag](#87-verbose-flag)
+  - [8.8 Standalone mode](#88-standalone-mode)
 
 <!-- /TOC -->
 
@@ -1297,6 +1298,165 @@ The requirements in this section bind the Generator CLI (`S-DG-04`).
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
+#### 5.5 Standalone Mode
+
+Standalone mode decouples the generated code from `go.resystems.io/eddt/runtime`,
+enabling adoption in codebases that do not depend on the full EDDT ecosystem.
+The requirements below bind `S-DG-04` Generator CLI and `S-DG-02` Code Emitter
+jointly unless otherwise noted.
+
+#### <a id="r-dg-042"></a>`R-DG-042` — Standalone mode flag
+
+> *The Generator CLI SHALL accept a `--standalone` boolean flag. When
+> `--standalone` is set the generator operates in standalone mode as
+> defined by R-DG-043 through R-DG-049.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`Config.Standalone`; `--standalone` flag)
+- **Rationale (A1):** Standalone mode lowers the adoption barrier for teams that want delta/diff semantics without pulling in the full eddt module graph.
+- **V&V method (A2):** Test
+- **Allocation (A8):** `S-DG-04` Generator CLI
+- **Priority (A32):** P2
+- **Criticality (A33):** Moderate
+
+#### <a id="r-dg-043"></a>`R-DG-043` — Standalone mode: no runtime.Header requirement
+
+> *In standalone mode, each target Snapshot struct SHALL NOT embed
+> `runtime.Header`. A Snapshot struct that embeds `runtime.Header` in
+> standalone mode SHALL be rejected with a descriptive error. A
+> Snapshot struct that does not embed `runtime.Header` SHALL be
+> accepted without error.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`parseSnapshot`, `ParseOpts.Standalone`)
+- **Rationale (A1):** Standalone mode targets Snapshot types that have no chain-lifecycle context; requiring `runtime.Header` would force a dependency on the runtime package, negating the purpose of the mode.
+- **V&V method (A2):** Test
+- **Allocation (A8):** `S-DG-01` Snapshot Parser
+- **Priority (A32):** P2
+- **Criticality (A33):** Moderate
+
+#### <a id="r-dg-044"></a>`R-DG-044` — Standalone mode: no runtime import
+
+> *In standalone mode, the generated `*_delta.go` file SHALL NOT
+> contain any import of `go.resystems.io/eddt/runtime` or reference
+> any symbol from that package.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`buildImports`, `standalone bool` gate)
+- **Rationale (A1):** The primary motivation for standalone mode is to avoid the runtime dependency; any leakage of runtime symbols would defeat this goal.
+- **V&V method (A2):** Test (grep check in `TestStandalone_NoRuntimeImport`)
+- **Allocation (A8):** `S-DG-02` Code Emitter
+- **Priority (A32):** P2
+- **Criticality (A33):** High
+
+#### <a id="r-dg-045"></a>`R-DG-045` — Standalone mode: pure function signatures
+
+> *In standalone mode, `Apply<T>`, `Diff<T>`, and `Coalesce<T>` (R-DG-012)
+> SHALL be pure functions with no error return:*
+>
+> ```go
+> func Apply<T>(s T, d TDelta) T
+> func Diff<T>(a, b T) TDelta
+> func Coalesce<T>(s T, ds []TDelta) T
+> ```
+>
+> *No chain-envelope validation is performed. Method wrappers (R-DG-013)
+> delegate to the corresponding pure function and also carry no error return.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`applyFuncStandalone` template)
+- **Rationale (A1):** Without a `runtime.Header` there is no chain-integrity context to validate, so there is no error source. Returning a bare value simplifies call-sites and makes the pure, stateless nature explicit.
+- **V&V method (A2):** Test (`TestStandalone_ApplyDiffPureSignatures`)
+- **Allocation (A8):** `S-DG-02` Code Emitter
+- **Priority (A32):** P2
+- **Criticality (A33):** Moderate
+
+#### <a id="r-dg-046"></a>`R-DG-046` — Standalone mode: companion local-types file
+
+> *In standalone mode, the Code Emitter SHALL generate a companion
+> file (named by `--standalone-types`, defaulting to `delta_types.go`)
+> in the same output directory as the `*_delta.go` file. The companion
+> file SHALL define:*
+>
+> - `type EntityID [32]byte` and `func (e EntityID) IsZero() bool`
+> - `type FieldDeltaOp uint8` with constants `OpIgnore = 0`,
+>   `OpAssert = 1`, `OpRetract = 2`
+> - `type FieldDelta[T any] struct { Op FieldDeltaOp; Value T }`
+> - Hash helpers `standaloneNewHash`, `standaloneFinalise`, and
+>   the `standaloneWrite*` family (matching the encoding of `runtime.WriteString` etc.)
+>
+> *If the target file already exists and does not contain a
+> `// Code generated` marker, the generator SHALL warn and skip it
+> rather than overwriting.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`emitStandaloneTypes`, `template_standalone.go`)
+- **Rationale (A1):** The companion file provides local equivalents of the runtime types so that the `*_delta.go` file has no external dependencies. Overwrite protection prevents accidental destruction of hand-written files.
+- **V&V method (A2):** Test (`TestStandalone_CompanionFileBlake2b`)
+- **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-04` Generator CLI
+- **Priority (A32):** P2
+- **Criticality (A33):** Moderate
+
+#### <a id="r-dg-047"></a>`R-DG-047` — Standalone mode: hash algorithm selection
+
+> *The Generator CLI SHALL accept a `--standalone-hash` flag with
+> accepted values `blake2b` (default) and `sha256`.*
+>
+> - *`blake2b`: the companion file imports `golang.org/x/crypto/blake2b`
+>   and produces `EntityID` values byte-identical to those produced by
+>   `runtime.NewHash` / `runtime.Finalise` for the same key fields.*
+> - *`sha256`: the companion file uses `crypto/sha256` (stdlib-only)
+>   and SHALL include a comment warning that the produced `EntityID`
+>   values differ from runtime-mode values.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`Config.StandaloneHash`; `standaloneTypesSHA256Str`)
+- **Rationale (A1):** `blake2b` preserves EntityID compatibility with the runtime, easing future migration. `sha256` is provided for adopters who require zero non-stdlib dependencies and do not need cross-mode EntityID compatibility.
+- **V&V method (A2):** Test (`TestStandalone_CompanionFileSHA256`)
+- **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-04` Generator CLI
+- **Priority (A32):** P3
+- **Criticality (A33):** Low
+
+#### <a id="r-dg-048"></a>`R-DG-048` — Standalone mode: companion file naming
+
+> *The Generator CLI SHALL accept a `--standalone-types` flag naming
+> the companion file (default `delta_types.go`). The name is resolved
+> relative to the directory of the generated `*_delta.go` file.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`Config.StandaloneTypesFile`)
+- **Rationale (A1):** Users may have an existing `delta_types.go` in the target package; the flag allows them to choose a non-conflicting name.
+- **V&V method (A2):** Test (`TestStandalone_customTypesFilename`)
+- **Allocation (A8):** `S-DG-04` Generator CLI
+- **Priority (A32):** P3
+- **Criticality (A33):** Low
+
+#### <a id="r-dg-049"></a>`R-DG-049` — Standalone mode: EntityID function naming
+
+> *In standalone mode, the package-level EntityID function SHALL follow
+> the same struct-prefixed naming convention as R-DG-012, yielding
+> `EntityID<T>` (e.g. `EntityIDFooSnapshot`). This ensures the
+> function name is distinct from the local `EntityID` type defined in
+> the companion file (R-DG-046), avoiding the Go compile-time
+> restriction that prohibits a package-level function and a type from
+> sharing the same identifier.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** `N-DG-001` Declarative Authoring
+- **Source (A5):** Observed implementation (`EntityIDFuncName = prefixEntityID + ps.Name`; `template_standalone.go`)
+- **Rationale (A1):** Without the struct prefix, `func EntityID(k K) EntityID` would conflict with `type EntityID [32]byte` in the same package, producing a compile error. The struct prefix, already mandated by R-DG-012, cleanly resolves the ambiguity.
+- **V&V method (A2):** Compile check; Test (`TestStandalone_EntityIDLocalType`)
+- **Allocation (A8):** `S-DG-02` Code Emitter
+- **Priority (A32):** P2
+- **Criticality (A33):** High
+
 ---
 
 ## 6. Errata Register
@@ -1442,6 +1602,38 @@ The Generator CLI provides `--verbose` / `-v`, which raises the
 internal log level from `Warn` to `Info`, surfacing per-stage
 progress notes. This is an observability ergonomic and carries no
 normative obligation.
+
+### 8.8 Standalone mode
+
+Standalone mode (`--standalone`) generates code with no dependency on
+`go.resystems.io/eddt/runtime`. It serves teams that want delta/diff
+semantics without integrating the full EDDT module graph.
+
+**Why no `runtime.Header`:** In normal mode `Apply` and `Diff` delegate
+chain-lifecycle validation to `runtime.HeaderAfterApply` /
+`runtime.HeaderForDiff`. In standalone mode there is no Header and
+therefore no chain context; `Apply<T>` and `Diff<T>` are pure field
+operations with no error return.
+
+**EntityID naming:** The companion file (R-DG-046) defines a local
+`type EntityID [32]byte`. The package-level EntityID function cannot
+share that name (Go prohibits a package-level function and a type from
+having the same identifier). Applying the struct-prefix convention
+from R-DG-012 (`EntityIDFooSnapshot`) cleanly resolves the ambiguity
+without introducing a separate naming exception.
+
+**Hash algorithm:** `blake2b` is the default because it produces
+`EntityID` values byte-identical to those produced by the runtime
+library for the same key fields. This preserves interoperability: a
+codebase that starts in standalone mode can migrate to runtime-coupled
+mode later without re-hashing existing entity identifiers. `sha256` is
+offered for callers who require zero non-stdlib dependencies and are
+not concerned with cross-mode EntityID compatibility.
+
+**Companion file protection:** If `delta_types.go` (or the custom
+`--standalone-types` name) already exists without a `// Code generated`
+header, the generator warns and skips rather than overwriting. This
+avoids accidental destruction of hand-written companion files.
 
 <!-- Reference links generated by scripts/refs-linkify.py -->
 
