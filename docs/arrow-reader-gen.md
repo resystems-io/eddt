@@ -36,7 +36,8 @@ constructs elegantly back to Native Go:
 * **Binary Data**: `[]byte` is natively special-cased to read from an Arrow
   `Binary` column.
 * **Composites**: Native cross-package structs, pointers (nullable types),
-  slices (`ListOf`), maps (`MapOf`), and fixed-size arrays (`FixedSizeList`).
+  pointer-wrapped compounds (`*[]T`, `*map[K]V`, `**T`), slices (`ListOf`),
+  maps (`MapOf`), and fixed-size arrays (`FixedSizeList`).
 * **Dictionary Encoding**: The reader transparently handles `*array.Dictionary`
   columns (common in Parquet imports), dynamically resolving indices to values
   without init-time materialization to preserve zero-copy benefits.
@@ -53,6 +54,8 @@ constructs elegantly back to Native Go:
   reconstituted back into Go's embedded struct hierarchy.
 * **Type Aliases**: Named composite types (e.g., `type Tags []string`) are
   correctly casted upon extraction.
+* **Generic Instantiation**: Generic struct instantiations (e.g.,
+  `Pair[int32, string]`) are resolved to concrete schemas at generation time.
 
 ### Edge Cases and Known Types
 The generator seamlessly reverses standard library and Protobuf timestamp

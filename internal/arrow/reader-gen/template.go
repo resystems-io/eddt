@@ -33,8 +33,8 @@ package {{.PackageName}}
 import (
 	"fmt"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 {{- range .Imports}}
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
@@ -90,7 +90,7 @@ func new{{.Name}}ArrowReaderFromStruct(col *array.Struct) (*{{.Name}}ArrowReader
 
 // LoadRow loads the i-th row from the Arrow record into the output struct.
 // Fields whose columns were missing from the record are left untouched.
-func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{.Qualifier}}{{.Name}}) {
+func (r *{{.Name}}ArrowReader) LoadRow(i int, out *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
 {{- range .Fields}}
 {{- template "loadField" dict "F" . "HasUM" $.HasUnmarshalFields}}
 {{- end}}
@@ -108,9 +108,9 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- if .IsStruct}}
 	col{{.Name}} {{.ArrowArrayType}}
 	reader{{.Name}} *{{.StructName}}ArrowReader
-{{- else if and .IsMap (not .IsPointer)}}
+{{- else if .IsMap}}
 {{- template "colFieldMap" dict "Name" .Name "Info" . "Depth" 0}}
-{{- else if and (or .IsList .IsFixedSizeList) (not .IsPointer)}}
+{{- else if or .IsList .IsFixedSizeList}}
 {{- template "colFieldList" dict "Name" .Name "Info" . "Depth" 0}}
 {{- else if and .ValueMethod (not .IsStruct) (not .IsList) (not .IsMap) (not .IsFixedSizeList) (or (eq .MarshalMethod "") (ne .UnmarshalMethod ""))}}
 	col{{.Name}} {{.ArrowArrayType}}
@@ -171,9 +171,9 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			}
 		}
 	}
-{{- else if and $f.IsMap (not $f.IsPointer)}}
+{{- else if $f.IsMap}}
 {{- template "initFieldMap" dict "Name" $f.Name "Info" $f}}
-{{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
+{{- else if or $f.IsList $f.IsFixedSizeList}}
 {{- template "initFieldList" dict "Name" $f.Name "Info" $f}}
 {{- else if and $f.ValueMethod (not $f.IsStruct) (not $f.IsList) (not $f.IsMap) (not $f.IsFixedSizeList) (or (eq $f.MarshalMethod "") (ne $f.UnmarshalMethod ""))}}
 {{- if isDictCandidate $f.ArrowArrayType}}
@@ -342,7 +342,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			}
 		}
 	}
-{{- else if and $f.IsMap (not $f.IsPointer)}}
+{{- else if $f.IsMap}}
 	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
 		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
 		if !ok {
@@ -351,7 +351,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		r.col{{$f.Name}} = child
 {{- template "initFieldMapChild" dict "Name" $f.Name "Info" $f "Depth" 0}}
 	}
-{{- else if and (or $f.IsList $f.IsFixedSizeList) (not $f.IsPointer)}}
+{{- else if or $f.IsList $f.IsFixedSizeList}}
 	if idx, ok := dt.FieldIdx("{{$f.Name}}"); ok {
 		child, ok := col.Field(idx).({{$f.ArrowArrayType}})
 		if !ok {
@@ -393,7 +393,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- if and .F.IsStruct (not .F.IsPointer)}}
 	if r.col{{.F.Name}} != nil {
 		if r.col{{.F.Name}}.IsNull(i) {
-			out.{{.F.Name}} = {{.F.StructQualifier}}{{.F.StructName}}{}
+			out.{{.F.Name}} = {{.F.QualifiedGoType}}{}
 		} else {
 			r.reader{{.F.Name}}.LoadRow(i, &out.{{.F.Name}})
 {{- if .HasUM}}
@@ -412,7 +412,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			out.{{.F.Name}} = nil
 		} else {
 			if out.{{.F.Name}} == nil {
-				out.{{.F.Name}} = &{{.F.StructQualifier}}{{.F.StructName}}{}
+				out.{{.F.Name}} = &{{stripPtr .F.QualifiedGoType}}{}
 			}
 			r.reader{{.F.Name}}.LoadRow(i, out.{{.F.Name}})
 {{- if .HasUM}}
@@ -425,12 +425,56 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- end}}
 		}
 	}
+{{- else if and .F.IsList .F.IsPointer}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = nil
+		} else {
+			if out.{{.F.Name}} == nil {
+				var inner {{stripPtr .F.QualifiedGoType}}
+				out.{{.F.Name}} = &inner
+			}
+			sl{{.F.Name}} := *out.{{.F.Name}}
+{{- template "loadFieldListInner" dict "Name" .F.Name "Info" .F "Target" (printf "sl%s" .F.Name) "Depth" 0 "IdxExpr" "i" "HasUM" .HasUM}}
+			*out.{{.F.Name}} = sl{{.F.Name}}
+		}
+	}
+{{- else if and .F.IsMap .F.IsPointer}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = nil
+		} else {
+			if out.{{.F.Name}} == nil {
+				var inner {{stripPtr .F.QualifiedGoType}}
+				out.{{.F.Name}} = &inner
+			}
+			m{{.F.Name}} := *out.{{.F.Name}}
+{{- template "loadFieldMapInner" dict "Name" .F.Name "Info" .F "Target" (printf "m%s" .F.Name) "Depth" 0 "IdxExpr" "i" "HasUM" .HasUM}}
+			*out.{{.F.Name}} = m{{.F.Name}}
+		}
+	}
 {{- else if and .F.IsMap (not .F.IsPointer)}}
 {{- template "loadFieldMap" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
 {{- else if and .F.IsList (not .F.IsPointer)}}
 {{- template "loadFieldList" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
 {{- else if and .F.IsFixedSizeList (not .F.IsPointer)}}
 {{- template "loadFieldFixedList" dict "Name" .F.Name "Info" .F "Target" (printf "out.%s" .F.Name) "HasUM" .HasUM}}
+{{- else if and .F.IsPointer .F.EltInfo (not .F.IsList) (not .F.IsMap) (not .F.IsStruct) (not .F.IsFixedSizeList)}}
+	if r.col{{.F.Name}} != nil {
+		if r.col{{.F.Name}}.IsNull(i) {
+			out.{{.F.Name}} = nil
+		} else {
+			innerVal := {{.F.EltInfo.CastType}}(r.col{{.F.Name}}.Value(i))
+			if out.{{.F.Name}} == nil {
+				inner := &innerVal
+				out.{{.F.Name}} = &inner
+			} else if *out.{{.F.Name}} == nil {
+				*out.{{.F.Name}} = &innerVal
+			} else {
+				**out.{{.F.Name}} = innerVal
+			}
+		}
+	}
 {{- else if and .F.ValueMethod (not .F.IsPointer) (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
 {{- $vi := "i" -}}
 {{- if isDictCandidate .F.ArrowArrayType}}{{$vi = "vi"}}{{end}}
@@ -466,7 +510,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		}
 	}
 {{- end}}
-{{- if and .F.ValueMethod .F.IsPointer (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
+{{- if and .F.ValueMethod .F.IsPointer (not .F.EltInfo) (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}
 {{- $vi := "i" -}}
 {{- if isDictCandidate .F.ArrowArrayType}}{{$vi = "vi"}}{{end}}
 	if r.col{{.F.Name}} != nil {
@@ -565,7 +609,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			if {{$n}} > 0 && cap({{$target}}) >= {{$n}} {
 				{{$target}} = {{$target}}[:{{$n}}]
 			} else {
-				{{$target}} = make({{$info.QualifiedGoType}}, {{$n}})
+				{{$target}} = make({{if $info.IsPointer}}{{stripPtr $info.QualifiedGoType}}{{else}}{{$info.QualifiedGoType}}{{end}}, {{$n}})
 			}
 			for {{$j}} := range {{$n}} {
 {{- if and $info.EltInfo.IsStruct $info.EltInfo.IsPointer}}
@@ -574,7 +618,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					{{$target}}[{{$j}}] = nil
 				} else {
 					if {{$target}}[{{$j}}] == nil {
-						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+						{{$target}}[{{$j}}] = &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					}
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -589,7 +633,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -683,7 +727,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 					{{$target}}[{{$j}}] = nil
 				} else {
 					if {{$target}}[{{$j}}] == nil {
-						{{$target}}[{{$j}}] = &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+						{{$target}}[{{$j}}] = &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					}
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, {{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -698,7 +742,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 {{- else if $info.EltInfo.IsStruct}}
 				idx{{$d}} := int({{$s}}) + {{$j}}
 				if {{$childCol}}.IsNull(idx{{$d}}) {
-					{{$target}}[{{$j}}] = {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					{{$target}}[{{$j}}] = {{$info.EltInfo.QualifiedGoType}}{}
 				} else {
 					r.reader{{$name}}{{repeat "Elts" (add $d 1)}}.LoadRow(idx{{$d}}, &{{$target}}[{{$j}}])
 {{- if $hasUM}}
@@ -791,7 +835,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			{{$s}}, {{$e}} := {{$colName}}.ValueOffsets({{$idx}})
 			{{$n}} := int({{$e}} - {{$s}})
 			if {{$target}} == nil {
-				{{$target}} = make({{$info.QualifiedGoType}}, {{$n}})
+				{{$target}} = make({{if $info.IsPointer}}{{stripPtr $info.QualifiedGoType}}{{else}}{{$info.QualifiedGoType}}{{end}}, {{$n}})
 			} else {
 				clear({{$target}})
 			}
@@ -802,7 +846,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				if r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					{{$target}}[{{$k}}] = nil
 				} else {
-					sv{{$d}} := &{{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}{}
+					sv{{$d}} := &{{stripPtr $info.EltInfo.QualifiedGoType}}{}
 					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, sv{{$d}})
 {{- if $hasUM}}
 					if len(r.reader{{$prefix}}Items.errs) > 0 {
@@ -816,7 +860,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 				}
 {{- else if $info.EltInfo.IsStruct}}
 				midx{{$d}} := int({{$s}}) + {{$j}}
-				var sv{{$d}} {{$info.EltInfo.StructQualifier}}{{$info.EltInfo.StructName}}
+				var sv{{$d}} {{$info.EltInfo.QualifiedGoType}}
 				if !r.col{{$prefix}}Items.IsNull(midx{{$d}}) {
 					r.reader{{$prefix}}Items.LoadRow(midx{{$d}}, &sv{{$d}})
 {{- if $hasUM}}

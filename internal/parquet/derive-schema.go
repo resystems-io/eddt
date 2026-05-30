@@ -1,9 +1,9 @@
 package parquet
 
 import (
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
-	"github.com/apache/arrow/go/v18/parquet/schema"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 )
 
 // DeriveSchema uses the Go parquet library's reflection to derive an

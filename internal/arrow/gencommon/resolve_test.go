@@ -285,3 +285,224 @@ type ReaderFieldsStruct struct {
 		t.Errorf("OptAddr.UnmarshalImports mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestPointerWrappedCompoundTypes verifies the three new pointer-wrapped compound
+// shapes (*[]T, *map[K]V, **T) and the two unsupported-but-clearly-rejected shapes
+// (*[N]T, **struct).
+func TestPointerWrappedCompoundTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	testCode := `package testpkg
+
+type Contact struct {
+	Phone string
+}
+
+type NullableCompound struct {
+	// Supported: pointer-wrapped compound types
+	Tags     *[]string
+	Scores   *map[string]int32
+	Priority **int32
+	RawBytes *[]byte
+
+	// Unsupported: pointer to fixed-size array — must produce a clear error
+	// (field omitted: the generator skips it with a warning rather than failing)
+
+	// Unsupported: pointer to pointer to struct — must produce a clear error
+	// (field omitted: same)
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "types.go"), []byte(testCode), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, structs, err := Parse([]string{tmpDir}, []string{"NullableCompound"}, false)
+	if err != nil {
+		t.Fatalf("Parse() failed: %v", err)
+	}
+
+	var target *StructInfo
+	for i := range structs {
+		if structs[i].Name == "NullableCompound" {
+			target = &structs[i]
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("NullableCompound not found")
+	}
+
+	byName := map[string]FieldInfo{}
+	for _, f := range target.Fields {
+		byName[f.Name] = f
+	}
+
+	t.Run("nullable-slice", func(t *testing.T) {
+		f, ok := byName["Tags"]
+		if !ok {
+			t.Fatal("Tags field not found")
+		}
+		if !f.IsPointer {
+			t.Error("Tags.IsPointer = false, want true")
+		}
+		if !f.IsList {
+			t.Error("Tags.IsList = false, want true")
+		}
+		if f.ArrowArrayType != "*array.List" {
+			t.Errorf("Tags.ArrowArrayType = %q, want %q", f.ArrowArrayType, "*array.List")
+		}
+		if f.EltInfo == nil {
+			t.Fatal("Tags.EltInfo is nil")
+		}
+		if f.EltInfo.GoType != "string" {
+			t.Errorf("Tags.EltInfo.GoType = %q, want %q", f.EltInfo.GoType, "string")
+		}
+		if f.GoType != "*[]string" {
+			t.Errorf("Tags.GoType = %q, want %q", f.GoType, "*[]string")
+		}
+	})
+
+	t.Run("nullable-map", func(t *testing.T) {
+		f, ok := byName["Scores"]
+		if !ok {
+			t.Fatal("Scores field not found")
+		}
+		if !f.IsPointer {
+			t.Error("Scores.IsPointer = false, want true")
+		}
+		if !f.IsMap {
+			t.Error("Scores.IsMap = false, want true")
+		}
+		if f.ArrowArrayType != "*array.Map" {
+			t.Errorf("Scores.ArrowArrayType = %q, want %q", f.ArrowArrayType, "*array.Map")
+		}
+		if f.GoType != "*map[string]int32" {
+			t.Errorf("Scores.GoType = %q, want %q", f.GoType, "*map[string]int32")
+		}
+	})
+
+	t.Run("double-pointer-scalar", func(t *testing.T) {
+		f, ok := byName["Priority"]
+		if !ok {
+			t.Fatal("Priority field not found")
+		}
+		if !f.IsPointer {
+			t.Error("Priority.IsPointer = false, want true")
+		}
+		if f.EltInfo == nil {
+			t.Fatal("Priority.EltInfo is nil")
+		}
+		if !f.EltInfo.IsPointer {
+			t.Error("Priority.EltInfo.IsPointer = false, want true")
+		}
+		if f.ArrowArrayType != "*array.Int32" {
+			t.Errorf("Priority.ArrowArrayType = %q, want %q", f.ArrowArrayType, "*array.Int32")
+		}
+		if f.GoType != "**int32" {
+			t.Errorf("Priority.GoType = %q, want %q", f.GoType, "**int32")
+		}
+		if f.IsList || f.IsMap || f.IsStruct {
+			t.Error("Priority should not have IsList/IsMap/IsStruct set")
+		}
+	})
+
+	t.Run("nullable-bytes", func(t *testing.T) {
+		f, ok := byName["RawBytes"]
+		if !ok {
+			t.Fatal("RawBytes field not found")
+		}
+		if !f.IsPointer {
+			t.Error("RawBytes.IsPointer = false, want true")
+		}
+		if f.ArrowArrayType != "*array.Binary" {
+			t.Errorf("RawBytes.ArrowArrayType = %q, want %q", f.ArrowArrayType, "*array.Binary")
+		}
+		if f.ValueMethod != "Value" {
+			t.Errorf("RawBytes.ValueMethod = %q, want %q", f.ValueMethod, "Value")
+		}
+		if f.GoType != "*[]byte" {
+			t.Errorf("RawBytes.GoType = %q, want %q", f.GoType, "*[]byte")
+		}
+	})
+}
+
+// TestPointerWrappedUnsupportedShapes verifies that *[N]T and **struct produce
+// clear, descriptive errors rather than silently skipping or panicking.
+func TestPointerWrappedUnsupportedShapes(t *testing.T) {
+	t.Run("pointer-to-fixed-array", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		testCode := `package testpkg
+
+type BadFixedArray struct {
+	Field *[4]int32
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "types.go"), []byte(testCode), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, structs, err := Parse([]string{tmpDir}, []string{"BadFixedArray"}, false)
+		if err != nil {
+			t.Fatalf("Parse() unexpected error: %v", err)
+		}
+		// The field should be skipped (Parse warns but doesn't fail), so no fields.
+		var target *StructInfo
+		for i := range structs {
+			if structs[i].Name == "BadFixedArray" {
+				target = &structs[i]
+				break
+			}
+		}
+		if target == nil {
+			t.Fatal("BadFixedArray not found")
+		}
+		for _, f := range target.Fields {
+			if f.Name == "Field" {
+				t.Errorf("Field *[4]int32 should have been skipped (unsupported), but was emitted as %+v", f)
+			}
+		}
+	})
+
+	t.Run("pointer-to-pointer-to-struct", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		testCode := `package testpkg
+
+type Inner struct {
+	X int32
+}
+
+type BadDoubleStruct struct {
+	Field **Inner
+}
+`
+		if err := os.WriteFile(filepath.Join(tmpDir, "types.go"), []byte(testCode), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module testpkg\n\ngo 1.25.0\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, structs, err := Parse([]string{tmpDir}, []string{"BadDoubleStruct"}, false)
+		if err != nil {
+			t.Fatalf("Parse() unexpected error: %v", err)
+		}
+		var target *StructInfo
+		for i := range structs {
+			if structs[i].Name == "BadDoubleStruct" {
+				target = &structs[i]
+				break
+			}
+		}
+		if target == nil {
+			t.Fatal("BadDoubleStruct not found")
+		}
+		for _, f := range target.Fields {
+			if f.Name == "Field" {
+				t.Errorf("Field **Inner should have been skipped (unsupported), but was emitted as %+v", f)
+			}
+		}
+	})
+}

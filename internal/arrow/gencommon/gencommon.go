@@ -66,6 +66,13 @@ type StructInfo struct {
 	PkgPath   string // import path of the package this struct belongs to
 	PkgName   string // base package name of the package this struct belongs to
 	Qualifier string // qualifier prefix for this struct in generated code (e.g. "mypkg." or "")
+
+	// GoTypeExpr is the fully-qualified Go type expression for generic instantiations
+	// (e.g. "FieldDelta[int32]" or "runtime.FieldDelta[*model.ECI]"). Empty for regular structs.
+	// Populated by ResolveOutputContext; use Qualifier+Name for regular structs.
+	GoTypeExpr string
+
+	instantiatedType *types.Named // non-nil for generic struct instantiations; used by ResolveOutputContext
 }
 
 // ImportInfo describes a single package import in the generated file.
@@ -78,9 +85,12 @@ type ImportInfo struct {
 // structRef identifies a struct to be processed, optionally qualified by package path.
 // When PkgPath is empty (user-specified initial targets), all loaded packages are searched.
 // When PkgPath is set (discovered via field references), only the specified package is searched.
+// When InstantiatedType is set, Name holds the derived identifier and the ref is processed
+// directly via the type checker rather than by searching the AST.
 type structRef struct {
-	PkgPath string
-	Name    string
+	PkgPath          string
+	Name             string
+	InstantiatedType *types.Named // non-nil for generic struct instantiations
 }
 
 // -- package-loading: Load and validate Go packages via golang.org/x/tools/go/packages.
@@ -204,6 +214,50 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 	for len(queue) > 0 {
 		ref := queue[0]
 		queue = queue[1:]
+
+		// Generic instantiation: process directly via the type checker, bypassing AST search.
+		if ref.InstantiatedType != nil {
+			namedT := ref.InstantiatedType
+			pkgPath := namedT.Obj().Pkg().Path()
+			qualName := pkgPath + "." + ref.Name
+			if processed[qualName] {
+				continue
+			}
+			processed[qualName] = true
+
+			pkg := FindPkgByPath(allPkgs, pkgPath)
+			if pkg == nil {
+				if verbose {
+					fmt.Printf("Warning: Package %s not loaded for generic instantiation %s; skipping\n", pkgPath, ref.Name)
+				}
+				continue
+			}
+
+			structT, ok := namedT.Underlying().(*types.Struct)
+			if !ok {
+				continue
+			}
+			info := StructInfo{
+				Name:             ref.Name,
+				PkgPath:          pkgPath,
+				PkgName:          namedT.Obj().Pkg().Name(),
+				instantiatedType: namedT,
+			}
+			for i := 0; i < structT.NumFields(); i++ {
+				f := structT.Field(i)
+				if !f.Exported() {
+					continue
+				}
+				fi, err := fieldInfoFromType(pkg, allPkgs, f.Name(), f.Type(), false, &queue, processed)
+				if err != nil {
+					fmt.Printf("Warning: Skipping field %s in generic instantiation %s: %v\n", f.Name(), ref.Name, err)
+					continue
+				}
+				info.Fields = append(info.Fields, fi)
+			}
+			results = append(results, info)
+			continue
+		}
 
 		// Determine which packages to search. Discovered structs (PkgPath set)
 		// search only their origin package; initial targets search all packages.
@@ -585,10 +639,35 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 		}
 	}
 
+	// Compute GoTypeExpr for generic struct instantiations using the resolved importMap.
+	qualFunc := func(pkg *types.Package) string {
+		if imp, ok := importMap[pkg.Path()]; ok {
+			if imp.Alias != "" {
+				return imp.Alias
+			}
+			return imp.Name
+		}
+		return "" // output package — no qualifier
+	}
+	for i := range structs {
+		si := &structs[i]
+		if si.instantiatedType != nil {
+			si.GoTypeExpr = types.TypeString(si.instantiatedType, qualFunc)
+		}
+	}
+
+	// Build a lookup from derived struct name → GoTypeExpr for generic instances.
+	goTypeExprs := map[string]string{}
+	for _, si := range structs {
+		if si.GoTypeExpr != "" {
+			goTypeExprs[si.Name] = si.GoTypeExpr
+		}
+	}
+
 	// Compute QualifiedGoType on all fields (recursively).
 	for i := range structs {
 		for j := range structs[i].Fields {
-			setQualifiedGoTypes(&structs[i].Fields[j], importMap)
+			setQualifiedGoTypes(&structs[i].Fields[j], importMap, goTypeExprs)
 		}
 	}
 
@@ -703,14 +782,15 @@ func setStructQualifiers(fi *FieldInfo, qualifiers map[string]string) {
 
 // setQualifiedGoTypes recursively computes QualifiedGoType for a FieldInfo
 // and all its children (EltInfo, KeyInfo). It uses the importMap to qualify
-// named non-struct types, and StructQualifier for struct types.
-func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo) {
+// named non-struct types, StructQualifier for regular struct types, and
+// goTypeExprs for generic struct instantiations (e.g. "FieldDelta[int32]").
+func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo, goTypeExprs map[string]string) {
 	// Recurse children first so their QualifiedGoType is available for composition.
 	if fi.EltInfo != nil {
-		setQualifiedGoTypes(fi.EltInfo, importMap)
+		setQualifiedGoTypes(fi.EltInfo, importMap, goTypeExprs)
 	}
 	if fi.KeyInfo != nil {
-		setQualifiedGoTypes(fi.KeyInfo, importMap)
+		setQualifiedGoTypes(fi.KeyInfo, importMap, goTypeExprs)
 	}
 
 	// Named non-struct type with a known package — qualify via importMap.
@@ -732,8 +812,19 @@ func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo) {
 		}
 	}
 
-	// Struct types — use StructQualifier + StructName.
+	// Struct types — use GoTypeExpr for generic instances, StructQualifier+StructName otherwise.
 	if fi.IsStruct {
+		if expr, ok := goTypeExprs[fi.StructName]; ok {
+			// Generic instantiation: use the pre-computed GoTypeExpr.
+			if fi.IsPointer {
+				fi.QualifiedGoType = "*" + expr
+				// ZeroExpr stays "nil" for pointer (already set correctly).
+			} else {
+				fi.QualifiedGoType = expr
+				fi.ZeroExpr = expr + "{}"
+			}
+			return
+		}
 		q := fi.StructQualifier + fi.StructName
 		if fi.IsPointer {
 			q = "*" + q

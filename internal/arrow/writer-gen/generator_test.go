@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.resystems.io/eddt/internal/arrow/gencommon"
 )
 
@@ -118,7 +119,7 @@ type IgnoredStruct struct {
 		},
 	}
 
-	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs); diff != "" {
+	if diff := cmp.Diff([]gencommon.StructInfo{expected}, structs, cmpopts.IgnoreUnexported(gencommon.StructInfo{})); diff != "" {
 		t.Errorf("Parse() struct mismatch (-want +got):\n%s", diff)
 	}
 }
