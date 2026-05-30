@@ -843,6 +843,73 @@ func TestEmitTemplate_CrossPackageQualifier(t *testing.T) {
 	}
 }
 
+// TestEmitTemplate_SameNameAlias_ForcedCrossPackage is a regression test for
+// the "same short name, different import path" bug. When the source package and
+// the output package share a short name (e.g. both "same_name_alias") but the
+// source package is explicitly aliased via --pkg-alias, the generator must treat
+// the output as cross-package: types must be qualified and the import with the
+// alias must appear in the generated file.
+//
+// Before the fix, resolveOutputPkg returned crossPackage=false (names matched),
+// so types were unqualified and the import was absent, causing go vet to fail.
+func TestEmitTemplate_SameNameAlias_ForcedCrossPackage(t *testing.T) {
+	const fixturePath = "./testdata/emit/same_name_alias"
+	const alias = "sna"
+
+	// Discover the fixture's canonical import path so we can supply the alias.
+	pkgs, err := loadPackages([]string{fixturePath}, slog.Default())
+	if err != nil || len(pkgs) == 0 {
+		t.Fatalf("loadPackages: %v", err)
+	}
+	fixturePkgPath := pkgs[0].PkgPath // e.g. go.resystems.io/eddt/internal/deltagen/testdata/emit/same_name_alias
+
+	outPath := filepath.Join(t.TempDir(), "same_name_alias_delta.go")
+	cfg := Config{
+		InputPkgs:          []string{fixturePath},
+		TargetStructs:      []string{"SameNameSnapshot"},
+		OutPath:            outPath,
+		OutPkgNameOverride: "same_name_alias", // same short name as source package
+		PkgAliases:         []string{fixturePkgPath + "=" + alias},
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	// R-DG-037: generated file must be gofmt-clean as written.
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	srcStr := string(src)
+
+	// Import block must include the aliased source package.
+	if !strings.Contains(srcStr, alias+` "`+fixturePkgPath+`"`) {
+		t.Errorf("expected aliased import %q in output; got:\n%s", alias+` "`+fixturePkgPath+`"`, srcStr)
+	}
+
+	// Types from the source package must be qualified with the alias.
+	if !strings.Contains(srcStr, alias+".SameNameSnapshot") {
+		t.Errorf("expected %q qualified Apply/Diff signature; got:\n%s", alias+".SameNameSnapshot", srcStr)
+	}
+
+	// Field type SubStruct also comes from the source package — must be qualified.
+	if !strings.Contains(srcStr, "*"+alias+".SubStruct") {
+		t.Errorf("expected %q field type; got:\n%s", "*"+alias+".SubStruct", srcStr)
+	}
+
+	// No method wrappers in cross-package mode.
+	fset := token.NewFileSet()
+	f, parseErr := parser.ParseFile(fset, outPath, src, 0)
+	if parseErr != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", parseErr, srcStr)
+	}
+	if findMethodDecl(f, "SameNameSnapshot", "Apply") != nil {
+		t.Errorf("Apply method wrapper must not be emitted in cross-package mode")
+	}
+}
+
 // TestEmitTemplate_AtomicApply_CrossPackage verifies Apply emission in
 // cross-package mode: source-package types are qualified in the function
 // signature, and no method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).

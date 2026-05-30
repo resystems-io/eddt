@@ -1,11 +1,12 @@
 package deltagen
 
-// load_test.go exercises the package loading stage (G-02) in four groups:
+// load_test.go exercises the package loading stage (G-02) in five groups:
 //
 //   A. Filesystem path loading  — R-DG-037
 //   B. Import path loading      — R-DG-037, R-DG-037
 //   C. Dependency loading       — validates NeedDeps / NeedImports correctness
 //   D. Helper unit tests        — isFilesystemPath, FindPkgByPath
+//   E. Alias-promoted cross-package — sourceHasExplicitAlias / resolveStage
 //
 // Tests in groups A–C call the package-private loadPackages directly; they do
 // not go through the CLI or generator.Run so that failure messages point
@@ -382,4 +383,161 @@ func TestResolve_MultiPkgInput(t *testing.T) {
 	if !cross {
 		t.Errorf("pkgb-override crossPackage: got false, want true")
 	}
+}
+
+// ── Group E: Alias-promoted cross-package detection ───────────────────────────
+
+// TestSourceHasExplicitAlias exercises the sourceHasExplicitAlias helper
+// across the scenarios that matter for the alias-promoted cross-package fix.
+func TestSourceHasExplicitAlias(t *testing.T) {
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	runtimePath := "go.resystems.io/eddt/runtime"
+
+	cases := []struct {
+		label    string
+		aliases  []string
+		wantTrue bool
+	}{
+		{
+			label:    "empty alias list",
+			aliases:  nil,
+			wantTrue: false,
+		},
+		{
+			label:    "alias for an unknown import path (not in pkgs)",
+			aliases:  []string{"example.com/other/pkg=other"},
+			wantTrue: false,
+		},
+		{
+			label:    "alias for the loaded source package",
+			aliases:  []string{runtimePath + "=eddtrt"},
+			wantTrue: true,
+		},
+		{
+			label:    "alias for source package among multiple aliases",
+			aliases:  []string{"example.com/a=a", runtimePath + "=eddtrt", "example.com/b=b"},
+			wantTrue: true,
+		},
+		{
+			label:    "malformed alias entry (no = separator) — skipped",
+			aliases:  []string{"malformed-no-equals"},
+			wantTrue: false,
+		},
+		{
+			label:    "malformed alias with empty key part",
+			aliases:  []string{"=alias"},
+			wantTrue: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			got := sourceHasExplicitAlias(pkgs, tc.aliases)
+			if got != tc.wantTrue {
+				t.Errorf("sourceHasExplicitAlias = %v, want %v", got, tc.wantTrue)
+			}
+		})
+	}
+}
+
+// TestResolve_SameNameAlias_ForcedCrossPackage verifies the alias-promoted
+// cross-package detection end-to-end through resolveStage. When the output
+// package name matches the source package name (normally → crossPackage=false),
+// an explicit alias for the source package must force crossPackage=true.
+func TestResolve_SameNameAlias_ForcedCrossPackage(t *testing.T) {
+	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+
+	// Baseline: same name, no alias → crossPackage remains false.
+	g1 := &Generator{OutPkgNameOverride: "runtime"}
+	g1.resolveStage(pkgs)
+	if g1.CrossPackage {
+		t.Error("baseline (no alias): expected CrossPackage=false, got true")
+	}
+	if g1.OutPkgName != "runtime" {
+		t.Errorf("baseline OutPkgName: got %q, want %q", g1.OutPkgName, "runtime")
+	}
+
+	// With alias for source package: same name but aliased → crossPackage=true.
+	g2 := &Generator{
+		OutPkgNameOverride: "runtime",
+		PkgAliases:         []string{"go.resystems.io/eddt/runtime=eddtrt"},
+	}
+	g2.resolveStage(pkgs)
+	if !g2.CrossPackage {
+		t.Error("with source alias: expected CrossPackage=true, got false")
+	}
+	if g2.OutPkgName != "runtime" {
+		t.Errorf("alias case OutPkgName: got %q, want %q", g2.OutPkgName, "runtime")
+	}
+
+	// Alias for an unrelated package: no promotion.
+	g3 := &Generator{
+		OutPkgNameOverride: "runtime",
+		PkgAliases:         []string{"example.com/unrelated=other"},
+	}
+	g3.resolveStage(pkgs)
+	if g3.CrossPackage {
+		t.Error("unrelated alias: expected CrossPackage=false, got true")
+	}
+
+	// Different name (already cross-package): alias irrelevant.
+	g4 := &Generator{
+		OutPkgNameOverride: "deltas",
+		PkgAliases:         []string{"go.resystems.io/eddt/runtime=eddtrt"},
+	}
+	g4.resolveStage(pkgs)
+	if !g4.CrossPackage {
+		t.Error("different name + alias: expected CrossPackage=true, got false")
+	}
+}
+
+// TestResolve_SameNameAlias_OnlySourcePackageChecked verifies that only pkgs[0]
+// (the primary source package) is considered for alias-promoted cross-package
+// detection. Aliases on secondary packages (dependency resolution helpers) must
+// not trigger the promotion.
+func TestResolve_SameNameAlias_OnlySourcePackageChecked(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	writeTempModule(t, dirA, "pkga", "package pkga\n")
+	writeTempModule(t, dirB, "pkgb", "package pkgb\n")
+
+	pkgs, err := loadPackages([]string{dirA, dirB}, slog.Default())
+	if err != nil {
+		t.Fatalf("loadPackages: %v", err)
+	}
+	if len(pkgs) < 2 {
+		t.Fatalf("expected 2 packages, got %d", len(pkgs))
+	}
+
+	// pkgs[0] is pkga (the source); pkgs[1] is pkgb (dependency helper).
+	pkgbPath := pkgs[1].PkgPath
+
+	// Alias for pkgb (non-source): must NOT promote crossPackage when output = "pkga".
+	g := &Generator{
+		OutPkgNameOverride: "pkga",
+		PkgAliases:         []string{pkgbPath + "=pb"},
+	}
+	g.resolveStage(pkgs)
+	if g.CrossPackage {
+		t.Errorf("non-source alias: CrossPackage should be false when only pkgs[1] is aliased; pkgbPath=%q", pkgbPath)
+	}
+
+	// Alias for pkga (source): MUST promote crossPackage even when output = "pkga".
+	pkgaPath := pkgs[0].PkgPath
+	g2 := &Generator{
+		OutPkgNameOverride: "pkga",
+		PkgAliases:         []string{pkgaPath + "=pa"},
+	}
+	g2.resolveStage(pkgs)
+	if !g2.CrossPackage {
+		t.Errorf("source alias: CrossPackage should be true when pkgs[0] is aliased; pkgaPath=%q", pkgaPath)
+	}
+	_ = strings.Contains(pkgbPath, "pkgb") // keep strings import live
 }

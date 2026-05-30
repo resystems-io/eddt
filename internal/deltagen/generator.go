@@ -188,10 +188,22 @@ func (g *Generator) loadStage() ([]*packages.Package, error) {
 }
 
 // resolveStage determines the output package name and cross-package mode.
-// CrossPackage is true when --pkg-name differs from the source package name;
-// downstream stages use it to exclude unexported fields and omit method wrappers.
+// CrossPackage is true when --pkg-name differs from the source package name,
+// OR when any source package has an explicit --pkg-alias entry. The second
+// condition handles the "same short name, different import path" scenario (e.g.
+// source go.example.com/foo/mme and output package both named "mme"), where
+// the alias is definitive evidence that the packages are distinct.
+// Downstream stages use CrossPackage to exclude unexported fields and omit
+// method wrappers.
 func (g *Generator) resolveStage(pkgs []*packages.Package) {
 	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, g.OutPkgNameOverride)
+
+	// Promote to cross-package if any source package has an explicit alias.
+	// sourceHasExplicitAlias is in load.go (same package).
+	if !g.CrossPackage && sourceHasExplicitAlias(pkgs, g.PkgAliases) {
+		g.CrossPackage = true
+	}
+
 	if g.CrossPackage {
 		g.log().Info("cross-package mode", "output_pkg", g.OutPkgName, "source_pkg", pkgs[0].Name)
 	} else {
