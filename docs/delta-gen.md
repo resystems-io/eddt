@@ -648,7 +648,7 @@ companion:
 - **Contract**: the generated code satisfies the round-trip, identity-diff, and
   nil/empty equivalence invariants; chain-integrity validation is delegated to
   the `runtime` package. Full normative requirements are in
-  [delta-gen-spec.md](delta-gen-spec.md).
+  [delta-gen specification](delta-gen-spec.md).
 
 A complete, tested example — source Snapshot, generated Delta, and API usage
 tests — is at [`internal/deltagen/example/pump`][pump-example].
