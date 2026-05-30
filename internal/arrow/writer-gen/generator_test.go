@@ -1616,10 +1616,10 @@ type Event struct {
 // the output directory already declares a schema helper (e.g. NewInnerSchema),
 // the generator suppresses re-declaration of that helper and emits an elision
 // comment block instead. The target struct (Outer) is still fully generated.
-func TestGenerator_ElidesExistingSchemas(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	sourceCode := `package mypkg
+// TestGenerator_SchemaElision covers the three elision scenarios for writer-gen:
+// companion-file elision, no-self-elide on re-generation, and empty-dir baseline.
+func TestGenerator_SchemaElision(t *testing.T) {
+	innerOuterSrc := `package mypkg
 
 type Inner struct {
 	X int32
@@ -1630,134 +1630,102 @@ type Outer struct {
 	Child Inner
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
-		t.Fatalf("write structs.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	// Companion file pre-declares NewInnerSchema, simulating a prior invocation.
-	companion := "package mypkg\n\nfunc NewInnerSchema() interface{} { return nil }\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "companion.go"), []byte(companion), 0644); err != nil {
-		t.Fatalf("write companion.go: %v", err)
-	}
-
-	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, false, nil)
-	if err := g.Run(""); err != nil {
-		t.Fatalf("Run() failed: %v", err)
-	}
-
-	outBytes, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	outStr := string(outBytes)
-
-	if !strings.Contains(outStr, "func NewOuterSchema()") {
-		t.Errorf("expected func NewOuterSchema() in output\n%s", outStr)
-	}
-	if !strings.Contains(outStr, "NewInnerSchema()") {
-		t.Errorf("expected NewInnerSchema() reference in output\n%s", outStr)
-	}
-	if strings.Contains(outStr, "func NewInnerSchema()") {
-		t.Errorf("expected func NewInnerSchema() to be elided, but found a declaration\n%s", outStr)
-	}
-	if !strings.Contains(outStr, "Schema helpers elided") {
-		t.Errorf("expected elision comment block in output\n%s", outStr)
-	}
-	if !strings.Contains(outStr, "companion.go") {
-		t.Errorf("expected elision comment to reference companion.go\n%s", outStr)
-	}
-}
-
-// TestGenerator_RegenerateDoesNotSelfElide verifies that when the output file
-// already exists (prior run), its own declarations do not cause self-elision on re-generation.
-func TestGenerator_RegenerateDoesNotSelfElide(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	sourceCode := `package mypkg
+	targetSrc := `package mypkg
 
 type Target struct {
 	ID int32
 }
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
-		t.Fatalf("write structs.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
+
+	tests := []struct {
+		name           string
+		sourceCode     string
+		targets        []string
+		companion      string // content of companion.go; empty = no companion
+		priorOutput    string // content written to outPath before Run; empty = no prior
+		wantContains   []string
+		wantNotContain []string
+	}{
+		{
+			name:       "elides-companion-schema",
+			sourceCode: innerOuterSrc,
+			targets:    []string{"Outer"},
+			companion:  "package mypkg\n\nfunc NewInnerSchema() interface{} { return nil }\n",
+			wantContains: []string{
+				"func NewOuterSchema()",
+				"NewInnerSchema()", // still referenced
+				"Schema helpers elided",
+				"companion.go",
+			},
+			wantNotContain: []string{
+				"func NewInnerSchema()", // must be elided
+			},
+		},
+		{
+			name:        "no-self-elide-on-regenerate",
+			sourceCode:  targetSrc,
+			targets:     []string{"Target"},
+			priorOutput: "package mypkg\n\nfunc NewTargetSchema() interface{} { return nil }\n",
+			wantContains: []string{
+				"func NewTargetSchema()", // must not be elided
+			},
+			wantNotContain: []string{
+				"Schema helpers elided",
+			},
+		},
+		{
+			name:       "empty-dir-no-elision",
+			sourceCode: innerOuterSrc,
+			targets:    []string{"Outer"},
+			wantContains: []string{
+				"func NewOuterSchema()",
+				"func NewInnerSchema()",
+			},
+			wantNotContain: []string{
+				"Schema helpers elided",
+			},
+		},
 	}
 
-	outPath := filepath.Join(tmpDir, "out_writer.go")
-
-	prior := "package mypkg\n\nfunc NewTargetSchema() interface{} { return nil }\n"
-	if err := os.WriteFile(outPath, []byte(prior), 0644); err != nil {
-		t.Fatalf("write prior output: %v", err)
-	}
-
-	g := NewGenerator([]string{tmpDir}, []string{"Target"}, outPath, false, nil)
-	if err := g.Run(""); err != nil {
-		t.Fatalf("Run() failed: %v", err)
-	}
-
-	outBytes, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	outStr := string(outBytes)
-
-	if !strings.Contains(outStr, "func NewTargetSchema()") {
-		t.Errorf("expected func NewTargetSchema() — output file must not self-elide\n%s", outStr)
-	}
-	if strings.Contains(outStr, "Schema helpers elided") {
-		t.Errorf("expected no elision comment when the only match is in the output file being overwritten\n%s", outStr)
-	}
-}
-
-// TestGenerator_EmptyDirNoElision verifies that when there are no companion .go
-// files in the output directory, all schema helpers are generated normally.
-func TestGenerator_EmptyDirNoElision(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	sourceCode := `package mypkg
-
-type Inner struct {
-	X int32
-}
-
-type Outer struct {
-	ID    int32
-	Child Inner
-}
-`
-	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
-		t.Fatalf("write structs.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-
-	outPath := filepath.Join(tmpDir, "out_writer.go")
-	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, false, nil)
-	if err := g.Run(""); err != nil {
-		t.Fatalf("Run() failed: %v", err)
-	}
-
-	outBytes, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	outStr := string(outBytes)
-
-	if !strings.Contains(outStr, "func NewOuterSchema()") {
-		t.Errorf("expected func NewOuterSchema() in output\n%s", outStr)
-	}
-	if !strings.Contains(outStr, "func NewInnerSchema()") {
-		t.Errorf("expected func NewInnerSchema() — no companion means no elision\n%s", outStr)
-	}
-	if strings.Contains(outStr, "Schema helpers elided") {
-		t.Errorf("expected no elision comment when no companion files present\n%s", outStr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(tt.sourceCode), 0644); err != nil {
+				t.Fatalf("write structs.go: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+				t.Fatalf("write go.mod: %v", err)
+			}
+			if tt.companion != "" {
+				if err := os.WriteFile(filepath.Join(tmpDir, "companion.go"), []byte(tt.companion), 0644); err != nil {
+					t.Fatalf("write companion.go: %v", err)
+				}
+			}
+			outPath := filepath.Join(tmpDir, "out_writer.go")
+			if tt.priorOutput != "" {
+				if err := os.WriteFile(outPath, []byte(tt.priorOutput), 0644); err != nil {
+					t.Fatalf("write prior output: %v", err)
+				}
+			}
+			g := NewGenerator([]string{tmpDir}, tt.targets, outPath, false, nil)
+			if err := g.Run(""); err != nil {
+				t.Fatalf("Run() failed: %v", err)
+			}
+			outBytes, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+			outStr := string(outBytes)
+			for _, want := range tt.wantContains {
+				if !strings.Contains(outStr, want) {
+					t.Errorf("want %q in output, not found\n%s", want, outStr)
+				}
+			}
+			for _, notWant := range tt.wantNotContain {
+				if strings.Contains(outStr, notWant) {
+					t.Errorf("want %q absent from output, but found it\n%s", notWant, outStr)
+				}
+			}
+		})
 	}
 }

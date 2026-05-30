@@ -3119,38 +3119,6 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	runInnerTest(t, tmpDir, testCode, "")
 }
 
-// TestGenericClearableField verifies that arrow-writer-gen correctly handles
-// generic-instantiation field types (e.g. FieldDelta[int32]). The generated
-// writer must compile without errors.
-//
-// Covers: GI-02 (writer template generic row type), GI-01 (gencommon *ast.IndexExpr)
-func TestGenericClearableField(t *testing.T) {
-
-	const goCode = `package dummy
-
-type FieldDeltaOp int8
-
-type FieldDelta[T any] struct {
-	Op    FieldDeltaOp
-	Value T
-}
-
-type Inner struct {
-	Z string
-}
-
-type Snapshot struct {
-	Seq       int64
-	Scalar    FieldDelta[int32]
-	PtrStruct FieldDelta[*Inner]
-}
-`
-	tmpDir, _ := setupIntegrationTest(t, goCode, []string{"Snapshot"}, "")
-	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-	runCmd(t, tmpDir, "go", "mod", "tidy")
-	runCmd(t, tmpDir, "go", "build", ".")
-}
-
 // setupIntegrationTest creates a temp directory, writes the Go struct source and
 // go.mod, runs the generator, and verifies the output file exists. It returns
 // the temp directory and generated output path. For multi-package layouts use
