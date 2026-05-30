@@ -316,7 +316,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 
 	// ── Apply function shape (R-DG-012, R-DG-013) ──────────────────────────────────────────
 
-	applyFn := findFuncDecl(f, "Apply")
+	applyFn := findFuncDecl(f, "ApplyAtomicAllSnapshot")
 	if applyFn == nil {
 		t.Fatalf("Apply function not found in generated file")
 	}
@@ -355,7 +355,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 
 	// ── Diff function shape (R-DG-012, R-DG-013) ───────────────────────────────────────────
 
-	diffFn := findFuncDecl(f, "Diff")
+	diffFn := findFuncDecl(f, "DiffAtomicAllSnapshot")
 	if diffFn == nil {
 		t.Fatalf("Diff function not found in generated file")
 	}
@@ -419,7 +419,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 
 	// ── Coalesce function shape (R-DG-012, R-DG-013) ───────────────────────────────────────
 
-	coalesceFn := findFuncDecl(f, "Coalesce")
+	coalesceFn := findFuncDecl(f, "CoalesceAtomicAllSnapshot")
 	if coalesceFn == nil {
 		t.Fatalf("Coalesce function not found in generated file")
 	}
@@ -436,11 +436,11 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	if !strings.Contains(srcStr, "for _, d := range ds") {
 		t.Errorf("Coalesce body missing for-range loop: for _, d := range ds")
 	}
-	if !strings.Contains(srcStr, "Apply(result, d)") {
+	if !strings.Contains(srcStr, "ApplyAtomicAllSnapshot(result, d)") {
 		t.Errorf("Coalesce body missing Apply(result, d)")
 	}
 
-	if !strings.Contains(srcStr, "return Coalesce(s, ds)") {
+	if !strings.Contains(srcStr, "return CoalesceAtomicAllSnapshot(s, ds)") {
 		t.Errorf("Coalesce method wrapper body missing 'return Coalesce(s, ds)'")
 	}
 
@@ -451,7 +451,7 @@ func TestEmitTemplate_AtomicAll(t *testing.T) {
 	// ── EntityID function shape (R-DG-034) ───────────────────────────────────────
 	// atomic_all has Key string (raw basic) — function emitted, no method.
 
-	entityIDFn := findFuncDecl(f, "EntityID")
+	entityIDFn := findFuncDecl(f, "EntityIDAtomicAllSnapshot")
 	if entityIDFn == nil {
 		t.Fatalf("EntityID function not found in generated file")
 	}
@@ -594,10 +594,10 @@ func TestEmitTemplate_Nested_Map_CrossPkg(t *testing.T) {
 	}
 
 	// Package-level Apply and Diff must exist.
-	if findFuncDecl(f, "Apply") == nil {
+	if findFuncDecl(f, "ApplyNestedMapSnapshot") == nil {
 		t.Errorf("Apply function not found in cross-pkg output")
 	}
-	if findFuncDecl(f, "Diff") == nil {
+	if findFuncDecl(f, "DiffNestedMapSnapshot") == nil {
 		t.Errorf("Diff function not found in cross-pkg output")
 	}
 
@@ -724,10 +724,10 @@ func TestEmitTemplate_Nested_Slice_CrossPkg(t *testing.T) {
 	}
 
 	// Package-level Apply and Diff must exist.
-	if findFuncDecl(f, "Apply") == nil {
+	if findFuncDecl(f, "ApplyNestedSliceSnapshot") == nil {
 		t.Errorf("Apply function not found in cross-pkg output")
 	}
-	if findFuncDecl(f, "Diff") == nil {
+	if findFuncDecl(f, "DiffNestedSliceSnapshot") == nil {
 		t.Errorf("Diff function not found in cross-pkg output")
 	}
 
@@ -910,6 +910,101 @@ func TestEmitTemplate_SameNameAlias_ForcedCrossPackage(t *testing.T) {
 	}
 }
 
+// TestEmitTemplate_MultiStruct_NoConflict verifies that two snapshot types
+// bundled into a single output file via --out compile without function-name
+// conflicts.  Before the struct-prefixed naming fix, Apply/Diff/Coalesce/EntityID
+// would be declared twice — a compile error under Go's flat function namespace.
+func TestEmitTemplate_MultiStruct_NoConflict(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "multi_delta.go")
+	cfg := Config{
+		InputPkgs:     []string{"./testdata/emit/multi_struct"},
+		TargetStructs: []string{"AlphaSnapshot", "BetaSnapshot"},
+		OutPath:       outPath,
+	}
+	if err := New(cfg).Run(); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+	assertGofmtClean(t, outPath)
+
+	src, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	srcStr := string(src)
+
+	// Both struct-prefixed Apply functions must be present.
+	if !strings.Contains(srcStr, "func ApplyAlphaSnapshot(") {
+		t.Error("ApplyAlphaSnapshot not found in multi-struct output")
+	}
+	if !strings.Contains(srcStr, "func ApplyBetaSnapshot(") {
+		t.Error("ApplyBetaSnapshot not found in multi-struct output")
+	}
+	if !strings.Contains(srcStr, "func DiffAlphaSnapshot(") {
+		t.Error("DiffAlphaSnapshot not found in multi-struct output")
+	}
+	if !strings.Contains(srcStr, "func DiffBetaSnapshot(") {
+		t.Error("DiffBetaSnapshot not found in multi-struct output")
+	}
+
+	// The plain flat names must NOT appear as top-level declarations.
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, outPath, src, 0)
+	if err != nil {
+		t.Fatalf("generated file is not valid Go: %v\n--- source ---\n%s", err, srcStr)
+	}
+	if findFuncDecl(f, "Apply") != nil {
+		t.Error("flat 'Apply' function must not be emitted when multiple snapshots are bundled")
+	}
+	if findFuncDecl(f, "Diff") != nil {
+		t.Error("flat 'Diff' function must not be emitted when multiple snapshots are bundled")
+	}
+
+	// Compile-and-run in an isolated module to confirm no Go namespace conflicts.
+	runEmittedInModule(t, runOpts{
+		pkgName:      "multi_struct",
+		fixtureDir:   "./testdata/emit/multi_struct",
+		generatedSrc: src,
+		extraFiles: map[string]string{
+			"apply_test.go": `package multi_struct_test
+
+import (
+	"testing"
+	"time"
+	"multi_struct"
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+func TestMultiStructApply(t *testing.T) {
+	id := eddt.EntityID{1}
+	now := time.Now()
+	a := multi_struct.AlphaSnapshot{}
+	a.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: now}
+	a.Key = "k"
+	v := int32(42)
+	d := multi_struct.AlphaSnapshotDelta{}
+	d.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: now}
+	d.SetValue = &v
+	got, err := multi_struct.ApplyAlphaSnapshot(a, d)
+	if err != nil { t.Fatal(err) }
+	if got.Value != 42 { t.Errorf("Value: got %d, want 42", got.Value) }
+
+	b := multi_struct.BetaSnapshot{}
+	b.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 1, EffectiveAt: now}
+	b.Key = "k"
+	s := float32(3.14)
+	db := multi_struct.BetaSnapshotDelta{}
+	db.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: now}
+	db.SetScore = &s
+	gotB, err := multi_struct.ApplyBetaSnapshot(b, db)
+	if err != nil { t.Fatal(err) }
+	if gotB.Score != 3.14 { t.Errorf("Score: got %f, want 3.14", gotB.Score) }
+}
+`,
+		},
+		runArgs: []string{"./..."},
+	})
+}
+
 // TestEmitTemplate_AtomicApply_CrossPackage verifies Apply emission in
 // cross-package mode: source-package types are qualified in the function
 // signature, and no method wrapper is emitted (R-DG-012, R-DG-013, R-DG-019).
@@ -943,7 +1038,7 @@ func TestEmitTemplate_AtomicApply_CrossPackage(t *testing.T) {
 	}
 
 	// Apply must be present as a package-level function.
-	if findFuncDecl(f, "Apply") == nil {
+	if findFuncDecl(f, "ApplyCrossPkgSnapshot") == nil {
 		t.Fatalf("Apply function not found in generated file")
 	}
 
@@ -991,7 +1086,7 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 	}
 
 	// Diff must be present as a package-level function.
-	if findFuncDecl(f, "Diff") == nil {
+	if findFuncDecl(f, "DiffCrossPkgSnapshot") == nil {
 		t.Fatalf("Diff function not found in generated file")
 	}
 
@@ -1000,7 +1095,7 @@ func TestEmitTemplate_AtomicDiff_CrossPackage(t *testing.T) {
 		t.Errorf("expected 'model.CrossPkgSnapshot' in Diff signature, got:\n%s", srcStr)
 	}
 	// Diff(a, b T) (TDelta, error) — both params use the qualified type.
-	if !strings.Contains(srcStr, "func Diff(a, b model.CrossPkgSnapshot)") {
+	if !strings.Contains(srcStr, "func DiffCrossPkgSnapshot(a, b model.CrossPkgSnapshot)") {
 		t.Errorf("expected 'func Diff(a, b model.CrossPkgSnapshot)' in generated file, got:\n%s", srcStr)
 	}
 
@@ -1049,12 +1144,12 @@ func TestEmitTemplate_AtomicCoalesce_CrossPackage(t *testing.T) {
 	}
 
 	// Coalesce must be present as a package-level function.
-	if findFuncDecl(f, "Coalesce") == nil {
+	if findFuncDecl(f, "CoalesceCrossPkgSnapshot") == nil {
 		t.Fatalf("Coalesce function not found in generated file")
 	}
 
 	// Signature must qualify source-package types for both parameter and return (R-DG-012, R-DG-013, R-DG-019).
-	if !strings.Contains(srcStr, "func Coalesce(s model.CrossPkgSnapshot, ds []CrossPkgSnapshotDelta) (model.CrossPkgSnapshot, error)") {
+	if !strings.Contains(srcStr, "func CoalesceCrossPkgSnapshot(s model.CrossPkgSnapshot, ds []CrossPkgSnapshotDelta) (model.CrossPkgSnapshot, error)") {
 		t.Errorf("expected qualified Coalesce signature, got:\n%s", srcStr)
 	}
 
@@ -1093,7 +1188,7 @@ func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
 	}
 
 	// EntityID function must exist with one param and one result.
-	entityIDFn := findFuncDecl(f, "EntityID")
+	entityIDFn := findFuncDecl(f, "EntityIDEntityIDNamedPrimSnapshot")
 	if entityIDFn == nil {
 		t.Fatalf("EntityID function not found")
 	}
@@ -1110,7 +1205,7 @@ func TestEmitTemplate_NamedPrimitive_KeyMethodEmitted(t *testing.T) {
 	if findMethodDecl(f, "IMSI", "EntityID") == nil {
 		t.Errorf("EntityID method wrapper not found (expected for named-primitive key IMSI)")
 	}
-	if !strings.Contains(srcStr, "return EntityID(k)") {
+	if !strings.Contains(srcStr, "return EntityIDEntityIDNamedPrimSnapshot(k)") {
 		t.Errorf("EntityID method wrapper body missing 'return EntityID(k)'")
 	}
 }
@@ -1144,7 +1239,7 @@ func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 	}
 
 	// EntityID function: func EntityID(k SomeKey) runtime.EntityID.
-	entityIDFn := findFuncDecl(f, "EntityID")
+	entityIDFn := findFuncDecl(f, "EntityIDEntityIDStructKeySnapshot")
 	if entityIDFn == nil {
 		t.Fatalf("EntityID function not found")
 	}
@@ -1170,7 +1265,7 @@ func TestEmitTemplate_StructKey_SamePkg(t *testing.T) {
 	if findMethodDecl(f, "SomeKey", "EntityID") == nil {
 		t.Errorf("EntityID method wrapper not found (expected for named-struct key SomeKey)")
 	}
-	if !strings.Contains(srcStr, "return EntityID(k)") {
+	if !strings.Contains(srcStr, "return EntityIDEntityIDStructKeySnapshot(k)") {
 		t.Errorf("EntityID method body missing 'return EntityID(k)'")
 	}
 
@@ -1203,7 +1298,7 @@ func TestEmitTemplate_StructKey_FieldOrderStability(t *testing.T) {
 		}
 		// Extract the EntityID function body (between the opening and closing braces).
 		srcStr := string(src)
-		start := strings.Index(srcStr, "func EntityID(")
+		start := strings.Index(srcStr, "func EntityID")
 		if start < 0 {
 			t.Fatalf("EntityID function not found in output for %s", structName)
 		}
@@ -1304,10 +1399,10 @@ func TestEmitTemplate_EntityID_CrossPackage(t *testing.T) {
 	}
 
 	// EntityID function must be present with qualified parameter type.
-	if findFuncDecl(f, "EntityID") == nil {
+	if findFuncDecl(f, "EntityIDCrossPkgSnapshot") == nil {
 		t.Fatalf("EntityID function not found in cross-package generated file")
 	}
-	if !strings.Contains(srcStr, "func EntityID(k model.ModelKey) runtime.EntityID") {
+	if !strings.Contains(srcStr, "func EntityIDCrossPkgSnapshot(k model.ModelKey) runtime.EntityID") {
 		t.Errorf("expected qualified 'func EntityID(k model.ModelKey) runtime.EntityID', got:\n%s", srcStr)
 	}
 
@@ -1638,7 +1733,7 @@ func TestApplyRoundTrip(t *testing.T) {
 	d.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: now}
 	d.SetScalar = &newScalar
 
-	result, err := atomic_all.Apply(s, d)
+	result, err := s.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -1673,7 +1768,7 @@ func TestApplyHeaderValidationError(t *testing.T) {
 	var d atomic_all.AtomicAllSnapshotDelta
 	// d.Sequence == s.Sequence violates strict monotonicity.
 	d.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: now}
-	_, err := atomic_all.Apply(s, d)
+	_, err := s.Apply(d)
 	if err == nil {
 		t.Fatal("Apply: want error for non-monotone Sequence, got nil")
 	}
@@ -1730,12 +1825,12 @@ func TestDiffApplyRoundTrip(t *testing.T) {
 	a := makeSnap(id, 1, t1, 1)
 	b := makeSnap(id, 2, t2, 2)
 
-	delta, err := atomic_all.Diff(a, b)
+	delta, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 
-	result, err := atomic_all.Apply(a, delta)
+	result, err := a.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply(a, Diff(a,b)): %v", err)
 	}
@@ -1782,7 +1877,7 @@ func TestDiffIdentity(t *testing.T) {
 	now := time.Now()
 	a := makeSnap(id, 1, now, 5)
 
-	delta, err := atomic_all.Diff(a, a)
+	delta, err := a.Diff(a)
 	if err != nil {
 		t.Fatalf("Diff(a, a): %v", err)
 	}
@@ -1824,7 +1919,7 @@ func TestDiffPartial(t *testing.T) {
 	c.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: t2}
 	c.Scalar = a.Scalar + 100
 
-	delta, err := atomic_all.Diff(a, c)
+	delta, err := a.Diff(c)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -1862,7 +1957,7 @@ func TestDiffHeaderForDiffError(t *testing.T) {
 	a := makeSnap(id1, 1, now, 1)
 	b := makeSnap(id2, 2, now.Add(time.Second), 2) // different EntityID
 
-	_, err := atomic_all.Diff(a, b)
+	_, err := a.Diff(b)
 	if err == nil {
 		t.Fatal("Diff: want error for mismatched EntityID, got nil")
 	}
@@ -1891,12 +1986,12 @@ func TestDiffApplyRoundTrip_FromZero(t *testing.T) {
 
 	x := makeSnap(id, 2, t2, 3)
 
-	delta, err := atomic_all.Diff(zero, x)
+	delta, err := zero.Diff(x)
 	if err != nil {
 		t.Fatalf("Diff(zero, x): %v", err)
 	}
 
-	result, err := atomic_all.Apply(zero, delta)
+	result, err := zero.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply(zero, Diff(zero, x)): %v", err)
 	}
@@ -1944,7 +2039,7 @@ func TestDiffPointerMinimality(t *testing.T) {
 	b1 := base(2, t2)
 	a1.Pointer = makePtr("hello")
 	b1.Pointer = makePtr("hello") // different allocation, same content
-	d1, err := atomic_all.Diff(a1, b1)
+	d1, err := a1.Diff(b1)
 	if err != nil {
 		t.Fatalf("case1 Diff: %v", err)
 	}
@@ -1957,7 +2052,7 @@ func TestDiffPointerMinimality(t *testing.T) {
 	b2 := base(2, t2)
 	a2.Pointer = makePtr("hello")
 	b2.Pointer = makePtr("world")
-	d2, err := atomic_all.Diff(a2, b2)
+	d2, err := a2.Diff(b2)
 	if err != nil {
 		t.Fatalf("case2 Diff: %v", err)
 	}
@@ -1969,7 +2064,7 @@ func TestDiffPointerMinimality(t *testing.T) {
 	a3 := base(1, t1)
 	b3 := base(2, t2)
 	b3.Pointer = makePtr("hello")
-	d3, err := atomic_all.Diff(a3, b3)
+	d3, err := a3.Diff(b3)
 	if err != nil {
 		t.Fatalf("case3 Diff: %v", err)
 	}
@@ -1981,7 +2076,7 @@ func TestDiffPointerMinimality(t *testing.T) {
 	a4 := base(1, t1)
 	b4 := base(2, t2)
 	a4.Pointer = makePtr("hello")
-	d4, err := atomic_all.Diff(a4, b4)
+	d4, err := a4.Diff(b4)
 	if err != nil {
 		t.Fatalf("case4 Diff: %v", err)
 	}
@@ -2014,7 +2109,7 @@ func TestCoalesceEmpty(t *testing.T) {
 	s := makeSnap(id, 1, time.Now(), 5)
 
 	// nil slice
-	got, err := atomic_all.Coalesce(s, nil)
+	got, err := s.Coalesce(nil)
 	if err != nil {
 		t.Fatalf("Coalesce(s, nil): unexpected error: %v", err)
 	}
@@ -2023,7 +2118,7 @@ func TestCoalesceEmpty(t *testing.T) {
 	}
 
 	// empty non-nil slice
-	got2, err2 := atomic_all.Coalesce(s, []atomic_all.AtomicAllSnapshotDelta{})
+	got2, err2 := s.Coalesce([]atomic_all.AtomicAllSnapshotDelta{})
 	if err2 != nil {
 		t.Fatalf("Coalesce(s, []): unexpected error: %v", err2)
 	}
@@ -2042,17 +2137,17 @@ func TestCoalesceSingleDelta_EqualsApply(t *testing.T) {
 	a := makeSnap(id, 1, t1, 1)
 	b := makeSnap(id, 2, t2, 2)
 
-	d, err := atomic_all.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 
-	viaCoalesce, err := atomic_all.Coalesce(a, []atomic_all.AtomicAllSnapshotDelta{d})
+	viaCoalesce, err := a.Coalesce([]atomic_all.AtomicAllSnapshotDelta{d})
 	if err != nil {
 		t.Fatalf("Coalesce: %v", err)
 	}
 
-	viaApply, err := atomic_all.Apply(a, d)
+	viaApply, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -2100,7 +2195,7 @@ func TestCoalesceMultiStep_ProgressionOfChanges(t *testing.T) {
 
 	computeDiff := func(a, b atomic_all.AtomicAllSnapshot) atomic_all.AtomicAllSnapshotDelta {
 		t.Helper()
-		d, err := atomic_all.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -2115,7 +2210,7 @@ func TestCoalesceMultiStep_ProgressionOfChanges(t *testing.T) {
 		computeDiff(s5, s6),
 	}
 
-	result, err := atomic_all.Coalesce(s1, ds)
+	result, err := s1.Coalesce(ds)
 	if err != nil {
 		t.Fatalf("Coalesce: %v", err)
 	}
@@ -2167,7 +2262,7 @@ func TestCoalesceNoOpPayload(t *testing.T) {
 	y := x
 	y.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 2, EffectiveAt: t2}
 
-	noop, err := atomic_all.Diff(y, y)
+	noop, err := y.Diff(y)
 	if err != nil {
 		t.Fatalf("Diff(y,y): %v", err)
 	}
@@ -2177,7 +2272,7 @@ func TestCoalesceNoOpPayload(t *testing.T) {
 		t.Error("Diff(y,y): expected all Set* nil (identity-diff)")
 	}
 
-	result, err := atomic_all.Coalesce(x, []atomic_all.AtomicAllSnapshotDelta{noop})
+	result, err := x.Coalesce([]atomic_all.AtomicAllSnapshotDelta{noop})
 	if err != nil {
 		t.Fatalf("Coalesce(x,[Diff(y,y)]): %v", err)
 	}
@@ -2223,7 +2318,7 @@ func TestCoalesceAssociativity(t *testing.T) {
 
 	ds := make([]atomic_all.AtomicAllSnapshotDelta, 5)
 	for i := range ds {
-		d, err := atomic_all.Diff(snaps[i], snaps[i+1])
+		d, err := snaps[i].Diff(snaps[i+1])
 		if err != nil {
 			t.Fatalf("Diff(snaps[%d], snaps[%d]): %v", i, i+1, err)
 		}
@@ -2231,17 +2326,17 @@ func TestCoalesceAssociativity(t *testing.T) {
 	}
 
 	// Full fold: Coalesce(snaps[0], ds[0..4]).
-	full, err := atomic_all.Coalesce(snaps[0], ds)
+	full, err := snaps[0].Coalesce(ds)
 	if err != nil {
 		t.Fatalf("Coalesce(full): %v", err)
 	}
 
 	// Chunked fold: first two deltas, then last three.
-	mid, err := atomic_all.Coalesce(snaps[0], ds[:2])
+	mid, err := snaps[0].Coalesce(ds[:2])
 	if err != nil {
 		t.Fatalf("Coalesce(first 2): %v", err)
 	}
-	full2, err := atomic_all.Coalesce(mid, ds[2:])
+	full2, err := mid.Coalesce(ds[2:])
 	if err != nil {
 		t.Fatalf("Coalesce(last 3): %v", err)
 	}
@@ -2265,7 +2360,7 @@ func TestCoalesceErrorAtFirst(t *testing.T) {
 	var bad atomic_all.AtomicAllSnapshotDelta
 	bad.Header = eddt.Header{EntityID: otherId, ChainID: "c", Sequence: 2, EffectiveAt: t1.Add(time.Second)}
 
-	result, err := atomic_all.Coalesce(s, []atomic_all.AtomicAllSnapshotDelta{bad})
+	result, err := s.Coalesce([]atomic_all.AtomicAllSnapshotDelta{bad})
 	if err == nil {
 		t.Fatal("expected error for mismatched EntityID, got nil")
 	}
@@ -2292,7 +2387,7 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 
 	s1 := makeSnap(id, 1, tick(1), 1)
 	s2 := makeSnap(id, 2, tick(2), 2)
-	d1, err := atomic_all.Diff(s1, s2)
+	d1, err := s1.Diff(s2)
 	if err != nil {
 		t.Fatalf("Diff(s1,s2): %v", err)
 	}
@@ -2305,7 +2400,7 @@ func TestCoalesceErrorMidFold(t *testing.T) {
 	var d3 atomic_all.AtomicAllSnapshotDelta
 	d3.Header = eddt.Header{EntityID: id, ChainID: "c", Sequence: 5, EffectiveAt: tick(5)}
 
-	result, err := atomic_all.Coalesce(s1, []atomic_all.AtomicAllSnapshotDelta{d1, bad, d3})
+	result, err := s1.Coalesce([]atomic_all.AtomicAllSnapshotDelta{d1, bad, d3})
 	if err == nil {
 		t.Fatal("expected error for sequence regression, got nil")
 	}
@@ -2333,9 +2428,9 @@ import (
 // the same input across 100 calls.
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_Determinism(t *testing.T) {
-	want := atomic_all.EntityID("ABC")
+	want := atomic_all.EntityIDAtomicAllSnapshot("ABC")
 	for i := 0; i < 100; i++ {
-		if atomic_all.EntityID("ABC") != want {
+		if atomic_all.EntityIDAtomicAllSnapshot("ABC") != want {
 			t.Fatalf("EntityID not deterministic on call %d", i)
 		}
 	}
@@ -2347,11 +2442,11 @@ func TestEntityID_Determinism(t *testing.T) {
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_DistinctOnDifferentInput(t *testing.T) {
 	ids := []eddt.EntityID{
-		atomic_all.EntityID(""),
-		atomic_all.EntityID("A"),
-		atomic_all.EntityID("B"),
-		atomic_all.EntityID("AB"),
-		atomic_all.EntityID("BA"),
+		atomic_all.EntityIDAtomicAllSnapshot(""),
+		atomic_all.EntityIDAtomicAllSnapshot("A"),
+		atomic_all.EntityIDAtomicAllSnapshot("B"),
+		atomic_all.EntityIDAtomicAllSnapshot("AB"),
+		atomic_all.EntityIDAtomicAllSnapshot("BA"),
 	}
 	for i := range ids {
 		for j := i + 1; j < len(ids); j++ {
@@ -2367,7 +2462,7 @@ func TestEntityID_DistinctOnDifferentInput(t *testing.T) {
 // of "" is not all-zero, so the zero-key hash is not a sentinel value.
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_ZeroValueIsNonZero(t *testing.T) {
-	id := atomic_all.EntityID("")
+	id := atomic_all.EntityIDAtomicAllSnapshot("")
 	if id.IsZero() {
 		t.Error("EntityID(\"\") must not be zero; zero EntityID is not a sentinel for unset keys")
 	}
@@ -2386,7 +2481,7 @@ func TestEntityID_GoldenBytes(t *testing.T) {
 	eddt.WriteString(h, "hello")
 	expected := eddt.Finalise(h)
 
-	got := atomic_all.EntityID("hello")
+	got := atomic_all.EntityIDAtomicAllSnapshot("hello")
 	if got != expected {
 		t.Errorf("EntityID(\"hello\") = %x, want %x", got, expected)
 	}
@@ -2447,7 +2542,7 @@ import (
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_Method(t *testing.T) {
 	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 42}
-	id1 := entityid_struct_key.EntityID(k)
+	id1 := entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k)
 	id2 := k.EntityID()
 	if id1 != id2 {
 		t.Errorf("method and function forms diverge: %x vs %x", id1, id2)
@@ -2465,10 +2560,10 @@ func TestEntityID_StructKey_DistinctFields(t *testing.T) {
 	diffIMSI := entityid_struct_key.SomeKey{IMSI: "B", SubID: 0}
 	diffSubID := entityid_struct_key.SomeKey{IMSI: "A", SubID: 1}
 
-	if entityid_struct_key.EntityID(base) == entityid_struct_key.EntityID(diffIMSI) {
+	if entityid_struct_key.EntityIDEntityIDStructKeySnapshot(base) == entityid_struct_key.EntityIDEntityIDStructKeySnapshot(diffIMSI) {
 		t.Error("changing IMSI should produce a different EntityID")
 	}
-	if entityid_struct_key.EntityID(base) == entityid_struct_key.EntityID(diffSubID) {
+	if entityid_struct_key.EntityIDEntityIDStructKeySnapshot(base) == entityid_struct_key.EntityIDEntityIDStructKeySnapshot(diffSubID) {
 		t.Error("changing SubID should produce a different EntityID")
 	}
 }
@@ -2483,7 +2578,7 @@ func TestEntityID_StructKey_LengthPrefixPreventsConcatCollision(t *testing.T) {
 	// With the 8-byte length prefix the byte streams differ unambiguously.
 	k1 := entityid_struct_key.SomeKey{IMSI: "AB", SubID: 0}
 	k2 := entityid_struct_key.SomeKey{IMSI: "A", SubID: 0x42}
-	if entityid_struct_key.EntityID(k1) == entityid_struct_key.EntityID(k2) {
+	if entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k1) == entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k2) {
 		t.Error("length-prefix collision: distinct keys produced the same EntityID")
 	}
 }
@@ -2493,9 +2588,9 @@ func TestEntityID_StructKey_LengthPrefixPreventsConcatCollision(t *testing.T) {
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_StructKey_Determinism(t *testing.T) {
 	k := entityid_struct_key.SomeKey{IMSI: "310260000000001", SubID: 7}
-	want := entityid_struct_key.EntityID(k)
+	want := entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k)
 	for i := 0; i < 100; i++ {
-		if entityid_struct_key.EntityID(k) != want {
+		if entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k) != want {
 			t.Fatalf("EntityID not deterministic on call %d", i)
 		}
 	}
@@ -2512,7 +2607,7 @@ func TestEntityID_StructKey_GoldenBytes(t *testing.T) {
 	eddt.WriteUint64(h, 42)
 	expected := eddt.Finalise(h)
 
-	got := entityid_struct_key.EntityID(k)
+	got := entityid_struct_key.EntityIDEntityIDStructKeySnapshot(k)
 	if got != expected {
 		t.Errorf("EntityID struct golden: got %x, want %x", got, expected)
 	}
@@ -2568,7 +2663,7 @@ import (
 // Covers: R-DG-012, R-DG-014
 func TestEntityID_ReversedKey_Method(t *testing.T) {
 	k := entityid_struct_key_reversed.ReversedKey{IMSI: "310260000000001", SubID: 42}
-	id1 := entityid_struct_key_reversed.EntityID(k)
+	id1 := entityid_struct_key_reversed.EntityIDEntityIDReversedKeySnapshot(k)
 	id2 := k.EntityID()
 	if id1 != id2 {
 		t.Errorf("method and function forms diverge: %x vs %x", id1, id2)
@@ -2591,7 +2686,7 @@ func TestEntityID_FieldOrderStabilityGolden(t *testing.T) {
 	eddt.WriteUint64(h, 42)      // SubID
 	expected := eddt.Finalise(h)
 
-	got := entityid_struct_key_reversed.EntityID(k)
+	got := entityid_struct_key_reversed.EntityIDEntityIDReversedKeySnapshot(k)
 	if got != expected {
 		t.Errorf("field-order stability: got %x, want %x", got, expected)
 	}
@@ -3060,7 +3155,7 @@ func TestNested_Apply_ChangesNestedField(t *testing.T) {
 	d.Header = eddt.Header{EntityID: id1(), ChainID: "c", Sequence: 2, EffectiveAt: time.Now()}
 	d.Sub = innerD
 
-	result, err := nested_struct.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -3080,11 +3175,11 @@ func TestNested_Diff_RoundTrip(t *testing.T) {
 	a := makeSnap(1, 0)
 	b := makeSnap(2, 1)
 
-	delta, err := nested_struct.Diff(a, b)
+	delta, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	result, err := nested_struct.Apply(a, delta)
+	result, err := a.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply(a, Diff(a,b)): %v", err)
 	}
@@ -3107,7 +3202,7 @@ func TestNested_Diff_Minimal(t *testing.T) {
 	b.Header.Sequence = 2
 	b.Sub.X = 77 // only X changes
 
-	delta, err := nested_struct.Diff(a, b)
+	delta, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -3142,7 +3237,7 @@ func TestNested_Coalesce_Root_Works(t *testing.T) {
 		mkDelta(4, nil, &y),
 	}
 
-	result, err := nested_struct.Coalesce(a, ds)
+	result, err := a.Coalesce(ds)
 	if err != nil {
 		t.Fatalf("Coalesce: %v", err)
 	}
@@ -3215,11 +3310,11 @@ func TestDeep_RoundTrip(t *testing.T) {
 	b.Inner = nested_deep.Level1{Count: 7, Sub: nested_deep.Level2{Val: 42}}
 	b.Name = "after"
 
-	delta, err := nested_deep.Diff(a, b)
+	delta, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	result, err := nested_deep.Apply(a, delta)
+	result, err := a.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -3307,11 +3402,11 @@ func TestTriple_RoundTrip(t *testing.T) {
 	}
 	b.Name = "after"
 
-	delta, err := nested_triple.Diff(a, b)
+	delta, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	result, err := nested_triple.Apply(a, delta)
+	result, err := a.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -3396,13 +3491,13 @@ func TestMap_AddEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
 
-	d, err := nested_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if d.UpdatedTags == nil { t.Fatal("UpdatedTags must not be nil when entry added") }
 	if d.UpdatedTags["y"] != "2" { t.Errorf("UpdatedTags[y]: got %q want %q", d.UpdatedTags["y"], "2") }
 	if len(d.RemovedTags) != 0 { t.Errorf("RemovedTags must be empty for add-only delta; got %v", d.RemovedTags) }
 
-	result, err := nested_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if result.Tags["y"] != "2" { t.Errorf("Apply: Tags[y]: got %q want %q", result.Tags["y"], "2") }
 	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
@@ -3413,14 +3508,14 @@ func TestMap_RemoveEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "1"}}
 
-	d, err := nested_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.RemovedTags) != 1 || d.RemovedTags[0] != "y" {
 		t.Errorf("RemovedTags: got %v want [y]", d.RemovedTags)
 	}
 	if d.UpdatedTags != nil { t.Errorf("UpdatedTags must be nil for remove-only delta; got %v", d.UpdatedTags) }
 
-	result, err := nested_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if _, ok := result.Tags["y"]; ok { t.Error("Apply: key y must have been removed") }
 	if result.Tags["x"] != "1" { t.Errorf("Apply: Tags[x] must be preserved; got %q", result.Tags["x"]) }
@@ -3431,7 +3526,7 @@ func TestMap_UpdateEntry(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: map[string]string{"x": "old"}}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: map[string]string{"x": "new"}}
 
-	d, err := nested_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if d.UpdatedTags == nil || d.UpdatedTags["x"] != "new" {
 		t.Errorf("UpdatedTags must have x=new; got %v", d.UpdatedTags)
@@ -3466,10 +3561,10 @@ func TestMap_RoundTrip(t *testing.T) {
 		Count: 5,
 	}
 
-	d, err := nested_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 
-	result, err := nested_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 
 	// Tags round-trip.
@@ -3488,7 +3583,7 @@ func TestMap_AtomicCoexistence(t *testing.T) {
 	a := nested_map.NestedMapSnapshot{Header: header(1), Key: "k", Tags: tags, Count: 1}
 	b := nested_map.NestedMapSnapshot{Header: header(2), Key: "k", Tags: tags, Count: 2}
 
-	d, err := nested_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if d.SetCount == nil { t.Error("SetCount must be non-nil when Count changed") }
 	if *d.SetCount != 2 { t.Errorf("SetCount: got %d want 2", *d.SetCount) }
@@ -3572,14 +3667,14 @@ func TestSlice_AddElements(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x", "y"}}
 
-	d, err := nested_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.AddedNames) != 1 || d.AddedNames[0] != "y" {
 		t.Errorf("AddedNames: got %v want [y]", d.AddedNames)
 	}
 	if len(d.RemovedNames) != 0 { t.Errorf("RemovedNames must be empty for add-only delta; got %v", d.RemovedNames) }
 
-	result, err := nested_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if !reflect.DeepEqual(sortedStrings(result.Names), []string{"x", "y"}) {
 		t.Errorf("Apply: Names: got %v want [x y]", result.Names)
@@ -3591,14 +3686,14 @@ func TestSlice_RemoveElements(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"x", "y"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"x"}}
 
-	d, err := nested_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.RemovedNames) != 1 || d.RemovedNames[0] != "y" {
 		t.Errorf("RemovedNames: got %v want [y]", d.RemovedNames)
 	}
 	if len(d.AddedNames) != 0 { t.Errorf("AddedNames must be empty for remove-only delta; got %v", d.AddedNames) }
 
-	result, err := nested_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if !reflect.DeepEqual(result.Names, []string{"x"}) {
 		t.Errorf("Apply: Names: got %v want [x]", result.Names)
@@ -3610,7 +3705,7 @@ func TestSlice_AddAndRemove(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: []string{"keep", "drop"}}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: []string{"keep", "new"}}
 
-	d, err := nested_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.AddedNames) != 1 || d.AddedNames[0] != "new" {
 		t.Errorf("AddedNames: got %v want [new]", d.AddedNames)
@@ -3636,10 +3731,10 @@ func TestSlice_RoundTrip(t *testing.T) {
 		Count: 5,
 	}
 
-	d, err := nested_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 
-	result, err := nested_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 
 	// Names round-trip (order: survivors in source order, additions appended).
@@ -3660,7 +3755,7 @@ func TestSlice_AtomicCoexistence(t *testing.T) {
 	a := nested_slice.NestedSliceSnapshot{Header: hdr(1), Key: "k", Names: names, Count: 1}
 	b := nested_slice.NestedSliceSnapshot{Header: hdr(2), Key: "k", Names: names, Count: 2}
 
-	d, err := nested_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if d.SetCount == nil { t.Error("SetCount must be non-nil when Count changed") }
 	if *d.SetCount != 2 { t.Errorf("SetCount: got %d want 2", *d.SetCount) }
@@ -3726,14 +3821,14 @@ func TestReflect_AddBlob(t *testing.T) {
 	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{b1}}
 	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{b1, b2}}
 
-	d, err := nested_slice_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.AddedBlobs) != 1 || !reflect.DeepEqual(d.AddedBlobs[0], b2) {
 		t.Errorf("AddedBlobs: got %v want [%v]", d.AddedBlobs, b2)
 	}
 	if len(d.RemovedBlobs) != 0 { t.Errorf("RemovedBlobs must be empty; got %v", d.RemovedBlobs) }
 
-	result, err := nested_slice_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if !reflect.DeepEqual(result.Blobs, b.Blobs) {
 		t.Errorf("Apply result mismatch: got %v want %v", result.Blobs, b.Blobs)
@@ -3747,14 +3842,14 @@ func TestReflect_RemoveBlob(t *testing.T) {
 	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{b1, b2}}
 	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{b1}}
 
-	d, err := nested_slice_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 	if len(d.RemovedBlobs) != 1 || !reflect.DeepEqual(d.RemovedBlobs[0], b2) {
 		t.Errorf("RemovedBlobs: got %v want [%v]", d.RemovedBlobs, b2)
 	}
 	if len(d.AddedBlobs) != 0 { t.Errorf("AddedBlobs must be empty; got %v", d.AddedBlobs) }
 
-	result, err := nested_slice_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 	if !reflect.DeepEqual(result.Blobs, b.Blobs) {
 		t.Errorf("Apply result mismatch: got %v want %v", result.Blobs, b.Blobs)
@@ -3769,10 +3864,10 @@ func TestReflect_RoundTrip(t *testing.T) {
 	a := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(1), Key: "k", Blobs: [][]byte{keep, drop}}
 	b := nested_slice_reflect.NestedSliceReflectSnapshot{Header: blobHdr(2), Key: "k", Blobs: [][]byte{keep, add}}
 
-	d, err := nested_slice_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil { t.Fatalf("Diff: %v", err) }
 
-	result, err := nested_slice_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil { t.Fatalf("Apply: %v", err) }
 
 	// Survivor order: keep is first (source order), add is appended (R-DG-028).
@@ -4298,14 +4393,14 @@ var (
 func TestClearableStruct_OpIgnore(t *testing.T) {
 	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA, Count: 3}
 	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: addrA, Count: 3}
-	d, err := clearable_struct.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Location.Op != eddt.OpIgnore {
 		t.Errorf("equal Location must yield OpIgnore; got %v", d.Location.Op)
 	}
-	result, err := clearable_struct.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4318,14 +4413,14 @@ func TestClearableStruct_OpIgnore(t *testing.T) {
 func TestClearableStruct_OpRetract(t *testing.T) {
 	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA}
 	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: clearable_struct.Address{}}
-	d, err := clearable_struct.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Location.Op != eddt.OpRetract {
 		t.Errorf("non-zero to zero Location must yield OpRetract; got %v", d.Location.Op)
 	}
-	result, err := clearable_struct.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4338,14 +4433,14 @@ func TestClearableStruct_OpRetract(t *testing.T) {
 func TestClearableStruct_OpAssert(t *testing.T) {
 	a := clearable_struct.ClearableStructSnapshot{Header: hdrCS(1), Key: "k", Location: addrA}
 	b := clearable_struct.ClearableStructSnapshot{Header: hdrCS(2), Key: "k", Location: addrB}
-	d, err := clearable_struct.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Location.Op != eddt.OpAssert {
 		t.Errorf("changed Location must yield OpAssert; got %v", d.Location.Op)
 	}
-	result, err := clearable_struct.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4363,11 +4458,11 @@ func TestClearableStruct_RoundTrip(t *testing.T) {
 		{Header: hdrCS(2), Key: "k", Location: addrB, Count: 7},
 	}
 	for _, target := range targets {
-		d, err := clearable_struct.Diff(base, target)
+		d, err := base.Diff(target)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
-		result, err := clearable_struct.Apply(base, d)
+		result, err := base.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -4426,14 +4521,14 @@ func TestClearableMap_OpIgnore(t *testing.T) {
 	tags := map[string]string{"x": "1"}
 	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: tags}
 	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1"}}
-	d, err := clearable_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Tags.Op != eddt.OpIgnore {
 		t.Errorf("equal Tags must yield OpIgnore; got %v", d.Tags.Op)
 	}
-	result, err := clearable_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4446,14 +4541,14 @@ func TestClearableMap_OpIgnore(t *testing.T) {
 func TestClearableMap_OpRetract(t *testing.T) {
 	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: map[string]string{"x": "1"}}
 	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: nil}
-	d, err := clearable_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Tags.Op != eddt.OpRetract {
 		t.Errorf("non-empty to nil Tags must yield OpRetract; got %v", d.Tags.Op)
 	}
-	result, err := clearable_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4466,14 +4561,14 @@ func TestClearableMap_OpRetract(t *testing.T) {
 func TestClearableMap_OpAssert(t *testing.T) {
 	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: map[string]string{"x": "1", "y": "2"}}
 	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1", "z": "3"}}
-	d, err := clearable_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Tags.Op != eddt.OpAssert {
 		t.Errorf("changed Tags must yield OpAssert; got %v", d.Tags.Op)
 	}
-	result, err := clearable_map.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4495,11 +4590,11 @@ func TestClearableMap_RoundTrip(t *testing.T) {
 		{Header: hdrCM(2), Key: "k", Tags: map[string]string{"keep": "v", "added": "new"}, Count: 5},
 	}
 	for _, target := range targets {
-		d, err := clearable_map.Diff(base, target)
+		d, err := base.Diff(target)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
-		result, err := clearable_map.Apply(base, d)
+		result, err := base.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -4517,7 +4612,7 @@ func TestClearableMap_AtomicCoexistence(t *testing.T) {
 	tags := map[string]string{"x": "1"}
 	a := clearable_map.ClearableMapSnapshot{Header: hdrCM(1), Key: "k", Tags: tags, Count: 1}
 	b := clearable_map.ClearableMapSnapshot{Header: hdrCM(2), Key: "k", Tags: map[string]string{"x": "1"}, Count: 2}
-	d, err := clearable_map.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -4574,14 +4669,14 @@ func TestClearableSlice_OpIgnore(t *testing.T) {
 	groups := []string{"a", "b"}
 	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: groups}
 	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"a", "b"}}
-	d, err := clearable_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Groups.Op != eddt.OpIgnore {
 		t.Errorf("equal Groups must yield OpIgnore; got %v", d.Groups.Op)
 	}
-	result, err := clearable_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4594,14 +4689,14 @@ func TestClearableSlice_OpIgnore(t *testing.T) {
 func TestClearableSlice_OpRetract(t *testing.T) {
 	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: []string{"a", "b"}}
 	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: nil}
-	d, err := clearable_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Groups.Op != eddt.OpRetract {
 		t.Errorf("non-empty to nil Groups must yield OpRetract; got %v", d.Groups.Op)
 	}
-	result, err := clearable_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4614,14 +4709,14 @@ func TestClearableSlice_OpRetract(t *testing.T) {
 func TestClearableSlice_OpAssert(t *testing.T) {
 	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: []string{"a", "b"}}
 	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"a", "c"}}
-	d, err := clearable_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Groups.Op != eddt.OpAssert {
 		t.Errorf("changed Groups must yield OpAssert; got %v", d.Groups.Op)
 	}
-	result, err := clearable_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4644,14 +4739,14 @@ func TestClearableSlice_OpAssert(t *testing.T) {
 func TestClearableSlice_RoundTrip_EmptyToNonEmpty(t *testing.T) {
 	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: nil}
 	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"new"}}
-	d, err := clearable_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Groups.Op != eddt.OpAssert {
 		t.Errorf("nil to non-empty must yield OpAssert; got %v", d.Groups.Op)
 	}
-	result, err := clearable_slice.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4665,7 +4760,7 @@ func TestClearableSlice_AtomicCoexistence(t *testing.T) {
 	groups := []string{"x", "y"}
 	a := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(1), Key: "k", Groups: groups, Count: 1}
 	b := clearable_slice.ClearableSliceSnapshot{Header: hdrCSl(2), Key: "k", Groups: []string{"x", "y"}, Count: 2}
-	d, err := clearable_slice.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -4765,14 +4860,14 @@ var (
 func TestClearableStructReflect_OpIgnore(t *testing.T) {
 	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
 	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k", Latest: logA}
-	d, err := clearable_struct_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Latest.Op != eddt.OpIgnore {
 		t.Errorf("equal Latest must yield OpIgnore; got %v", d.Latest.Op)
 	}
-	result, err := clearable_struct_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4784,14 +4879,14 @@ func TestClearableStructReflect_OpIgnore(t *testing.T) {
 func TestClearableStructReflect_OpRetract(t *testing.T) {
 	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
 	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k"}
-	d, err := clearable_struct_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Latest.Op != eddt.OpRetract {
 		t.Errorf("non-zero→zero Latest must yield OpRetract; got %v", d.Latest.Op)
 	}
-	result, err := clearable_struct_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4803,14 +4898,14 @@ func TestClearableStructReflect_OpRetract(t *testing.T) {
 func TestClearableStructReflect_OpAssert(t *testing.T) {
 	a := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(1), Key: "k", Latest: logA}
 	b := clearable_struct_reflect.ClearableStructReflectSnapshot{Header: hdrCSR(2), Key: "k", Latest: logB}
-	d, err := clearable_struct_reflect.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Latest.Op != eddt.OpAssert {
 		t.Errorf("changed Latest must yield OpAssert; got %v", d.Latest.Op)
 	}
-	result, err := clearable_struct_reflect.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4897,14 +4992,14 @@ func TestClearablePointer_OpIgnore(t *testing.T) {
 	info := clearable_pointer.ContactInfo{Name: "Alice", Phone: &phone}
 	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: info}
 	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k", Contact: info}
-	d, err := clearable_pointer.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Contact.Op != eddt.OpIgnore {
 		t.Errorf("equal Contact must yield OpIgnore; got %v", d.Contact.Op)
 	}
-	result, err := clearable_pointer.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4918,14 +5013,14 @@ func TestClearablePointer_OpRetract(t *testing.T) {
 	info := clearable_pointer.ContactInfo{Name: "Alice", Phone: &phone}
 	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: info}
 	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k"}
-	d, err := clearable_pointer.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Contact.Op != eddt.OpRetract {
 		t.Errorf("non-zero→zero Contact must yield OpRetract; got %v", d.Contact.Op)
 	}
-	result, err := clearable_pointer.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -4941,14 +5036,14 @@ func TestClearablePointer_OpAssert(t *testing.T) {
 	infoB := clearable_pointer.ContactInfo{Name: "Bob", Phone: &phone2}
 	a := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(1), Key: "k", Contact: infoA}
 	b := clearable_pointer.ClearablePointerSnapshot{Header: hdrCP(2), Key: "k", Contact: infoB}
-	d, err := clearable_pointer.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if d.Contact.Op != eddt.OpAssert {
 		t.Errorf("changed Contact must yield OpAssert; got %v", d.Contact.Op)
 	}
-	result, err := clearable_pointer.Apply(a, d)
+	result, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

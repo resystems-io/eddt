@@ -52,13 +52,15 @@ const runtimeImportPath = "go.resystems.io/eddt/runtime"
 // Prefix / suffix constants for generated field and function names. Using these
 // ensures every site agrees on spelling and makes mechanical renames safe.
 const (
-	prefixSet     = "Set"
-	prefixAdded   = "Added"
-	prefixUpdated = "Updated"
-	prefixRemoved = "Removed"
-	prefixApply   = "Apply"
-	prefixDiff    = "Diff"
-	suffixDelta   = "Delta"
+	prefixSet      = "Set"
+	prefixAdded    = "Added"
+	prefixUpdated  = "Updated"
+	prefixRemoved  = "Removed"
+	prefixApply    = "Apply"
+	prefixDiff     = "Diff"
+	prefixCoalesce = "Coalesce"
+	prefixEntityID = "EntityID"
+	suffixDelta    = "Delta"
 )
 
 // fieldViewShape is a discriminator for the five mutually exclusive rendering
@@ -259,6 +261,26 @@ type snapshotView struct {
 	// EntityID function emitted by the standaloneMain template. Populated only
 	// when Standalone is true; empty otherwise.
 	StandaloneKeyHashLines []string
+
+	// ApplyFuncName is the struct-prefixed name of the package-level Apply
+	// function, e.g. "ApplyPumpSnapshot". Using a unique name per struct allows
+	// multiple snapshot types to coexist in the same output package without
+	// Go's flat-namespace function-name collision.
+	ApplyFuncName string
+
+	// DiffFuncName is the struct-prefixed name of the package-level Diff
+	// function, e.g. "DiffPumpSnapshot".
+	DiffFuncName string
+
+	// CoalesceFuncName is the struct-prefixed name of the package-level
+	// Coalesce function, e.g. "CoalescePumpSnapshot".
+	CoalesceFuncName string
+
+	// EntityIDFuncName is the struct-prefixed name of the package-level
+	// EntityID function, e.g. "EntityIDPumpSnapshot". In standalone mode this
+	// is still "EntityID" + Name (no "New" prefix) because the struct prefix
+	// already makes the name distinct from the local EntityID type.
+	EntityIDFuncName string
 }
 
 // fieldView is the template's per-field view of one payload field in TDelta.
@@ -439,11 +461,11 @@ type {{.DeltaName}} struct {
 {{end}}{{end -}}
 
 {{define "applyFunc"}}
-// Apply produces the Snapshot that results from applying d to s.
+// {{.ApplyFuncName}} produces the Snapshot that results from applying d to s.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderAfterApply and are propagated to the caller as a
 // non-nil error. See delta-gen-spec.md §5.2 (R-DG-012).
-func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
+func {{.ApplyFuncName}}(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
 	var result {{.Qualifier}}{{.Name}}
 	hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)
 	if err != nil {
@@ -460,18 +482,18 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) ({{.Qualifier}}{{.Name}}
 
 {{define "applyMethod"}}
 // Apply is an ergonomic same-package wrapper that delegates to the
-// package-level Apply function (R-DG-012, R-DG-013, R-DG-019).
+// package-level {{.ApplyFuncName}} function (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Apply(d {{.DeltaName}}) ({{.Name}}, error) {
-	return Apply(s, d)
+	return {{.ApplyFuncName}}(s, d)
 }
 {{end -}}
 
 {{define "diffFunc"}}
-// Diff produces the minimal Delta d such that Apply(a, d) payload-equals b.
+// {{.DiffFuncName}} produces the minimal Delta d such that {{.ApplyFuncName}}(a, d) payload-equals b.
 // It is a pure function; chain-envelope validations live in
 // runtime.HeaderForDiff and are propagated to the caller as a non-nil error.
 // See delta-gen-spec.md §5.2 (R-DG-012).
-func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
+func {{.DiffFuncName}}(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 	hdr, err := runtime.HeaderForDiff(a.Header, b.Header)
 	if err != nil {
 		return {{.DeltaName}}{}, err
@@ -486,22 +508,22 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) ({{.DeltaName}}, error) {
 
 {{define "diffMethod"}}
 // Diff is an ergonomic same-package wrapper that delegates to the
-// package-level Diff function (R-DG-012, R-DG-013, R-DG-019).
+// package-level {{.DiffFuncName}} function (R-DG-012, R-DG-013, R-DG-019).
 func (a {{.Name}}) Diff(b {{.Name}}) ({{.DeltaName}}, error) {
-	return Diff(a, b)
+	return {{.DiffFuncName}}(a, b)
 }
 {{end -}}
 
 {{define "coalesceFunc"}}
-// Coalesce folds a slice of TDeltas into s by iterated Apply. It is a pure
-// function; chain-envelope validations propagate from the first failing Apply
+// {{.CoalesceFuncName}} folds a slice of TDeltas into s by iterated {{.ApplyFuncName}}. It is a pure
+// function; chain-envelope validations propagate from the first failing {{.ApplyFuncName}}
 // step. An empty slice returns (s, nil) without any runtime call. See
 // delta-gen-spec.md §5.2 (R-DG-012).
-func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
+func {{.CoalesceFuncName}}(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.Name}}, error) {
 	result := s
 	for _, d := range ds {
 		var err error
-		result, err = Apply(result, d)
+		result, err = {{.ApplyFuncName}}(result, d)
 		if err != nil {
 			return {{.Qualifier}}{{.Name}}{}, err
 		}
@@ -512,19 +534,19 @@ func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) ({{.Qualifier}}{{.
 
 {{define "coalesceMethod"}}
 // Coalesce is an ergonomic same-package wrapper that delegates to the
-// package-level Coalesce function (R-DG-012, R-DG-013, R-DG-019).
+// package-level {{.CoalesceFuncName}} function (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) ({{.Name}}, error) {
-	return Coalesce(s, ds)
+	return {{.CoalesceFuncName}}(s, ds)
 }
 {{end -}}
 
 {{define "entityIDFunc"}}
-// EntityID creates a hash for the key field: {{.KeyName}}
+// {{.EntityIDFuncName}} creates a hash for the key field: {{.KeyName}}
 //
 // It returns the deterministic content-hash EntityID of k. The hash is
 // Blake2b-256 over the canonical encoding of k's fields (R-DG-034, R-DG-035, RT-02). It is
 // a pure function: same input → same output forever.
-func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
+func {{.EntityIDFuncName}}(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 	h := runtime.NewHash()
 {{- range .KeyHashLines}}
 	{{.}}
@@ -537,9 +559,9 @@ func EntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) runtime.EntityID {
 // EntityID creates a hash for the key field: {{.KeyName}}
 //
 // It is an ergonomic same-package wrapper that delegates to the
-// package-level EntityID function (R-DG-012, R-DG-013, R-DG-019).
+// package-level {{.EntityIDFuncName}} function (R-DG-012, R-DG-013, R-DG-019).
 func (k {{.KeyTypeName}}) EntityID() runtime.EntityID {
-	return EntityID(k)
+	return {{.EntityIDFuncName}}(k)
 }
 {{end}}
 {{define "nestedTypeDecl"}}
@@ -1459,10 +1481,14 @@ func buildClearableFieldView(
 // packages are recorded as a side effect of type rendering.
 func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod bool, standalone bool) (snapshotView, error) {
 	sv := snapshotView{
-		Name:       ps.Name,
-		DeltaName:  ps.Name + suffixDelta,
-		KeyName:    ps.KeyVar.Name(),
-		Standalone: standalone,
+		Name:             ps.Name,
+		DeltaName:        ps.Name + suffixDelta,
+		KeyName:          ps.KeyVar.Name(),
+		Standalone:       standalone,
+		ApplyFuncName:    prefixApply + ps.Name,
+		DiffFuncName:     prefixDiff + ps.Name,
+		CoalesceFuncName: prefixCoalesce + ps.Name,
+		EntityIDFuncName: prefixEntityID + ps.Name,
 	}
 
 	// Resolve the key type name and hash lines (R-DG-034).
@@ -1620,7 +1646,22 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		views = append(views, sv)
 	}
 
-	// Step 4: inject the "reflect" import if any Diff field uses reflect.DeepEqual,
+	// Step 4a: deduplicate the EntityID method wrapper across snapshots that share
+	// the same named key type. If two snapshots both use (e.g.) MMEI as their key
+	// type, emitting `func (k MMEI) EntityID()` twice would cause a compile error.
+	// Only the first snapshot with a given key type name retains EmitEntityIDMethod=true.
+	seenKeyTypes := make(map[string]bool)
+	for i := range views {
+		if views[i].EmitEntityIDMethod {
+			if seenKeyTypes[views[i].KeyTypeName] {
+				views[i].EmitEntityIDMethod = false
+			} else {
+				seenKeyTypes[views[i].KeyTypeName] = true
+			}
+		}
+	}
+
+	// Step 4b: inject the "reflect" import if any Diff field uses reflect.DeepEqual,
 	// then materialise the import list. The check must run after all views are
 	// built so that NeedsReflect is fully populated across all target structs.
 	for _, sv := range views {

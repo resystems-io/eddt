@@ -114,7 +114,7 @@ func TestStandalone_ApplyDiffPureSignatures(t *testing.T) {
 		t.Fatalf("parsing generated source: %v\nsource:\n%s", err, src)
 	}
 
-	for _, funcName := range []string{"Apply", "Diff", "Coalesce"} {
+	for _, funcName := range []string{"ApplyBasicSnapshot", "DiffBasicSnapshot", "CoalesceBasicSnapshot"} {
 		fd := findFuncDecl(f, funcName)
 		if fd == nil {
 			t.Errorf("function %s not found in generated output", funcName)
@@ -151,8 +151,8 @@ func TestStandalone_EntityIDLocalType(t *testing.T) {
 		t.Error("standalone EntityID must call standaloneFinalise")
 	}
 	// Must be named NewEntityID (not EntityID) to avoid conflict with the local type.
-	if !strings.Contains(src, "func NewEntityID(") {
-		t.Error("standalone EntityID function must be named NewEntityID")
+	if !strings.Contains(src, "func EntityIDBasicSnapshot(") {
+		t.Error("standalone EntityID function must be named EntityIDBasicSnapshot")
 	}
 	// Must not use the runtime package.
 	if strings.Contains(src, "runtime.EntityID") {
@@ -287,7 +287,7 @@ func TestApply(t *testing.T) {
 	s := widget.WidgetSnapshot{ID: "w1", Color: "red", Count: 1}
 	newColor := "blue"
 	d := widget.WidgetSnapshotDelta{SetColor: &newColor}
-	got := widget.Apply(s, d)
+	got := s.Apply(d)
 	if got.Color != "blue" {
 		t.Errorf("Color: got %q, want %q", got.Color, "blue")
 	}
@@ -302,7 +302,7 @@ func TestApply(t *testing.T) {
 func TestDiff(t *testing.T) {
 	a := widget.WidgetSnapshot{ID: "w1", Color: "red", Count: 1}
 	b := widget.WidgetSnapshot{ID: "w1", Color: "blue", Count: 1}
-	d := widget.Diff(a, b)
+	d := a.Diff(b)
 	if d.SetColor == nil || *d.SetColor != "blue" {
 		t.Errorf("Diff SetColor: got %v, want &\"blue\"", d.SetColor)
 	}
@@ -316,7 +316,7 @@ func TestCoalesce(t *testing.T) {
 	newColor := "blue"
 	newCount := int32(5)
 	ds := []widget.WidgetSnapshotDelta{{SetColor: &newColor}, {SetCount: &newCount}}
-	got := widget.Coalesce(s, ds)
+	got := s.Coalesce(ds)
 	if got.Color != "blue" || got.Count != 5 {
 		t.Errorf("Coalesce: got %+v", got)
 	}
@@ -325,9 +325,9 @@ func TestCoalesce(t *testing.T) {
 func TestEntityID(t *testing.T) {
 	// In standalone mode, the package-level function is NewEntityID (not EntityID)
 	// to avoid a naming conflict with the local EntityID type.
-	id1 := widget.NewEntityID("w1")
-	id2 := widget.NewEntityID("w1")
-	id3 := widget.NewEntityID("w2")
+	id1 := widget.EntityIDWidgetSnapshot("w1")
+	id2 := widget.EntityIDWidgetSnapshot("w1")
+	id3 := widget.EntityIDWidgetSnapshot("w2")
 	if id1 != id2 {
 		t.Error("same key must produce same EntityID")
 	}

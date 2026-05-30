@@ -257,7 +257,7 @@ func TestMain(m *testing.M) {
 	}
 
 	var err error
-	benchDelta, err = baseline.Diff(benchSnap0, benchSnap1)
+	benchDelta, err = benchSnap0.Diff(benchSnap1)
 	if err != nil {
 		panic("benchmark setup: " + err.Error())
 	}
@@ -268,21 +268,21 @@ func TestMain(m *testing.M) {
 func BenchmarkApply(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = baseline.Apply(benchSnap0, benchDelta)
+		_, _ = benchSnap0.Apply(benchDelta)
 	}
 }
 
 func BenchmarkDiff(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = baseline.Diff(benchSnap0, benchSnap1)
+		_, _ = benchSnap0.Diff(benchSnap1)
 	}
 }
 
 func BenchmarkCoalesce(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = baseline.Coalesce(benchSnap0, benchDeltas)
+		_, _ = benchSnap0.Coalesce(benchDeltas)
 	}
 }
 `
@@ -329,7 +329,7 @@ func TestMain(m *testing.M) {
 	}
 
 	var err error
-	benchDelta, err = composite.Diff(benchSnap0, benchSnap1)
+	benchDelta, err = benchSnap0.Diff(benchSnap1)
 	if err != nil {
 		panic("benchmark setup: " + err.Error())
 	}
@@ -340,21 +340,21 @@ func TestMain(m *testing.M) {
 func BenchmarkApply(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = composite.Apply(benchSnap0, benchDelta)
+		_, _ = benchSnap0.Apply(benchDelta)
 	}
 }
 
 func BenchmarkDiff(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = composite.Diff(benchSnap0, benchSnap1)
+		_, _ = benchSnap0.Diff(benchSnap1)
 	}
 }
 
 func BenchmarkCoalesce(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = composite.Coalesce(benchSnap0, benchDeltas)
+		_, _ = benchSnap0.Coalesce(benchDeltas)
 	}
 }
 `
@@ -403,7 +403,7 @@ func TestMain(m *testing.M) {
 	}
 
 	var err error
-	benchDelta, err = clearable_composite.Diff(benchSnap0, benchSnap1)
+	benchDelta, err = benchSnap0.Diff(benchSnap1)
 	if err != nil {
 		panic("benchmark setup: " + err.Error())
 	}
@@ -414,21 +414,21 @@ func TestMain(m *testing.M) {
 func BenchmarkApply(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = clearable_composite.Apply(benchSnap0, benchDelta)
+		_, _ = benchSnap0.Apply(benchDelta)
 	}
 }
 
 func BenchmarkDiff(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = clearable_composite.Diff(benchSnap0, benchSnap1)
+		_, _ = benchSnap0.Diff(benchSnap1)
 	}
 }
 
 func BenchmarkCoalesce(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = clearable_composite.Coalesce(benchSnap0, benchDeltas)
+		_, _ = benchSnap0.Coalesce(benchDeltas)
 	}
 }
 `
@@ -460,7 +460,7 @@ var (
 func TestMain(m *testing.M) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	benchKey = struct_key.SessionKey{TenantID: "tenant1", SessionN: 42}
-	fixedID := struct_key.EntityID(benchKey)
+	fixedID := benchKey.EntityID()
 
 	benchSnap0 = struct_key.SessionSnapshot{
 		Header: eddt.Header{EntityID: fixedID, ChainID: "bench",
@@ -476,7 +476,7 @@ func TestMain(m *testing.M) {
 	}
 
 	var err error
-	benchDelta, err = struct_key.Diff(benchSnap0, benchSnap1)
+	benchDelta, err = benchSnap0.Diff(benchSnap1)
 	if err != nil {
 		panic("benchmark setup: " + err.Error())
 	}
@@ -487,28 +487,28 @@ func TestMain(m *testing.M) {
 func BenchmarkApply(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = struct_key.Apply(benchSnap0, benchDelta)
+		_, _ = benchSnap0.Apply(benchDelta)
 	}
 }
 
 func BenchmarkDiff(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = struct_key.Diff(benchSnap0, benchSnap1)
+		_, _ = benchSnap0.Diff(benchSnap1)
 	}
 }
 
 func BenchmarkCoalesce(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = struct_key.Coalesce(benchSnap0, benchDeltas)
+		_, _ = benchSnap0.Coalesce(benchDeltas)
 	}
 }
 
 func BenchmarkEntityID(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = struct_key.EntityID(benchKey)
+		_ = benchKey.EntityID()
 	}
 }
 `
@@ -553,7 +553,7 @@ func TestMain(m *testing.M) {
 	}
 
 	var err error
-	benchDelta, err = nested_slice_reflect.Diff(benchSnap0, benchSnap1)
+	benchDelta, err = benchSnap0.Diff(benchSnap1)
 	if err != nil {
 		panic("benchmark setup: " + err.Error())
 	}
@@ -564,21 +564,21 @@ func TestMain(m *testing.M) {
 func BenchmarkApply(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = nested_slice_reflect.Apply(benchSnap0, benchDelta)
+		_, _ = benchSnap0.Apply(benchDelta)
 	}
 }
 
 func BenchmarkDiff(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = nested_slice_reflect.Diff(benchSnap0, benchSnap1)
+		_, _ = benchSnap0.Diff(benchSnap1)
 	}
 }
 
 func BenchmarkCoalesce(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = nested_slice_reflect.Coalesce(benchSnap0, benchDeltas)
+		_, _ = benchSnap0.Coalesce(benchDeltas)
 	}
 }
 `

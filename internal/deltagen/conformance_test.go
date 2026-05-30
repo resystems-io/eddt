@@ -214,11 +214,11 @@ func TestRoundTrip_Property(t *testing.T) {
 			Meta: bp.Meta, Tags: bp.Tags, Attrs: bp.Attrs,
 			Score: bp.Score,
 		}
-		d, err := baseline.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			return false
 		}
-		got, err := baseline.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -309,11 +309,11 @@ func TestRoundTrip_Property(t *testing.T) {
 			Key: "k", Details: bp.Details, Labels: bp.Labels,
 			Groups: bp.Groups, Rank: bp.Rank,
 		}
-		d, err := composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			return false
 		}
-		got, err := composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -370,11 +370,11 @@ func TestRoundTrip_Property(t *testing.T) {
 				Sequence: 2, EffectiveAt: now},
 			Key: fixedKey, State: bp.State, Count: bp.Count,
 		}
-		d, err := struct_key.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			return false
 		}
-		got, err := struct_key.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -474,7 +474,7 @@ func TestIdentity_Property(t *testing.T) {
 			v := *a.Priority
 			aprime.Priority = &v
 		}
-		d, err := baseline.Diff(a, aprime)
+		d, err := a.Diff(aprime)
 		if err != nil {
 			return false
 		}
@@ -482,7 +482,7 @@ func TestIdentity_Property(t *testing.T) {
 		if d.SetPriority != nil {
 			return false
 		}
-		got, err := baseline.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -540,11 +540,11 @@ func TestIdentity_Property(t *testing.T) {
 		aprime := a
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
-		d, err := composite.Diff(a, aprime)
+		d, err := a.Diff(aprime)
 		if err != nil {
 			return false
 		}
-		got, err := composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -598,11 +598,11 @@ func TestIdentity_Property(t *testing.T) {
 		aprime := a
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
-		d, err := struct_key.Diff(a, aprime)
+		d, err := a.Diff(aprime)
 		if err != nil {
 			return false
 		}
-		got, err := struct_key.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -703,41 +703,41 @@ func TestCoalesce_Property(t *testing.T) {
 		s2 := snap(fixedID, 2, now, p2)
 		s3 := snap(fixedID, 3, now, p3)
 
-		d1, err := baseline.Diff(s0, s1)
+		d1, err := s0.Diff(s1)
 		if err != nil {
 			return false
 		}
-		d2, err := baseline.Diff(s1, s2)
+		d2, err := s1.Diff(s2)
 		if err != nil {
 			return false
 		}
-		d3, err := baseline.Diff(s2, s3)
+		d3, err := s2.Diff(s3)
 		if err != nil {
 			return false
 		}
 
 		// Fold equivalence.
-		full, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1, d2, d3})
+		full, err := s0.Coalesce([]baseline.BaselineSnapshotDelta{d1, d2, d3})
 		if err != nil || !reflect.DeepEqual(full, s3) {
 			return false
 		}
 
 		// Chunkability at split point 1.
-		mid1, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1})
+		mid1, err := s0.Coalesce([]baseline.BaselineSnapshotDelta{d1})
 		if err != nil {
 			return false
 		}
-		chunk1, err := baseline.Coalesce(mid1, []baseline.BaselineSnapshotDelta{d2, d3})
+		chunk1, err := mid1.Coalesce([]baseline.BaselineSnapshotDelta{d2, d3})
 		if err != nil || !reflect.DeepEqual(chunk1, s3) {
 			return false
 		}
 
 		// Chunkability at split point 2.
-		mid2, err := baseline.Coalesce(s0, []baseline.BaselineSnapshotDelta{d1, d2})
+		mid2, err := s0.Coalesce([]baseline.BaselineSnapshotDelta{d1, d2})
 		if err != nil {
 			return false
 		}
-		chunk2, err := baseline.Coalesce(mid2, []baseline.BaselineSnapshotDelta{d3})
+		chunk2, err := mid2.Coalesce([]baseline.BaselineSnapshotDelta{d3})
 		if err != nil {
 			return false
 		}
@@ -830,41 +830,41 @@ func TestCoalesce_Property(t *testing.T) {
 		s2 := snap(fixedID, 2, now, p2)
 		s3 := snap(fixedID, 3, now, p3)
 
-		d1, err := composite.Diff(s0, s1)
+		d1, err := s0.Diff(s1)
 		if err != nil {
 			return false
 		}
-		d2, err := composite.Diff(s1, s2)
+		d2, err := s1.Diff(s2)
 		if err != nil {
 			return false
 		}
-		d3, err := composite.Diff(s2, s3)
+		d3, err := s2.Diff(s3)
 		if err != nil {
 			return false
 		}
 
 		// Fold equivalence.
-		full, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1, d2, d3})
+		full, err := s0.Coalesce([]composite.CompositeSnapshotDelta{d1, d2, d3})
 		if err != nil || !snapshotEqual(full, s3) {
 			return false
 		}
 
 		// Chunkability at split point 1.
-		mid1, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1})
+		mid1, err := s0.Coalesce([]composite.CompositeSnapshotDelta{d1})
 		if err != nil {
 			return false
 		}
-		chunk1, err := composite.Coalesce(mid1, []composite.CompositeSnapshotDelta{d2, d3})
+		chunk1, err := mid1.Coalesce([]composite.CompositeSnapshotDelta{d2, d3})
 		if err != nil || !snapshotEqual(chunk1, s3) {
 			return false
 		}
 
 		// Chunkability at split point 2.
-		mid2, err := composite.Coalesce(s0, []composite.CompositeSnapshotDelta{d1, d2})
+		mid2, err := s0.Coalesce([]composite.CompositeSnapshotDelta{d1, d2})
 		if err != nil {
 			return false
 		}
-		chunk2, err := composite.Coalesce(mid2, []composite.CompositeSnapshotDelta{d3})
+		chunk2, err := mid2.Coalesce([]composite.CompositeSnapshotDelta{d3})
 		if err != nil {
 			return false
 		}
@@ -966,11 +966,11 @@ func TestRoundTrip_Property(t *testing.T) {
 			Groups:   bp.Groups,
 			Count:    bp.Count,
 		}
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			return false
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -1029,11 +1029,11 @@ func TestIdentity_Property(t *testing.T) {
 		aprime := a
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
-		d, err := clearable_composite.Diff(a, aprime)
+		d, err := a.Diff(aprime)
 		if err != nil {
 			return false
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -1143,41 +1143,41 @@ func TestCoalesce_Property(t *testing.T) {
 		s2 := snap(fixedID, 2, now, p2)
 		s3 := snap(fixedID, 3, now, p3)
 
-		d1, err := clearable_composite.Diff(s0, s1)
+		d1, err := s0.Diff(s1)
 		if err != nil {
 			return false
 		}
-		d2, err := clearable_composite.Diff(s1, s2)
+		d2, err := s1.Diff(s2)
 		if err != nil {
 			return false
 		}
-		d3, err := clearable_composite.Diff(s2, s3)
+		d3, err := s2.Diff(s3)
 		if err != nil {
 			return false
 		}
 
 		// Fold equivalence.
-		full, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1, d2, d3})
+		full, err := s0.Coalesce([]clearable_composite.ClearableCompositeSnapshotDelta{d1, d2, d3})
 		if err != nil || !snapshotEqual(full, s3) {
 			return false
 		}
 
 		// Chunkability at split point 1.
-		mid1, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1})
+		mid1, err := s0.Coalesce([]clearable_composite.ClearableCompositeSnapshotDelta{d1})
 		if err != nil {
 			return false
 		}
-		chunk1, err := clearable_composite.Coalesce(mid1, []clearable_composite.ClearableCompositeSnapshotDelta{d2, d3})
+		chunk1, err := mid1.Coalesce([]clearable_composite.ClearableCompositeSnapshotDelta{d2, d3})
 		if err != nil || !snapshotEqual(chunk1, s3) {
 			return false
 		}
 
 		// Chunkability at split point 2.
-		mid2, err := clearable_composite.Coalesce(s0, []clearable_composite.ClearableCompositeSnapshotDelta{d1, d2})
+		mid2, err := s0.Coalesce([]clearable_composite.ClearableCompositeSnapshotDelta{d1, d2})
 		if err != nil {
 			return false
 		}
-		chunk2, err := clearable_composite.Coalesce(mid2, []clearable_composite.ClearableCompositeSnapshotDelta{d3})
+		chunk2, err := mid2.Coalesce([]clearable_composite.ClearableCompositeSnapshotDelta{d3})
 		if err != nil {
 			return false
 		}
@@ -1241,41 +1241,41 @@ func TestCoalesce_Property(t *testing.T) {
 		s2 := snap(fixedID, 2, now, p2, fixedKey)
 		s3 := snap(fixedID, 3, now, p3, fixedKey)
 
-		d1, err := struct_key.Diff(s0, s1)
+		d1, err := s0.Diff(s1)
 		if err != nil {
 			return false
 		}
-		d2, err := struct_key.Diff(s1, s2)
+		d2, err := s1.Diff(s2)
 		if err != nil {
 			return false
 		}
-		d3, err := struct_key.Diff(s2, s3)
+		d3, err := s2.Diff(s3)
 		if err != nil {
 			return false
 		}
 
 		// Fold equivalence.
-		full, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1, d2, d3})
+		full, err := s0.Coalesce([]struct_key.SessionSnapshotDelta{d1, d2, d3})
 		if err != nil || !reflect.DeepEqual(full, s3) {
 			return false
 		}
 
 		// Chunkability at split point 1.
-		mid1, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1})
+		mid1, err := s0.Coalesce([]struct_key.SessionSnapshotDelta{d1})
 		if err != nil {
 			return false
 		}
-		chunk1, err := struct_key.Coalesce(mid1, []struct_key.SessionSnapshotDelta{d2, d3})
+		chunk1, err := mid1.Coalesce([]struct_key.SessionSnapshotDelta{d2, d3})
 		if err != nil || !reflect.DeepEqual(chunk1, s3) {
 			return false
 		}
 
 		// Chunkability at split point 2.
-		mid2, err := struct_key.Coalesce(s0, []struct_key.SessionSnapshotDelta{d1, d2})
+		mid2, err := s0.Coalesce([]struct_key.SessionSnapshotDelta{d1, d2})
 		if err != nil {
 			return false
 		}
-		chunk2, err := struct_key.Coalesce(mid2, []struct_key.SessionSnapshotDelta{d3})
+		chunk2, err := mid2.Coalesce([]struct_key.SessionSnapshotDelta{d3})
 		if err != nil {
 			return false
 		}
@@ -1363,11 +1363,11 @@ func TestRoundTrip_Property(t *testing.T) {
 			Key: fixedKey, Home: bp.Home, Labels: bp.Labels,
 			Tags: bp.Tags, Score: bp.Score,
 		}
-		d, err := struct_key_clearable.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			return false
 		}
-		got, err := struct_key_clearable.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -1417,11 +1417,11 @@ func TestIdentity_Property(t *testing.T) {
 		aprime := a
 		aprime.Header = eddt.Header{EntityID: fixedID, ChainID: "c",
 			Sequence: 2, EffectiveAt: now}
-		d, err := struct_key_clearable.Diff(a, aprime)
+		d, err := a.Diff(aprime)
 		if err != nil {
 			return false
 		}
-		got, err := struct_key_clearable.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			return false
 		}
@@ -1517,24 +1517,24 @@ func TestCoalesce_Property(t *testing.T) {
 		s2 := snap(fixedID, 2, now, p2, fixedKey)
 		s3 := snap(fixedID, 3, now, p3, fixedKey)
 
-		d1, err := struct_key_clearable.Diff(s0, s1)
+		d1, err := s0.Diff(s1)
 		if err != nil { return false }
-		d2, err := struct_key_clearable.Diff(s1, s2)
+		d2, err := s1.Diff(s2)
 		if err != nil { return false }
-		d3, err := struct_key_clearable.Diff(s2, s3)
+		d3, err := s2.Diff(s3)
 		if err != nil { return false }
 
-		full, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2, d3})
+		full, err := s0.Coalesce([]struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2, d3})
 		if err != nil || !snapshotEqual(full, s3) { return false }
 
-		mid1, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1})
+		mid1, err := s0.Coalesce([]struct_key_clearable.StructKeyClearableSnapshotDelta{d1})
 		if err != nil { return false }
-		chunk1, err := struct_key_clearable.Coalesce(mid1, []struct_key_clearable.StructKeyClearableSnapshotDelta{d2, d3})
+		chunk1, err := mid1.Coalesce([]struct_key_clearable.StructKeyClearableSnapshotDelta{d2, d3})
 		if err != nil || !snapshotEqual(chunk1, s3) { return false }
 
-		mid2, err := struct_key_clearable.Coalesce(s0, []struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2})
+		mid2, err := s0.Coalesce([]struct_key_clearable.StructKeyClearableSnapshotDelta{d1, d2})
 		if err != nil { return false }
-		chunk2, err := struct_key_clearable.Coalesce(mid2, []struct_key_clearable.StructKeyClearableSnapshotDelta{d3})
+		chunk2, err := mid2.Coalesce([]struct_key_clearable.StructKeyClearableSnapshotDelta{d3})
 		if err != nil || !snapshotEqual(chunk2, s3) { return false }
 
 		return true
@@ -1618,14 +1618,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Location_equal", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, baseGroups)
 		b := mkSnap(2, baseLocation, baseTags, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Location.Op != eddt.OpIgnore {
 			t.Errorf("Location.Op = %v, want OpIgnore", d.Location.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1637,7 +1637,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Location_bothZero", func(t *testing.T) {
 		a := mkSnap(1, clearable_composite.Address{}, baseTags, baseGroups)
 		b := mkSnap(2, clearable_composite.Address{}, baseTags, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1649,14 +1649,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Location_zeroToNonZero", func(t *testing.T) {
 		a := mkSnap(1, clearable_composite.Address{}, baseTags, baseGroups)
 		b := mkSnap(2, baseLocation, baseTags, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Location.Op != eddt.OpAssert {
 			t.Errorf("Location.Op = %v, want OpAssert", d.Location.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1668,14 +1668,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Location_nonZeroToZero", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, baseGroups)
 		b := mkSnap(2, clearable_composite.Address{}, baseTags, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Location.Op != eddt.OpRetract {
 			t.Errorf("Location.Op = %v, want OpRetract", d.Location.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1688,14 +1688,14 @@ func TestTruthTable_All(t *testing.T) {
 		other := clearable_composite.Address{Street: "99 Oak Ave", City: "Elsewhere"}
 		a := mkSnap(1, baseLocation, baseTags, baseGroups)
 		b := mkSnap(2, other, baseTags, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Location.Op != eddt.OpAssert {
 			t.Errorf("Location.Op = %v, want OpAssert", d.Location.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1709,14 +1709,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_equal", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, map[string]string{"env": "prod"}, baseGroups)
 		b := mkSnap(2, baseLocation, map[string]string{"env": "prod"}, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Tags.Op != eddt.OpIgnore {
 			t.Errorf("Tags.Op = %v, want OpIgnore", d.Tags.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1728,7 +1728,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_bothNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, nil, baseGroups)
 		b := mkSnap(2, baseLocation, nil, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1740,14 +1740,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_nilToNonNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, nil, baseGroups)
 		b := mkSnap(2, baseLocation, map[string]string{"k": "v"}, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Tags.Op != eddt.OpAssert {
 			t.Errorf("Tags.Op = %v, want OpAssert", d.Tags.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1759,14 +1759,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_nonNilToNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, map[string]string{"k": "v"}, baseGroups)
 		b := mkSnap(2, baseLocation, nil, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Tags.Op != eddt.OpRetract {
 			t.Errorf("Tags.Op = %v, want OpRetract", d.Tags.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1778,7 +1778,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_different", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, map[string]string{"k": "old"}, baseGroups)
 		b := mkSnap(2, baseLocation, map[string]string{"k": "new"}, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1788,7 +1788,7 @@ func TestTruthTable_All(t *testing.T) {
 		if d.Tags.Value.IsEmpty() {
 			t.Errorf("Tags.Value.IsEmpty() = true, want non-empty inner delta")
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1801,7 +1801,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_nonNilToEmpty", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, map[string]string{"k": "v"}, baseGroups)
 		b := mkSnap(2, baseLocation, map[string]string{}, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1811,7 +1811,7 @@ func TestTruthTable_All(t *testing.T) {
 		if d.Tags.Value.IsEmpty() {
 			t.Errorf("Tags.Value.IsEmpty() = true, want non-empty inner delta (k removed)")
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1824,14 +1824,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Tags_nilToEmpty", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, nil, baseGroups)
 		b := mkSnap(2, baseLocation, map[string]string{}, baseGroups)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Tags.Op != eddt.OpIgnore {
 			t.Errorf("Tags.Op = %v, want OpIgnore (empty inner diff; nil/empty are equivalent)", d.Tags.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1845,14 +1845,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_equal", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, []string{"x", "y"})
 		b := mkSnap(2, baseLocation, baseTags, []string{"x", "y"})
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Groups.Op != eddt.OpIgnore {
 			t.Errorf("Groups.Op = %v, want OpIgnore", d.Groups.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1864,7 +1864,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_bothNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, nil)
 		b := mkSnap(2, baseLocation, baseTags, nil)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1876,14 +1876,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_nilToNonNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, nil)
 		b := mkSnap(2, baseLocation, baseTags, []string{"new"})
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Groups.Op != eddt.OpAssert {
 			t.Errorf("Groups.Op = %v, want OpAssert", d.Groups.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1895,14 +1895,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_nonNilToNil", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
 		b := mkSnap(2, baseLocation, baseTags, nil)
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Groups.Op != eddt.OpRetract {
 			t.Errorf("Groups.Op = %v, want OpRetract", d.Groups.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1914,7 +1914,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_different", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
 		b := mkSnap(2, baseLocation, baseTags, []string{"y"})
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1924,7 +1924,7 @@ func TestTruthTable_All(t *testing.T) {
 		if d.Groups.Value.IsEmpty() {
 			t.Errorf("Groups.Value.IsEmpty() = true, want non-empty inner delta")
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1946,7 +1946,7 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_nonNilToEmpty", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, []string{"x"})
 		b := mkSnap(2, baseLocation, baseTags, []string{})
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -1956,7 +1956,7 @@ func TestTruthTable_All(t *testing.T) {
 		if d.Groups.Value.IsEmpty() {
 			t.Errorf("Groups.Value.IsEmpty() = true, want non-empty inner delta (x removed)")
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -1972,14 +1972,14 @@ func TestTruthTable_All(t *testing.T) {
 	t.Run("Groups_nilToEmpty", func(t *testing.T) {
 		a := mkSnap(1, baseLocation, baseTags, nil)
 		b := mkSnap(2, baseLocation, baseTags, []string{})
-		d, err := clearable_composite.Diff(a, b)
+		d, err := a.Diff(b)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
 		if d.Groups.Op != eddt.OpIgnore {
 			t.Errorf("Groups.Op = %v, want OpIgnore (empty inner diff; nil/empty are equivalent)", d.Groups.Op)
 		}
-		got, err := clearable_composite.Apply(a, d)
+		got, err := a.Apply(d)
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -2077,7 +2077,7 @@ func TestNilEqualsEmpty_Property(t *testing.T) {
 				Labels:  tt.bLabels,
 				Groups:  tt.bGroups,
 			}
-			d, err := composite.Diff(a, b)
+			d, err := a.Diff(b)
 			if err != nil {
 				t.Fatalf("Diff: %v", err)
 			}

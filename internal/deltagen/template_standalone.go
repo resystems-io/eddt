@@ -79,9 +79,9 @@ type {{.DeltaName}} struct {
 {{end}}
 
 {{define "applyFuncStandalone"}}
-// Apply produces the Snapshot that results from applying d to s. It is a pure
-// function with no chain-envelope validation (standalone mode — no runtime.Header).
-func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) {{.Qualifier}}{{.Name}} {
+// {{.ApplyFuncName}} produces the Snapshot that results from applying d to s.
+// It is a pure function with no chain-envelope validation (standalone mode — no runtime.Header).
+func {{.ApplyFuncName}}(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) {{.Qualifier}}{{.Name}} {
 	result := s
 	result.{{.KeyName}} = s.{{.KeyName}}
 {{range .Fields}}	{{template "applyField" .}}
@@ -92,14 +92,14 @@ func Apply(s {{.Qualifier}}{{.Name}}, d {{.DeltaName}}) {{.Qualifier}}{{.Name}} 
 {{define "applyMethodStandalone"}}
 // Apply is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Apply(d {{.DeltaName}}) {{.Name}} {
-	return Apply(s, d)
+	return {{.ApplyFuncName}}(s, d)
 }
 {{end -}}
 
 {{define "diffFuncStandalone"}}
-// Diff produces the minimal Delta d such that Apply(a, d) payload-equals b. It
-// is a pure function with no chain-envelope validation (standalone mode).
-func Diff(a, b {{.Qualifier}}{{.Name}}) {{.DeltaName}} {
+// {{.DiffFuncName}} produces the minimal Delta d such that {{.ApplyFuncName}}(a, d) payload-equals b.
+// It is a pure function with no chain-envelope validation (standalone mode).
+func {{.DiffFuncName}}(a, b {{.Qualifier}}{{.Name}}) {{.DeltaName}} {
 	d := {{.DeltaName}}{}
 {{range .DiffFields}}	{{template "diffField" .}}
 {{end}}	return d
@@ -109,18 +109,18 @@ func Diff(a, b {{.Qualifier}}{{.Name}}) {{.DeltaName}} {
 {{define "diffMethodStandalone"}}
 // Diff is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
 func (a {{.Name}}) Diff(b {{.Name}}) {{.DeltaName}} {
-	return Diff(a, b)
+	return {{.DiffFuncName}}(a, b)
 }
 {{end -}}
 
 {{define "coalesceFuncStandalone"}}
-// Coalesce folds a slice of TDeltas into s by iterated Apply. It is a pure
-// function with no chain-envelope validation (standalone mode). An empty slice
-// returns s unchanged.
-func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) {{.Qualifier}}{{.Name}} {
+// {{.CoalesceFuncName}} folds a slice of TDeltas into s by iterated {{.ApplyFuncName}}.
+// It is a pure function with no chain-envelope validation (standalone mode).
+// An empty slice returns s unchanged.
+func {{.CoalesceFuncName}}(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) {{.Qualifier}}{{.Name}} {
 	result := s
 	for _, d := range ds {
-		result = Apply(result, d)
+		result = {{.ApplyFuncName}}(result, d)
 	}
 	return result
 }
@@ -129,20 +129,16 @@ func Coalesce(s {{.Qualifier}}{{.Name}}, ds []{{.DeltaName}}) {{.Qualifier}}{{.N
 {{define "coalesceMethodStandalone"}}
 // Coalesce is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
 func (s {{.Name}}) Coalesce(ds []{{.DeltaName}}) {{.Name}} {
-	return Coalesce(s, ds)
+	return {{.CoalesceFuncName}}(s, ds)
 }
 {{end -}}
 
 {{define "entityIDFuncStandalone"}}
-// NewEntityID returns the deterministic content-hash EntityID of k, derived
+// {{.EntityIDFuncName}} returns the deterministic content-hash EntityID of k, derived
 // from the key field {{.KeyName}} (R-DG-034, R-DG-035). The hash algorithm is
 // selected by --standalone-hash at generation time (see delta_types.go).
-//
-// Note: the function is named NewEntityID (not EntityID) in standalone mode
-// because Go does not allow a package-level function and a type to share the
-// same identifier. The EntityID type is defined in the companion delta_types.go.
-// For named key types, the .EntityID() method wrapper delegates to this function.
-func NewEntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) EntityID {
+// Pure function: same input → same output forever.
+func {{.EntityIDFuncName}}(k {{.KeyQualifier}}{{.KeyTypeName}}) EntityID {
 	h := standaloneNewHash()
 {{- range .StandaloneKeyHashLines}}
 	{{.}}
@@ -153,9 +149,8 @@ func NewEntityID(k {{.KeyQualifier}}{{.KeyTypeName}}) EntityID {
 
 {{define "entityIDMethodStandalone"}}
 // EntityID is an ergonomic same-package wrapper (R-DG-012, R-DG-013, R-DG-019).
-// It delegates to NewEntityID, which is the package-level function in standalone mode.
 func (k {{.KeyTypeName}}) EntityID() EntityID {
-	return NewEntityID(k)
+	return {{.EntityIDFuncName}}(k)
 }
 {{end}}
 `
