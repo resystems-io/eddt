@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
-	"runtime/debug"
 
 	"github.com/spf13/cobra"
+	"go.resystems.io/eddt/internal/arrow/gencommon"
 	writergen "go.resystems.io/eddt/internal/arrow/writer-gen"
 )
 
@@ -52,7 +52,7 @@ Example usage:
 			}
 
 			gen := writergen.NewGenerator(inputPkgs, targetStructs, outPath, verbose, pkgAliases)
-			gen.Version = vcsRevision()
+			gen.Version = gencommon.VCSRevision()
 			if err := gen.Run(outPkgName); err != nil {
 				return err
 			}
@@ -74,19 +74,6 @@ Example usage:
 	}
 
 	return cmd
-}
-
-func vcsRevision() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return ""
-	}
-	for _, s := range info.Settings {
-		if s.Key == "vcs.revision" && len(s.Value) >= 8 {
-			return s.Value[:8]
-		}
-	}
-	return ""
 }
 
 func main() {
