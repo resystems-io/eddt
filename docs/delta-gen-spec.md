@@ -1,6 +1,6 @@
 <!-- markdown-pdf:
 watermark:
-  text: "DRAFT"
+  text: null
 -->
 # delta-gen — Code Generator Specification
 

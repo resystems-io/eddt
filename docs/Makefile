@@ -22,6 +22,7 @@ SOURCES = arrow-reader-gen.md \
           arrow-writer-gen-multipkg.md \
           arrow-writer-gen-nesting.md \
           arrow-writer-gen-refinements.md \
+          delta-gen.md \
           delta-gen-refinements.md \
           delta-gen-spec.md \
           eddt-context.md \
