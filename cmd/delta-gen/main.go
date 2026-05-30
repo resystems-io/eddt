@@ -17,6 +17,7 @@ func newRootCmd() *cobra.Command {
 		outPkgName          string
 		pkgAliases          []string
 		targetStructs       []string
+		structsAlias        []string // secondary alias for --type/-t; merged in RunE
 		outPath             string
 		verbose             bool
 		keyFieldValues      []string
@@ -54,10 +55,12 @@ Example usage:
   delta-gen --pkg ./internal/model --pkg ./internal/types --pkg-alias myapp/internal/types=modeltypes UESnapshot`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Merge --structs/-s into --type/-t (both target the same concept).
+			targetStructs = append(targetStructs, structsAlias...)
 			targetStructs = append(targetStructs, args...)
 			if len(targetStructs) == 0 {
 				return fmt.Errorf("at least one target struct must be specified " +
-					"(as a positional argument or via --type)")
+					"(as a positional argument or via --type / -t / --structs / -s)")
 			}
 
 			if standalone && standaloneHash != "blake2b" && standaloneHash != "sha256" {
@@ -130,6 +133,8 @@ Example usage:
 	cmd.Flags().StringVarP(&outPkgName, "pkg-name", "n", "", "Output package name (defaults to input package name)")
 	cmd.Flags().StringSliceVarP(&pkgAliases, "pkg-alias", "a", nil, "Aliases for imported packages in 'importpath=alias' format (e.g. go.example.com/pkg=mypkg)")
 	cmd.Flags().StringSliceVarP(&targetStructs, "type", "t", nil, "Snapshot struct(s) to generate delta types for. Repeatable or comma-separated. May also be passed as positional args.")
+	cmd.Flags().StringSliceVarP(&structsAlias, "structs", "s", nil,
+		"Alias for --type / -t (matches arrow-{reader,writer}-gen convention).")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "Output file path. If omitted, each struct is written to its own auto-derived <snake_struct>_delta.go file. If set, all structs are bundled into the named file.")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	cmd.Flags().StringSliceVar(&keyFieldValues, "key-field", nil,
