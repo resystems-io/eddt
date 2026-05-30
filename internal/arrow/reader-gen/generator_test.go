@@ -772,3 +772,153 @@ type OptionalAddr struct {
 		})
 	}
 }
+
+// TestGenerator_ElidesExistingReaders verifies that when a companion .go file in
+// the output directory already declares a reader constructor (e.g. NewInnerArrowReader),
+// the generator suppresses re-declaration and emits an elision comment block.
+// The target struct (Outer) is still fully generated.
+func TestGenerator_ElidesExistingReaders(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sourceCode := `package mypkg
+
+type Inner struct {
+	X int32
+}
+
+type Outer struct {
+	ID    int32
+	Child Inner
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
+		t.Fatalf("write structs.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	// Companion file pre-declares NewInnerArrowReader, simulating a prior reader-gen invocation.
+	companion := "package mypkg\n\nfunc NewInnerArrowReader() interface{} { return nil }\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "companion.go"), []byte(companion), 0644); err != nil {
+		t.Fatalf("write companion.go: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_reader.go")
+	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, false, nil)
+	if err := g.Run(""); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	outStr := string(outBytes)
+
+	// Target reader must be generated.
+	if !strings.Contains(outStr, "func NewOuterArrowReader(") {
+		t.Errorf("expected func NewOuterArrowReader() in output\n%s", outStr)
+	}
+	// Inner reader must not be re-declared.
+	if strings.Contains(outStr, "func NewInnerArrowReader(") {
+		t.Errorf("expected func NewInnerArrowReader() to be elided, but found a declaration\n%s", outStr)
+	}
+	// Elision comment block must name the companion file.
+	if !strings.Contains(outStr, "Schema helpers elided") {
+		t.Errorf("expected elision comment block in output\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "companion.go") {
+		t.Errorf("expected elision comment to reference companion.go\n%s", outStr)
+	}
+}
+
+// TestGenerator_RegenerateDoesNotSelfElideReader verifies that when the output file
+// already exists, its own prior declarations do not cause self-elision on re-generation.
+func TestGenerator_RegenerateDoesNotSelfElideReader(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sourceCode := `package mypkg
+
+type Target struct {
+	ID int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
+		t.Fatalf("write structs.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_reader.go")
+
+	prior := "package mypkg\n\nfunc NewTargetArrowReader() interface{} { return nil }\n"
+	if err := os.WriteFile(outPath, []byte(prior), 0644); err != nil {
+		t.Fatalf("write prior output: %v", err)
+	}
+
+	g := NewGenerator([]string{tmpDir}, []string{"Target"}, outPath, false, nil)
+	if err := g.Run(""); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	outStr := string(outBytes)
+
+	if !strings.Contains(outStr, "func NewTargetArrowReader(") {
+		t.Errorf("expected func NewTargetArrowReader() — output file must not self-elide\n%s", outStr)
+	}
+	if strings.Contains(outStr, "Schema helpers elided") {
+		t.Errorf("expected no elision comment when the only match is in the output file being overwritten\n%s", outStr)
+	}
+}
+
+// TestGenerator_EmptyDirNoElisionReader verifies that when there are no companion .go
+// files in the output directory, all reader functions are generated normally.
+func TestGenerator_EmptyDirNoElisionReader(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	sourceCode := `package mypkg
+
+type Inner struct {
+	X int32
+}
+
+type Outer struct {
+	ID    int32
+	Child Inner
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(sourceCode), 0644); err != nil {
+		t.Fatalf("write structs.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	outPath := filepath.Join(tmpDir, "out_reader.go")
+	g := NewGenerator([]string{tmpDir}, []string{"Outer"}, outPath, false, nil)
+	if err := g.Run(""); err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	outBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	outStr := string(outBytes)
+
+	if !strings.Contains(outStr, "func NewOuterArrowReader(") {
+		t.Errorf("expected func NewOuterArrowReader() in output\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "func NewInnerArrowReader(") {
+		t.Errorf("expected func NewInnerArrowReader() — no companion means no elision\n%s", outStr)
+	}
+	if strings.Contains(outStr, "Schema helpers elided") {
+		t.Errorf("expected no elision comment when no companion files present\n%s", outStr)
+	}
+}

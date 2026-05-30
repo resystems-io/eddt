@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
 )
@@ -52,6 +53,14 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	if err != nil {
 		return err
 	}
+
+	// Elide schema helpers already declared by companion files in the output package.
+	// See internal/arrow/gencommon/output_scan.go for semantics and limitations.
+	existing, err := gencommon.ScanOutputPackageSchemas(filepath.Dir(g.OutPath), g.OutPath, "ArrowReader")
+	if err != nil {
+		return fmt.Errorf("scanning output package for existing schemas: %w", err)
+	}
+	structs, elidedSchemas := gencommon.PartitionByExistingSchemas(structs, existing, "ArrowReader")
 
 	// Reader-gen imports arrow and array but not memory.
 	reserved := map[string]bool{"arrow": true, "array": true}
@@ -106,6 +115,7 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		Imports:            imports,
 		Structs:            structs,
 		HasUnmarshalFields: hasUnmarshal,
+		ElidedSchemas:      elidedSchemas,
 	}
 
 	var buf bytes.Buffer
