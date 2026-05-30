@@ -249,6 +249,16 @@ type snapshotView struct {
 	// in bottom-up order (deepest companion type first). Emitted before the
 	// parent TDelta declaration so forward references are avoided (R-DG-016).
 	NestedTypes []nestedTypeView
+
+	// Standalone is true when the generator ran with --standalone. Consumed by
+	// the standaloneMain template (template_standalone.go); not used by the
+	// normal deltaTemplate body.
+	Standalone bool
+
+	// StandaloneKeyHashLines holds the standaloneWrite* call strings for the
+	// EntityID function emitted by the standaloneMain template. Populated only
+	// when Standalone is true; empty otherwise.
+	StandaloneKeyHashLines []string
 }
 
 // fieldView is the template's per-field view of one payload field in TDelta.
@@ -350,6 +360,12 @@ type fieldView struct {
 	// (e.g. it contains a slice/map), so the Diff predicate must use
 	// reflect.DeepEqual instead of == for equality and zero-composite detection.
 	ClearableStructEqReflect bool
+
+	// ClearableQualifier is the package qualifier prepended to FieldDelta and
+	// Op* constants in the clearable templates. Set to "runtime." in normal
+	// mode and "" in standalone mode (where these types are local to the package).
+	// Only meaningful when Shape == fieldShapeClearable.
+	ClearableQualifier string
 
 	// SourceTypeStr is the rendered Go type string of the source Snapshot field
 	// (e.g. "string", "[]Tag", "map[string]string", "Address"). Used in generated
@@ -706,9 +722,9 @@ func (u {{.Name}}) Diff(other {{.Name}}) {{.DeltaName}} { return {{.DiffFuncName
 {{- end}}{{end}}{{end}}{{end -}}
 
 {{define "applyClearableField"}}switch d.{{.DeltaName}}.Op {
-case runtime.OpRetract:
+case {{.ClearableQualifier}}OpRetract:
 	result.{{.Name}} = {{.ClearableZeroComposite}}
-case runtime.OpAssert:
+case {{.ClearableQualifier}}OpAssert:
 	result.{{.Name}} = {{.ClearableApplyFunc}}(s.{{.Name}}, d.{{.DeltaName}}.Value)
 default:
 	result.{{.Name}} = s.{{.Name}}
@@ -716,17 +732,17 @@ default:
 
 {{define "diffClearableField"}}{{if .ClearableIsStruct}}if {{if .ClearableStructEqReflect}}!reflect.DeepEqual(a.{{.Name}}, b.{{.Name}}){{else}}a.{{.Name}} != b.{{.Name}}{{end}} {
 	if {{if .ClearableStructEqReflect}}reflect.DeepEqual(b.{{.Name}}, {{.ClearableZeroComposite}}){{else}}b.{{.Name}} == ({{.ClearableZeroComposite}}){{end}} {
-		d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpRetract}
+		d.{{.DeltaName}} = {{.ClearableQualifier}}FieldDelta[{{.ClearableInner}}]{Op: {{.ClearableQualifier}}OpRetract}
 	} else {
-		d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpAssert, Value: {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})}
+		d.{{.DeltaName}} = {{.ClearableQualifier}}FieldDelta[{{.ClearableInner}}]{Op: {{.ClearableQualifier}}OpAssert, Value: {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})}
 	}
 }{{else}}{
 	__inner := {{.ClearableDiffFunc}}(a.{{.Name}}, b.{{.Name}})
 	if !__inner.IsEmpty() {
 		if b.{{.Name}} == nil {
-			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpRetract}
+			d.{{.DeltaName}} = {{.ClearableQualifier}}FieldDelta[{{.ClearableInner}}]{Op: {{.ClearableQualifier}}OpRetract}
 		} else {
-			d.{{.DeltaName}} = runtime.FieldDelta[{{.ClearableInner}}]{Op: runtime.OpAssert, Value: __inner}
+			d.{{.DeltaName}} = {{.ClearableQualifier}}FieldDelta[{{.ClearableInner}}]{Op: {{.ClearableQualifier}}OpAssert, Value: __inner}
 		}
 	}
 }{{end}}{{end -}}
@@ -919,16 +935,20 @@ func parsePkgAliases(raw []string) map[string]string {
 // buildSnapshotView for every snapshot) before calling getImports(), so that
 // the full set of required imports is captured.
 //
-// The runtime package is pre-seeded (always required for the embedded Header).
+// In normal mode (standalone == false), the runtime package is pre-seeded
+// (always required for the embedded Header). In standalone mode it is omitted
+// entirely — generated files import nothing from go.resystems.io/eddt/runtime.
 // In cross-package mode the source packages are also pre-seeded.
 func buildImports(
 	snapshots []*ParsedSnapshot,
 	opts emitOpts,
+	standalone bool,
 ) (qualifier types.Qualifier, getImports func() []importSpec, recordExtra func(string)) {
 	// recorded maps import-path → importSpec; populated eagerly for runtime and
 	// cross-pkg sources, and lazily by the qualifier closure for foreign types.
-	recorded := map[string]importSpec{
-		runtimeImportPath: {Path: runtimeImportPath},
+	recorded := map[string]importSpec{}
+	if !standalone {
+		recorded[runtimeImportPath] = importSpec{Path: runtimeImportPath}
 	}
 
 	// In cross-package mode pre-seed the source package import(s).
@@ -1268,7 +1288,15 @@ func buildClearableFieldView(
 	emitMethod bool,
 	visited map[string]bool,
 	inPath map[string]bool,
+	standalone bool,
 ) error {
+	// cq is "runtime." in normal mode and "" in standalone mode, qualifying
+	// FieldDelta[T] and Op* constants in the clearable templates.
+	cq := "runtime."
+	if standalone {
+		cq = ""
+	}
+
 	switch f.Shape {
 	case ShapeSlice:
 		sliceT := f.GoType.Underlying().(*types.Slice)
@@ -1279,13 +1307,14 @@ func buildClearableFieldView(
 		fv := fieldView{
 			Name:                   f.Name,
 			DeltaName:              f.Name,
-			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
+			DeltaType:              cq + "FieldDelta[" + innerName + "]",
 			Shape:                  fieldShapeClearable,
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
 			ClearableApplyFunc:     prefixApply + innerName,
 			ClearableDiffFunc:      prefixDiff + innerName,
+			ClearableQualifier:     cq,
 			SourceTypeStr:          sliceStr,
 		}
 		sv.Fields = append(sv.Fields, fv)
@@ -1317,13 +1346,14 @@ func buildClearableFieldView(
 		fv := fieldView{
 			Name:                   f.Name,
 			DeltaName:              f.Name,
-			DeltaType:              "runtime.FieldDelta[" + innerName + "]",
+			DeltaType:              cq + "FieldDelta[" + innerName + "]",
 			Shape:                  fieldShapeClearable,
 			ClearableInner:         innerName,
 			ClearableIsStruct:      false,
 			ClearableZeroComposite: "nil",
 			ClearableApplyFunc:     prefixApply + innerName,
 			ClearableDiffFunc:      prefixDiff + innerName,
+			ClearableQualifier:     cq,
 			SourceTypeStr:          mapStr,
 		}
 		sv.Fields = append(sv.Fields, fv)
@@ -1358,7 +1388,7 @@ func buildClearableFieldView(
 		fv := fieldView{
 			Name:                     f.Name,
 			DeltaName:                f.Name,
-			DeltaType:                "runtime.FieldDelta[" + subTypeName + suffixDelta + "]",
+			DeltaType:                cq + "FieldDelta[" + subTypeName + suffixDelta + "]",
 			Shape:                    fieldShapeClearable,
 			ClearableInner:           subTypeName + suffixDelta,
 			ClearableIsStruct:        true,
@@ -1366,6 +1396,7 @@ func buildClearableFieldView(
 			ClearableApplyFunc:       prefixApply + subTypeName,
 			ClearableDiffFunc:        prefixDiff + subTypeName,
 			ClearableStructEqReflect: eqReflect,
+			ClearableQualifier:       cq,
 			SourceTypeStr:            qualifiedSub,
 		}
 		sv.Fields = append(sv.Fields, fv)
@@ -1426,11 +1457,12 @@ func buildClearableFieldView(
 //
 // The caller must pass a qualifier derived from buildImports so that foreign
 // packages are recorded as a side effect of type rendering.
-func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod bool) (snapshotView, error) {
+func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod bool, standalone bool) (snapshotView, error) {
 	sv := snapshotView{
-		Name:      ps.Name,
-		DeltaName: ps.Name + suffixDelta,
-		KeyName:   ps.KeyVar.Name(),
+		Name:       ps.Name,
+		DeltaName:  ps.Name + suffixDelta,
+		KeyName:    ps.KeyVar.Name(),
+		Standalone: standalone,
 	}
 
 	// Resolve the key type name and hash lines (R-DG-034).
@@ -1445,6 +1477,16 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 		return snapshotView{}, err
 	}
 	sv.KeyHashLines = hashLines
+
+	// Standalone mode also needs standalone-prefixed hash lines for the
+	// standaloneMain template's entityIDFuncStandalone sub-template.
+	if standalone {
+		standaloneLines, err := buildStandaloneKeyHashLines(ps.KeyVar.Type(), ps.KeyShape)
+		if err != nil {
+			return snapshotView{}, err
+		}
+		sv.StandaloneKeyHashLines = standaloneLines
+	}
 
 	visited := make(map[string]bool) // dedup set for nested companion types (R-DG-016)
 	inPath := make(map[string]bool)  // active DFS ancestry chain for cycle detection (R-DG-009)
@@ -1461,7 +1503,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 		// R-DG-016..07: delta.nested+delta.clearable → FieldDelta[<inner>] envelope.
 		// Handled before the shared dispatch since it accumulates directly into sv.
 		if f.Tag.Kind == TagKindNested && f.Tag.Clearable {
-			if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath); err != nil {
+			if err := buildClearableFieldView(f, &sv, qualifier, emitMethod, visited, inPath, standalone); err != nil {
 				return snapshotView{}, err
 			}
 			continue
@@ -1542,7 +1584,7 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 	}
 
 	// Step 2: build the qualifier, import-recorder, and extra-import injector.
-	qualifier, getImports, recordExtra := buildImports(snapshots, opts)
+	qualifier, getImports, recordExtra := buildImports(snapshots, opts, g.Standalone)
 
 	// emitMethod gates same-package method wrappers (R-DG-012, R-DG-013, R-DG-019); precomputed once.
 	emitMethod := !g.CrossPackage
@@ -1550,7 +1592,7 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 	// Step 3: translate each snapshot into a template view.
 	views := make([]snapshotView, 0, len(snapshots))
 	for _, ps := range snapshots {
-		sv, err := buildSnapshotView(ps, qualifier, emitMethod)
+		sv, err := buildSnapshotView(ps, qualifier, emitMethod, g.Standalone)
 		if err != nil {
 			return err
 		}
@@ -1595,9 +1637,15 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		Snapshots:   views,
 	}
 
-	// Step 5: execute template.
+	// Step 5: execute template. Standalone mode uses the "standaloneMain" named
+	// sub-template (defined in template_standalone.go and parsed into deltaTemplate
+	// at init time); normal mode uses the root "delta" template.
 	var buf bytes.Buffer
-	if err := deltaTemplate.Execute(&buf, data); err != nil {
+	templateName := "delta"
+	if g.Standalone {
+		templateName = "standaloneMain"
+	}
+	if err := deltaTemplate.ExecuteTemplate(&buf, templateName, data); err != nil {
 		return fmt.Errorf("delta-gen: template execution failed: %w", err)
 	}
 

@@ -63,19 +63,42 @@ type Config struct {
 	// OutPkgNameOverride is the caller-supplied --pkg-name value. When non-empty
 	// it overrides the auto-detected source package name in the output file.
 	OutPkgNameOverride string
+
+	// Standalone enables runtime-independent code generation. When true:
+	//   - Snapshot structs may omit the embedded runtime.Header field.
+	//   - Generated *_delta.go files import nothing from go.resystems.io/eddt/runtime.
+	//   - Apply, Diff, and Coalesce are pure functions with no error return.
+	//   - A companion file (StandaloneTypesFile) is emitted with local
+	//     equivalents of EntityID, FieldDelta[T], FieldDeltaOp, and hash helpers.
+	// Mutually exclusive with embedding runtime.Header in any target Snapshot.
+	Standalone bool
+
+	// StandaloneHash selects the EntityID hash algorithm for standalone mode.
+	// Accepted values: "blake2b" (default — blake2b-256 via golang.org/x/crypto,
+	// EntityID-compatible with eddt/runtime) and "sha256" (stdlib crypto/sha256,
+	// different EntityID values). Ignored when Standalone is false.
+	StandaloneHash string
+
+	// StandaloneTypesFile is the filename of the generated companion local-types
+	// file (default "delta_types.go"). Resolved relative to the output file's
+	// directory. Ignored when Standalone is false.
+	StandaloneTypesFile string
 }
 
 // Generator holds the configuration for a single delta-gen invocation.
 type Generator struct {
 	// Input fields — set from Config by New.
-	InputPkgs          []string
-	TargetStructs      []string
-	OutPath            string
-	PkgAliases         []string
-	Version            string
-	KeyFields          map[string]string
-	Log                *slog.Logger
-	OutPkgNameOverride string
+	InputPkgs           []string
+	TargetStructs       []string
+	OutPath             string
+	PkgAliases          []string
+	Version             string
+	KeyFields           map[string]string
+	Log                 *slog.Logger
+	OutPkgNameOverride  string
+	Standalone          bool
+	StandaloneHash      string
+	StandaloneTypesFile string
 
 	// Derived state — populated by Run after the load/resolve stages.
 
@@ -94,14 +117,17 @@ type Generator struct {
 // by Run.
 func New(cfg Config) *Generator {
 	return &Generator{
-		InputPkgs:          cfg.InputPkgs,
-		TargetStructs:      cfg.TargetStructs,
-		OutPath:            cfg.OutPath,
-		PkgAliases:         cfg.PkgAliases,
-		Version:            cfg.Version,
-		KeyFields:          cfg.KeyFields,
-		Log:                cfg.Log,
-		OutPkgNameOverride: cfg.OutPkgNameOverride,
+		InputPkgs:           cfg.InputPkgs,
+		TargetStructs:       cfg.TargetStructs,
+		OutPath:             cfg.OutPath,
+		PkgAliases:          cfg.PkgAliases,
+		Version:             cfg.Version,
+		KeyFields:           cfg.KeyFields,
+		Log:                 cfg.Log,
+		OutPkgNameOverride:  cfg.OutPkgNameOverride,
+		Standalone:          cfg.Standalone,
+		StandaloneHash:      cfg.StandaloneHash,
+		StandaloneTypesFile: cfg.StandaloneTypesFile,
 	}
 }
 
@@ -182,6 +208,7 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 		opts := ParseOpts{
 			CrossPackage:     g.CrossPackage,
 			KeyFieldOverride: g.KeyFields[structName],
+			Standalone:       g.Standalone,
 		}
 		ps, err := parseSnapshot(pkgs, structName, opts)
 		if err != nil {
@@ -213,6 +240,14 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 // R-DG-015 emits the TDelta struct (embedded runtime.Header + per-field atomic
 // Set<Name> declarations) via the text/template pipeline in template.go.
 // Apply, Diff, Coalesce, and EntityID bodies land in R-DG-012, R-DG-013, R-DG-014, R-DG-034.
+// In standalone mode, the companion local-types file is also emitted after the
+// delta file (see template_standalone.go).
 func (g *Generator) emitStage(snapshots []*ParsedSnapshot) error {
-	return executeEmit(snapshots, g)
+	if err := executeEmit(snapshots, g); err != nil {
+		return err
+	}
+	if g.Standalone {
+		return emitStandaloneTypes(g)
+	}
+	return nil
 }

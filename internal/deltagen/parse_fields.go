@@ -45,7 +45,8 @@ func parseFields(
 			continue
 		}
 
-		if types.Identical(field.Type(), headerType) {
+		// headerType is nil in standalone mode (no runtime.Header expected).
+		if headerType != nil && types.Identical(field.Type(), headerType) {
 			if header != nil {
 				return nil, nil, fmt.Errorf(
 					"struct %q has multiple embedded runtime.Header fields; exactly one is required",
@@ -104,7 +105,11 @@ func parseFields(
 // containsHeaderEmbed reports whether t directly embeds a field of type headerType.
 // Used by parseFields to reject delta.nested struct types that embed runtime.Header
 // (they would be chain anchors, not sub-structures — §3.3.2).
+// Returns false when headerType is nil (standalone mode: no Header to detect).
 func containsHeaderEmbed(t types.Type, headerType types.Type) bool {
+	if headerType == nil {
+		return false
+	}
 	st, ok := t.Underlying().(*types.Struct)
 	if !ok {
 		return false

@@ -13,13 +13,16 @@ import (
 
 func newRootCmd() *cobra.Command {
 	var (
-		inputPkgs      []string
-		outPkgName     string
-		pkgAliases     []string
-		targetStructs  []string
-		outPath        string
-		verbose        bool
-		keyFieldValues []string
+		inputPkgs           []string
+		outPkgName          string
+		pkgAliases          []string
+		targetStructs       []string
+		outPath             string
+		verbose             bool
+		keyFieldValues      []string
+		standalone          bool
+		standaloneHash      string
+		standaloneTypesFile string
 	)
 
 	cmd := &cobra.Command{
@@ -57,6 +60,10 @@ Example usage:
 					"(as a positional argument or via --type)")
 			}
 
+			if standalone && standaloneHash != "blake2b" && standaloneHash != "sha256" {
+				return fmt.Errorf("--standalone-hash: expected \"blake2b\" or \"sha256\", got %q", standaloneHash)
+			}
+
 			keyFields, err := parseKeyFields(keyFieldValues, targetStructs)
 			if err != nil {
 				return err
@@ -77,14 +84,17 @@ Example usage:
 				// Explicit --out: bundle all targets into one file.
 				log.Info("generating delta types", "structs", targetStructs, "packages", inputPkgs, "out", outPath)
 				gen := deltagen.New(deltagen.Config{
-					InputPkgs:          inputPkgs,
-					TargetStructs:      targetStructs,
-					OutPath:            outPath,
-					PkgAliases:         pkgAliases,
-					Version:            rev,
-					KeyFields:          keyFields,
-					Log:                log,
-					OutPkgNameOverride: outPkgName,
+					InputPkgs:           inputPkgs,
+					TargetStructs:       targetStructs,
+					OutPath:             outPath,
+					PkgAliases:          pkgAliases,
+					Version:             rev,
+					KeyFields:           keyFields,
+					Log:                 log,
+					OutPkgNameOverride:  outPkgName,
+					Standalone:          standalone,
+					StandaloneHash:      standaloneHash,
+					StandaloneTypesFile: standaloneTypesFile,
 				})
 				if err := gen.Run(); err != nil {
 					return err
@@ -126,6 +136,17 @@ Example usage:
 		"Entity-key field override: bare 'FieldName' applies to all --type targets; "+
 			"'StructName=FieldName' applies to one struct only. Repeatable and comma-separated. "+
 			"Overrides the eddt:\"entity.key\" tag when both are present.")
+	cmd.Flags().BoolVar(&standalone, "standalone", false,
+		"Generate runtime-independent code: no eddt/runtime import, runtime.Header not required. "+
+			"Apply/Diff/Coalesce are pure functions with no error return. "+
+			"A companion local-types file is emitted alongside the *_delta.go file.")
+	cmd.Flags().StringVar(&standaloneHash, "standalone-hash", "blake2b",
+		"EntityID hash algorithm for standalone mode: \"blake2b\" (default, compatible with eddt/runtime) "+
+			"or \"sha256\" (stdlib-only, different EntityID values). Ignored unless --standalone is set.")
+	cmd.Flags().StringVar(&standaloneTypesFile, "standalone-types", "delta_types.go",
+		"Filename of the generated companion local-types file in standalone mode "+
+			"(default \"delta_types.go\"). Resolved relative to the output file directory. "+
+			"Ignored unless --standalone is set.")
 
 	return cmd
 }

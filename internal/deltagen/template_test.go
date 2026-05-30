@@ -94,9 +94,9 @@ func TestBuildSnapshotView(t *testing.T) {
 	// Load and parse the atomic_all fixture; use same-package qualifier.
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 	opts := emitOpts{crossPackage: false, aliases: nil}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
 
-	sv, err := buildSnapshotView(ps, qualifier, true)
+	sv, err := buildSnapshotView(ps, qualifier, true, false)
 	if err != nil {
 		t.Fatalf("buildSnapshotView: unexpected error: %v", err)
 	}
@@ -209,9 +209,9 @@ func TestBuildSnapshotView(t *testing.T) {
 func TestBuildSnapshotView_KeyName(t *testing.T) {
 	ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 	opts := emitOpts{crossPackage: false}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
 
-	sv, err := buildSnapshotView(ps, qualifier, true)
+	sv, err := buildSnapshotView(ps, qualifier, true, false)
 	if err != nil {
 		t.Fatalf("buildSnapshotView: %v", err)
 	}
@@ -230,8 +230,8 @@ func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 	t.Run("HasNonScalar", func(t *testing.T) {
 		ps := loadEmitFixture(t, "atomic_all", "AtomicAllSnapshot")
 		opts := emitOpts{crossPackage: false}
-		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
-		sv, err := buildSnapshotView(ps, qualifier, true)
+		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
+		sv, err := buildSnapshotView(ps, qualifier, true, false)
 		if err != nil {
 			t.Fatalf("buildSnapshotView: %v", err)
 		}
@@ -244,8 +244,8 @@ func TestBuildSnapshotView_NeedsReflect(t *testing.T) {
 	t.Run("AllScalar", func(t *testing.T) {
 		ps := loadEmitFixture(t, "scalar_only", "ScalarOnlySnapshot")
 		opts := emitOpts{crossPackage: false}
-		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
-		sv, err := buildSnapshotView(ps, qualifier, true)
+		qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
+		sv, err := buildSnapshotView(ps, qualifier, true, false)
 		if err != nil {
 			t.Fatalf("buildSnapshotView: %v", err)
 		}
@@ -1282,14 +1282,14 @@ func TestEmitTemplate_EntityID_TagVsOverridePathEquivalence(t *testing.T) {
 
 	// Build views for both parse results.
 	opts := emitOpts{crossPackage: false}
-	qualTag, _, _ := buildImports([]*ParsedSnapshot{psTag}, opts)
-	qualOverride, _, _ := buildImports([]*ParsedSnapshot{psOverride}, opts)
+	qualTag, _, _ := buildImports([]*ParsedSnapshot{psTag}, opts, false)
+	qualOverride, _, _ := buildImports([]*ParsedSnapshot{psOverride}, opts, false)
 
-	svTag, err := buildSnapshotView(psTag, qualTag, true)
+	svTag, err := buildSnapshotView(psTag, qualTag, true, false)
 	if err != nil {
 		t.Fatalf("buildSnapshotView (tag): %v", err)
 	}
-	svOverride, err := buildSnapshotView(psOverride, qualOverride, true)
+	svOverride, err := buildSnapshotView(psOverride, qualOverride, true, false)
 	if err != nil {
 		t.Fatalf("buildSnapshotView (override): %v", err)
 	}
@@ -1334,9 +1334,9 @@ func TestBuildSnapshotView_UnsupportedKeyUnderlying(t *testing.T) {
 	}
 
 	opts := emitOpts{crossPackage: false}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
 
-	_, err := buildSnapshotView(ps, qualifier, true)
+	_, err := buildSnapshotView(ps, qualifier, true, false)
 	if err == nil {
 		t.Fatal("expected error for unsupported float64 key underlying type, got nil")
 	}
@@ -2870,9 +2870,9 @@ func TestEmitTemplate_Nested_AnonymousStruct_Error(t *testing.T) {
 	}
 
 	opts := emitOpts{crossPackage: false}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
 
-	_, err := buildSnapshotView(ps, qualifier, true)
+	_, err := buildSnapshotView(ps, qualifier, true, false)
 	if err == nil {
 		t.Fatal("expected error for anonymous nested struct type, got nil")
 	}
@@ -2924,9 +2924,9 @@ func TestBuildSnapshotView_CycleDetected(t *testing.T) {
 	}
 
 	opts := emitOpts{crossPackage: false}
-	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts)
+	qualifier, _, _ := buildImports([]*ParsedSnapshot{ps}, opts, false)
 
-	_, err := buildSnapshotView(ps, qualifier, true)
+	_, err := buildSnapshotView(ps, qualifier, true, false)
 	if err == nil {
 		t.Fatal("expected cycle error from buildSnapshotView, got nil")
 	}

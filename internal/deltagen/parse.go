@@ -173,6 +173,12 @@ type ParseOpts struct {
 	// parseKeyField. When both a tag and an override name a key field, the
 	// override silently wins (the CLI layer emits a --verbose warning).
 	KeyFieldOverride string
+
+	// Standalone, when true, allows the Snapshot struct to omit the embedded
+	// runtime.Header field. The source package need not import eddt/runtime.
+	// Mutually exclusive with embedding runtime.Header — standalone mode
+	// rejects Snapshots that do embed it.
+	Standalone bool
 }
 
 // parseSnapshot resolves and parses the Snapshot struct named structName from
@@ -188,11 +194,21 @@ type ParseOpts struct {
 // so the emit stage's payload loops do not have to filter it.
 func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) (*ParsedSnapshot, error) {
 	// Step 1: resolve the runtime.Header type for identity-based recognition.
-	// We compare by type identity rather than field name so that aliased
-	// imports (e.g. "import eddt go.resystems.io/eddt/runtime") work correctly.
-	headerType, err := headerTypeFor(pkgs)
-	if err != nil {
-		return nil, err
+	// In normal mode this is required; in standalone mode the source package
+	// need not import eddt/runtime but we still attempt resolution so that
+	// we can provide a helpful error if runtime.Header is accidentally embedded.
+	var headerType types.Type
+	if !opts.Standalone {
+		var err error
+		headerType, err = headerTypeFor(pkgs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Silently ignore "not found" — standalone packages typically do not
+		// import eddt/runtime; a non-nil headerType is only obtained when the
+		// source package explicitly imports it (allowing us to reject the embed).
+		headerType, _ = headerTypeFor(pkgs)
 	}
 
 	// Step 2: locate the target struct in the top-level packages.
@@ -212,11 +228,18 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 		return nil, err
 	}
 
-	// Require exactly one embedded Header. parseFields rejects more than one;
-	// the remaining failure mode is total absence.
+	// Validate Header presence vs. standalone mode expectation.
 	if headerVar == nil {
+		if !opts.Standalone {
+			return nil, fmt.Errorf(
+				"struct %q has no embedded runtime.Header field; a conforming Snapshot must embed exactly one Header",
+				structName)
+		}
+		// standalone mode: absence of runtime.Header is expected and valid.
+	} else if opts.Standalone {
 		return nil, fmt.Errorf(
-			"struct %q has no embedded runtime.Header field; a conforming Snapshot must embed exactly one Header",
+			"standalone mode: struct %q must not embed runtime.Header "+
+				"(--standalone generates plain structs without chain-lifecycle envelope)",
 			structName)
 	}
 
@@ -232,7 +255,7 @@ func parseSnapshot(pkgs []*packages.Package, structName string, opts ParseOpts) 
 		Name:      structName,
 		PkgPath:   pkg.PkgPath,
 		PkgName:   pkg.Name,
-		HeaderVar: headerVar,
+		HeaderVar: headerVar, // nil in standalone mode (no Header embedding)
 		KeyVar:    keyVar,
 		KeyShape:  keyShape,
 		Fields:    fields,
