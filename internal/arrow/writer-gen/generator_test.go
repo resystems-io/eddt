@@ -289,6 +289,49 @@ type WebLink struct {
 			mustNotContain: []string{"MarshalText"},
 		},
 		{
+			// **T where T implements fmt.Stringer: outer **T must dereference once
+			// before calling .String(). The resolver fix clears MarshalMethod on the
+			// outer FieldInfo so the template takes the IsPointer+EltInfo path and
+			// emits a two-level nil guard + .String() on the inner *T.
+			name: "double-pointer-stringer",
+			goCode: `package mypkg
+
+import "net/url"
+
+type OptionalLink struct {
+	Site **url.URL
+}
+`,
+			targetStruct: "OptionalLink",
+			mustContain: []string{
+				`{Name: "Site",`,
+				"AppendNull",
+				".String()",
+			},
+			// The bug was calling .String() directly on **url.URL, which has no method set.
+			mustNotContain: []string{"row.Site.String()"},
+		},
+		{
+			// **T where T implements encoding.TextMarshaler: same resolver fix ensures
+			// MarshalText is called on the dereferenced *T, not on **T.
+			name: "double-pointer-text-marshaler",
+			goCode: `package mypkg
+
+import "net/netip"
+
+type OptionalAddr struct {
+	Addr **netip.Addr
+}
+`,
+			targetStruct: "OptionalAddr",
+			mustContain: []string{
+				`{Name: "Addr",`,
+				"AppendNull",
+				".MarshalText()",
+			},
+			mustNotContain: []string{"row.Addr.MarshalText()"},
+		},
+		{
 			name: "external-type-unsupported-skipped",
 			goCode: `package mypkg
 

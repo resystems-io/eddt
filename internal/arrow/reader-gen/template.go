@@ -464,6 +464,39 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 		if r.col{{.F.Name}}.IsNull(i) {
 			out.{{.F.Name}} = nil
 		} else {
+		{{- if .F.EltInfo.UnmarshalMethod}}
+			if out.{{.F.Name}} == nil {
+				innerPtr := &{{stripPtr .F.EltInfo.QualifiedGoType}}{}
+				out.{{.F.Name}} = &innerPtr
+			} else if *out.{{.F.Name}} == nil {
+				*out.{{.F.Name}} = &{{stripPtr .F.EltInfo.QualifiedGoType}}{}
+			}
+		{{- if eq .F.EltInfo.UnmarshalMethod "UnmarshalText"}}
+			if err := (*out.{{.F.Name}}).{{.F.EltInfo.UnmarshalMethod}}([]byte(r.col{{.F.Name}}.Value(i))); err != nil {
+		{{- else}}
+			if err := (*out.{{.F.Name}}).{{.F.EltInfo.UnmarshalMethod}}(r.col{{.F.Name}}.Value(i)); err != nil {
+		{{- end}}
+				r.errs = append(r.errs, ReadError{Row: i, Field: "{{.F.Name}}", Err: err})
+				out.{{.F.Name}} = nil
+			}
+		{{- else if and .F.EltInfo.ConvertBackExpr .F.EltInfo.ConvertBackIsPtr}}
+			if out.{{.F.Name}} == nil {
+				v := {{printf .F.EltInfo.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+				out.{{.F.Name}} = &v
+			} else {
+				*out.{{.F.Name}} = {{printf .F.EltInfo.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+			}
+		{{- else if .F.EltInfo.ConvertBackExpr}}
+			innerVal := {{printf .F.EltInfo.ConvertBackExpr (printf "r.col%s.Value(i)" .F.Name)}}
+			if out.{{.F.Name}} == nil {
+				inner := &innerVal
+				out.{{.F.Name}} = &inner
+			} else if *out.{{.F.Name}} == nil {
+				*out.{{.F.Name}} = &innerVal
+			} else {
+				**out.{{.F.Name}} = innerVal
+			}
+		{{- else}}
 			innerVal := {{.F.EltInfo.CastType}}(r.col{{.F.Name}}.Value(i))
 			if out.{{.F.Name}} == nil {
 				inner := &innerVal
@@ -473,6 +506,7 @@ func (r *{{.Name}}ArrowReader) ResetErrors() { r.errs = r.errs[:0] }
 			} else {
 				**out.{{.F.Name}} = innerVal
 			}
+		{{- end}}
 		}
 	}
 {{- else if and .F.ValueMethod (not .F.IsPointer) (not .F.IsStruct) (not .F.IsList) (not .F.IsMap) (not .F.IsFixedSizeList) (or (eq .F.MarshalMethod "") (ne .F.UnmarshalMethod ""))}}

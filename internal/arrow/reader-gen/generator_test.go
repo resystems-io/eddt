@@ -3,6 +3,7 @@ package readergen
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -698,4 +699,76 @@ type Person struct {
 			t.Fatalf("reader-gen should not reserve 'memory', got error: %v", err)
 		}
 	})
+}
+
+// TestGenerator_RunOutput_DoublePointerExternalTypes verifies that **T fields where T is
+// an external type implementing TextMarshaler or Stringer are handled correctly. The
+// resolver fix (clearing MarshalMethod on the outer **T FieldInfo) routes these fields
+// through the IsPointer+EltInfo template path, which dereferences before calling the
+// unmarshal method on the inner *T.
+func TestGenerator_RunOutput_DoublePointerExternalTypes(t *testing.T) {
+	tests := []struct {
+		name           string
+		goCode         string
+		targetStruct   string
+		mustContain    []string
+		mustNotContain []string
+	}{
+		{
+			// **netip.Addr implements encoding.TextMarshaler (via *netip.Addr); the reader
+			// must unmarshal via UnmarshalText after one level of pointer allocation.
+			name: "double-pointer-text-marshaler",
+			goCode: `package mypkg
+
+import "net/netip"
+
+type OptionalAddr struct {
+	Addr **netip.Addr
+}
+`,
+			targetStruct: "OptionalAddr",
+			mustContain: []string{
+				"colAddr",
+				"UnmarshalText",
+				"IsNull",
+			},
+			// Must not call any marshal method directly on the outer **netip.Addr.
+			mustNotContain: []string{"r.colAddr.MarshalText()", "r.colAddr.UnmarshalText("},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tmpDir, "test.go"), []byte(tt.goCode), 0644); err != nil {
+				t.Fatalf("write test file: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+				t.Fatalf("write go.mod: %v", err)
+			}
+
+			outPath := filepath.Join(tmpDir, "out_reader.go")
+			g := NewGenerator([]string{tmpDir}, []string{tt.targetStruct}, outPath, false, nil)
+			if err := g.Run(""); err != nil {
+				t.Fatalf("Run() failed: %v", err)
+			}
+
+			outBytes, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+			outStr := string(outBytes)
+
+			for _, want := range tt.mustContain {
+				if !strings.Contains(outStr, want) {
+					t.Errorf("expected output to contain %q\n--- output ---\n%s", want, outStr)
+				}
+			}
+			for _, unwanted := range tt.mustNotContain {
+				if strings.Contains(outStr, unwanted) {
+					t.Errorf("expected output NOT to contain %q\n--- output ---\n%s", unwanted, outStr)
+				}
+			}
+		})
+	}
 }
