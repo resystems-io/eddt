@@ -25,6 +25,7 @@ watermark:
   - [Package-Level Functions](#package-level-functions)
   - [Same-Package Method Wrappers](#same-package-method-wrappers)
   - [Calling Pattern](#calling-pattern)
+  - [Direct Delta Construction](#direct-delta-construction)
 - [Cross-Package Mode](#cross-package-mode)
   - [Behaviour Differences](#behaviour-differences)
   - [Key Flags for Cross-Package Mode](#key-flags-for-cross-package-mode)
@@ -397,7 +398,7 @@ pump := &pump.PumpSnapshot{
     TempCelsius:  72.3,
 }
 
-// --- Producing a delta ---
+// --- Producing a delta via Diff ---
 
 updated := *pump
 updated.PressureKPa = 855.5
@@ -415,6 +416,68 @@ if err != nil {
 }
 
 // Round-trip invariant always holds: Apply(a, Diff(a, b)).payload == b.payload
+```
+
+### Direct Delta Construction
+
+A `TDelta` is a plain Go struct and can be constructed directly. This is
+preferable when the change source already knows exactly which fields changed
+(e.g. an incoming sensor message or a partial update from an external system)
+and constructing a full updated snapshot just to call `Diff` would be wasteful.
+
+Every field in the Delta struct is a pointer (or a `runtime.FieldDelta[T]` for
+clearable fields). A nil pointer means *no change*; a non-nil pointer carries
+the new value. Only set the fields you intend to advance.
+
+```go
+// --- Direct construction: update pressure only ---
+
+newPressure := float32(855.5)
+now := time.Now()
+
+delta := &pump.PumpSnapshotDelta{
+    Header: runtime.Header{
+        EntityID:    current.Header.EntityID,
+        ChainID:     current.Header.ChainID,
+        Sequence:    current.Header.Sequence + 1,
+        EffectiveAt: now,
+        PublishedAt: now,
+        Provenance:  append(current.Header.Provenance, runtime.Provenance{
+            PublishedAt: now,
+            Solution:    "plant-control",
+            Component:   "pressure-monitor",
+        }),
+    },
+    SetPressureKPa: &newPressure,
+    // SetTempCelsius: nil — temperature unchanged
+    // SetCalibration: nil — calibration unchanged
+}
+
+next, err := pump.Apply(current, delta)
+
+// --- Direct construction: update a nested companion field ---
+
+offset := float32(-0.3)
+calibDelta := &pump.CalibrationDelta{
+    SetOffsetKPa: &offset,
+    // SetLastCalibAt: nil — leave timestamp unchanged
+}
+
+delta.SetCalibration = calibDelta
+
+// --- Direct construction: clearable field ---
+// (when Location is tagged delta.nested,delta.clearable)
+
+delta.Location = runtime.FieldDelta[pump.SiteAddressDelta]{
+    Op:    runtime.OpAssert,
+    Value: pump.SiteAddressDelta{SetCity: ptr("Berlin")},
+}
+
+// Retract a clearable field (reset to zero):
+delta.Location = runtime.FieldDelta[pump.SiteAddressDelta]{Op: runtime.OpRetract}
+
+// Leave a clearable field unchanged (zero value = OpIgnore):
+// delta.Location is left as its zero value — no action needed
 ```
 
 ## Cross-Package Mode
