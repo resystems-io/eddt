@@ -17,7 +17,7 @@ var epoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 // newHeader constructs a minimal Header suitable for the first snapshot in a chain.
 func newHeader(serialNumber string) runtime.Header {
 	return runtime.Header{
-		EntityID:    pump.EntityID(serialNumber),
+		EntityID:    pump.EntityIDPumpSnapshot(serialNumber),
 		ChainID:     "chain-" + serialNumber,
 		Sequence:    0,
 		EffectiveAt: epoch,
@@ -43,15 +43,15 @@ func advanceHeader(prior runtime.Header, seq uint64) runtime.Header {
 
 // TestEntityID verifies EntityID is non-zero and deterministic.
 func TestEntityID(t *testing.T) {
-	id1 := pump.EntityID("SN-4719")
-	id2 := pump.EntityID("SN-4719")
+	id1 := pump.EntityIDPumpSnapshot("SN-4719")
+	id2 := pump.EntityIDPumpSnapshot("SN-4719")
 	if id1.IsZero() {
 		t.Fatal("EntityID should be non-zero")
 	}
 	if id1 != id2 {
 		t.Fatal("EntityID should be deterministic for equal input")
 	}
-	idOther := pump.EntityID("SN-0001")
+	idOther := pump.EntityIDPumpSnapshot("SN-0001")
 	if id1 == idOther {
 		t.Fatal("EntityID should differ for different serial numbers")
 	}
@@ -71,7 +71,7 @@ func TestDiff_atomicChange(t *testing.T) {
 	b.Header = advanceHeader(a.Header, 1)
 	b.PressureKPa = 855.5
 
-	d, err := pump.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -102,11 +102,11 @@ func TestApply_roundTrip(t *testing.T) {
 	b.PressureKPa = 855.5
 	b.Location = pump.SiteAddress{Street: "Mill Road 1", City: "Hamburg"}
 
-	d, err := pump.Diff(a, b)
+	d, err := a.Diff(b)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	got, err := pump.Apply(a, d)
+	got, err := a.Apply(d)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestDirectDelta_atomic(t *testing.T) {
 		// Calibration:   zero-valued FieldDelta (OpIgnore) — no calibration change
 	}
 
-	next, err := pump.Apply(current, delta)
+	next, err := current.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestDirectDelta_nested(t *testing.T) {
 		},
 	}
 
-	next, err := pump.Apply(current, delta)
+	next, err := current.Apply(delta)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDirectDelta_clearable(t *testing.T) {
 			Value: pump.CalibrationDataDelta{SetOffsetKPa: ptr(float32(-0.3))},
 		},
 	}
-	asserted, err := pump.Apply(current, assertDelta)
+	asserted, err := current.Apply(assertDelta)
 	if err != nil {
 		t.Fatalf("Apply (OpAssert): %v", err)
 	}
@@ -234,7 +234,7 @@ func TestDirectDelta_clearable(t *testing.T) {
 			Op: runtime.OpRetract,
 		},
 	}
-	retracted, err := pump.Apply(asserted, retractDelta)
+	retracted, err := asserted.Apply(retractDelta)
 	if err != nil {
 		t.Fatalf("Apply (OpRetract): %v", err)
 	}
@@ -247,7 +247,7 @@ func TestDirectDelta_clearable(t *testing.T) {
 		Header: advanceHeader(retracted.Header, 3),
 		// Calibration field is zero-valued → Op == OpIgnore → no change
 	}
-	ignored, err := pump.Apply(retracted, ignoreDelta)
+	ignored, err := retracted.Apply(ignoreDelta)
 	if err != nil {
 		t.Fatalf("Apply (OpIgnore): %v", err)
 	}
@@ -275,7 +275,7 @@ func TestCoalesce(t *testing.T) {
 		SetTempCelsius: ptr(float32(74.1)),
 	}
 
-	result, err := pump.Coalesce(base, []pump.PumpSnapshotDelta{d1, d2})
+	result, err := base.Coalesce([]pump.PumpSnapshotDelta{d1, d2})
 	if err != nil {
 		t.Fatalf("Coalesce: %v", err)
 	}

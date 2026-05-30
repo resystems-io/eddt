@@ -46,9 +46,9 @@ deltas can be coalesced without losing information. Every Snapshot type also
 needs a deterministic, content-hashed identity so that events from independent
 producers converge on the same entity key.
 
-Hand-writing `Apply`, `Diff`, `Coalesce`, and `EntityID` for every Snapshot
-type is error-prone, violates DRY, and makes it easy to introduce subtle
-divergences between types. **`delta-gen`** eliminates that burden.
+Hand-writing `Apply<T>`, `Diff<T>`, `Coalesce<T>`, and `EntityID<T>` for every
+Snapshot type is error-prone, violates DRY, and makes it easy to introduce
+subtle divergences between types. **`delta-gen`** eliminates that burden.
 
 `delta-gen` reads a Go struct annotated with `eddt:"…"` struct tags, validates
 the authoring contract, and emits the companion `Delta` type together with all
@@ -109,26 +109,28 @@ output filename is auto-derived from the struct name: `PumpSnapshot` →
 
 - `SiteAddressDelta`, `CalibrationDataDelta` — companion Delta types for nested fields.
 - `PumpSnapshotDelta` — the root companion Delta struct.
-- `Apply`, `Diff`, `Coalesce` — package-level functions and method wrappers.
-- `EntityID(k string)` — package-level function (no method wrapper for plain `string` keys).
+- `ApplyPumpSnapshot`, `DiffPumpSnapshot`, `CoalescePumpSnapshot` — struct-prefixed package-level functions.
+- `EntityIDPumpSnapshot(k string)` — struct-prefixed package-level function (no method wrapper for plain `string` keys).
+- `(s PumpSnapshot) Apply(...)`, `Diff(...)`, `Coalesce(...)` — same-package method wrappers (short names, same-package only).
 
 Minimal calling pattern:
 
 ```go {: .small-text }
-// Compute the delta between two snapshots.
-d, err := pump.Diff(before, after)
+// Compute the delta between two snapshots (same-package method wrapper).
+d, err := before.Diff(after)
 if err != nil {
     return err
 }
 
 // Apply the delta to advance the snapshot.
-next, err := pump.Apply(before, d)
+next, err := before.Apply(d)
 if err != nil {
     return err
 }
 
-// Or, using the method wrapper:
-next, err = before.Apply(d)
+// Cross-package callers use the struct-prefixed package-level functions instead:
+// d, err   := pump.DiffPumpSnapshot(before, after)
+// next, err := pump.ApplyPumpSnapshot(before, d)
 ```
 
 ## Authoring Contract
@@ -269,19 +271,23 @@ The pipeline has four stages, each implemented in its own file:
 
 ### Key Flags
 
-| Flag          | Short | Type          | Default | Purpose                                              |
-|:--------------|:------|:--------------|:--------|:-----------------------------------------------------|
-| `--pkg`       | `-p`  | string (rep.) | `.`     | Input package: filesystem path or Go import path     |
-| `--type`      | `-t`  | string (rep.) | —       | Snapshot struct name(s); may also be positional args |
-| `--out`       | `-o`  | string        | —       | Output file; omit for per-struct auto-derived names  |
-| `--pkg-name`  | `-n`  | string        | —       | Output package name (activates cross-package mode)   |
-| `--pkg-alias` | `-a`  | string (rep.) | —       | `importpath=alias` for name collisions               |
-| `--key-field` | —     | string (rep.) | —       | `[StructName=]FieldName` entity-key override         |
-| `--verbose`   | `-v`  | bool          | false   | Info-level logging to stderr                         |
+| Flag                 | Short | Type          | Default          | Purpose                                                            |
+|:---------------------|:------|:--------------|:-----------------|:-------------------------------------------------------------------|
+| `--pkg`              | `-p`  | string (rep.) | `.`              | Input package: filesystem path or Go import path                   |
+| `--type`             | `-t`  | string (rep.) | —                | Snapshot struct name(s); may also be positional args               |
+| `--structs`          | `-s`  | string (rep.) | —                | Alias for `--type` / `-t` (matches arrow-gen convention)           |
+| `--out`              | `-o`  | string        | —                | Output file; omit for per-struct auto-derived names                |
+| `--pkg-name`         | `-n`  | string        | —                | Output package name (activates cross-package mode)                 |
+| `--pkg-alias`        | `-a`  | string (rep.) | —                | `importpath=alias` for name collisions                             |
+| `--key-field`        | —     | string (rep.) | —                | `[StructName=]FieldName` entity-key override                       |
+| `--standalone`       | —     | bool          | false            | Runtime-independent mode (see [Standalone Mode](#standalone-mode)) |
+| `--standalone-hash`  | —     | string        | `blake2b`        | EntityID hash: `blake2b` (compatible) or `sha256` (stdlib)         |
+| `--standalone-types` | —     | string        | `delta_types.go` | Companion local-types filename (standalone mode only)              |
+| `--verbose`          | `-v`  | bool          | false            | Info-level logging to stderr                                       |
 
-`--pkg` and `--type` (and `--key-field`, `--pkg-alias`) are repeatable and
-also accept comma-separated lists. At least one struct name is required, either
-as a positional argument or via `--type`.
+`--pkg`, `--type`/`--structs`, `--key-field`, and `--pkg-alias` are repeatable
+and also accept comma-separated lists. At least one struct name is required,
+either as a positional argument or via `--type` / `-t` / `-s`.
 
 ### Example CLI Chains
 
@@ -375,39 +381,52 @@ as a pointer. A zero-valued `SiteAddressDelta` is a no-op when applied. Only
 
 ### Package-Level Functions
 
+Package-level functions are named with the snapshot type as a prefix (e.g.
+`ApplyPumpSnapshot`). This convention, which mirrors how nested-companion
+functions are already named (`ApplyAddress`, `DiffAddress`), ensures that
+multiple snapshot types can coexist in the same output package without
+colliding on function names.
+
 ```go {: .small-text }
-// Apply produces the Snapshot that results from applying d to s.
-func Apply(s PumpSnapshot, d PumpSnapshotDelta) (PumpSnapshot, error)
+// ApplyPumpSnapshot produces the Snapshot that results from applying d to s.
+func ApplyPumpSnapshot(s PumpSnapshot, d PumpSnapshotDelta) (PumpSnapshot, error)
 
-// Diff produces the minimal delta such that Apply(a, d) payload-equals b.
-func Diff(a, b PumpSnapshot) (PumpSnapshotDelta, error)
+// DiffPumpSnapshot produces the minimal delta such that ApplyPumpSnapshot(a, d) payload-equals b.
+func DiffPumpSnapshot(a, b PumpSnapshot) (PumpSnapshotDelta, error)
 
-// Coalesce applies a slice of deltas to s in order, returning the final Snapshot.
-func Coalesce(s PumpSnapshot, ds []PumpSnapshotDelta) (PumpSnapshot, error)
+// CoalescePumpSnapshot applies a slice of deltas to s in order, returning the final Snapshot.
+func CoalescePumpSnapshot(s PumpSnapshot, ds []PumpSnapshotDelta) (PumpSnapshot, error)
 
-// EntityID derives the deterministic content-hash of the entity key value.
+// EntityIDPumpSnapshot derives the deterministic content-hash of the entity key value.
 // Takes the key value directly, not a Snapshot pointer.
-func EntityID(k string) runtime.EntityID
+func EntityIDPumpSnapshot(k string) runtime.EntityID
 ```
 
-All functions take and return values, not pointers. The `Coalesce` function
-folds a *slice* of deltas onto a base snapshot — it is not a two-delta merge.
+All functions take and return values, not pointers. `Coalesce<T>` folds a
+*slice* of deltas onto a base snapshot — it is not a two-delta merge.
 
 ### Same-Package Method Wrappers
 
-When the output package matches the source package, method wrappers are emitted:
+When the output package matches the source package, ergonomic method wrappers
+are also emitted. The wrappers keep the short flat names (`Apply`, `Diff`,
+`Coalesce`) because method dispatch on distinct receiver types never conflicts,
+even when multiple snapshot types share the same package:
 
 ```go {: .small-text }
-func (s PumpSnapshot) Apply(d PumpSnapshotDelta) (PumpSnapshot, error)
-func (a PumpSnapshot) Diff(b PumpSnapshot) (PumpSnapshotDelta, error)
-func (s PumpSnapshot) Coalesce(ds []PumpSnapshotDelta) (PumpSnapshot, error)
+// Method wrappers delegate to the struct-prefixed package-level functions.
+func (s PumpSnapshot) Apply(d PumpSnapshotDelta) (PumpSnapshot, error)  { return ApplyPumpSnapshot(s, d) }
+func (a PumpSnapshot) Diff(b PumpSnapshot) (PumpSnapshotDelta, error)   { return DiffPumpSnapshot(a, b) }
+func (s PumpSnapshot) Coalesce(ds []PumpSnapshotDelta) (PumpSnapshot, error) { return CoalescePumpSnapshot(s, ds) }
 ```
 
 The `EntityID` method wrapper is only emitted when the entity-key type is a
 *named* Go type (e.g. `type SerialNumber string`). For a plain `string` key,
-only the package-level `EntityID(k string)` function is generated.
+only the package-level `EntityIDPumpSnapshot(k string)` function is generated.
 
 Method wrappers are **not** emitted in cross-package mode (see §7).
+
+Same-package callers use the method form idiomatically; cross-package callers
+use the struct-prefixed package-level functions.
 
 ### Calling Pattern
 
@@ -417,7 +436,7 @@ Method wrappers are **not** emitted in cross-package mode (see §7).
 sn := "SN-4719"
 a := pump.PumpSnapshot{
     Header: runtime.Header{
-        EntityID:    pump.EntityID(sn),
+        EntityID:    pump.EntityIDPumpSnapshot(sn), // struct-prefixed package-level function
         ChainID:     "chain-SN-4719",
         Sequence:    0,
         EffectiveAt: t0,
@@ -435,14 +454,14 @@ b := a
 b.Header.Sequence = 1
 b.PressureKPa = 855.5
 
-d, err := pump.Diff(a, b) // or: a.Diff(b)
+d, err := a.Diff(b) // method wrapper; cross-package: pump.DiffPumpSnapshot(a, b)
 if err != nil {
     return err
 }
 
 // --- Applying a delta ---
 
-next, err := pump.Apply(a, d) // or: a.Apply(d)
+next, err := a.Apply(d) // method wrapper; cross-package: pump.ApplyPumpSnapshot(a, d)
 if err != nil {
     return err
 }
@@ -450,7 +469,7 @@ if err != nil {
 
 // --- Coalescing a sequence of deltas ---
 
-result, err := pump.Coalesce(a, []pump.PumpSnapshotDelta{d1, d2, d3})
+result, err := a.Coalesce([]pump.PumpSnapshotDelta{d1, d2, d3})
 ```
 
 ### Direct Delta Construction
@@ -495,7 +514,7 @@ d1 := pump.PumpSnapshotDelta{
     // Location:       zero — no location change (zero SiteAddressDelta is a no-op)
     // Calibration:    zero — no calibration change (OpIgnore is the zero value)
 }
-step1, err := pump.Apply(current, d1)
+step1, err := current.Apply(d1)
 
 // --- Step 2: update the delta.nested Location field ---
 //
@@ -506,7 +525,7 @@ d2 := pump.PumpSnapshotDelta{
     Header:   advance(step1),
     Location: pump.SiteAddressDelta{SetCity: ptr("Hamburg")},
 }
-step2, err := pump.Apply(step1, d2)
+step2, err := step1.Apply(d2)
 
 // --- Step 3: assert a new Calibration value (OpAssert) ---
 //
@@ -519,7 +538,7 @@ d3 := pump.PumpSnapshotDelta{
         Value: pump.CalibrationDataDelta{SetOffsetKPa: ptr(float32(-0.3))},
     },
 }
-step3, err := pump.Apply(step2, d3)
+step3, err := step2.Apply(d3)
 
 // --- Step 4: retract the Calibration field (OpRetract) ---
 //
@@ -529,7 +548,7 @@ d4 := pump.PumpSnapshotDelta{
     Header:      advance(step3),
     Calibration: runtime.FieldDelta[pump.CalibrationDataDelta]{Op: runtime.OpRetract},
 }
-step4, err := pump.Apply(step3, d4)
+step4, err := step3.Apply(d4)
 // step4.Calibration == CalibrationData{} (zero value)
 
 // A zero-valued FieldDelta (Op == OpIgnore) leaves the field unchanged —
@@ -549,9 +568,9 @@ name.
 
 Compared to same-package mode, cross-package mode:
 
-- **Omits method wrappers** — `Apply`, `Diff`, `Coalesce`, and `EntityID` are
-  package-level functions only. Go forbids defining methods on types from
-  another package.
+- **Omits method wrappers** — only the struct-prefixed package-level functions
+  (`Apply<T>`, `Diff<T>`, `Coalesce<T>`, `EntityID<T>`) are emitted. Go forbids
+  defining methods on types from another package.
 - **Silently drops unexported fields** — fields not accessible outside the
   source package cannot appear in the generated code.
 - **Qualifies type references** — a field of type `CalibrationData` becomes
@@ -597,12 +616,12 @@ generated code uses the alias `plantmodel` and the import is written as
 
 ## Behavioural Invariants
 
-The generated `Apply`, `Diff`, `Coalesce`, and `EntityID` functions satisfy
-three algebraic laws that downstream consumers can rely on:
+The generated `Apply<T>`, `Diff<T>`, `Coalesce<T>`, and `EntityID<T>` functions
+satisfy three algebraic laws that downstream consumers can rely on:
 
-1. **Round-trip** — given chain-integrity preconditions, `Apply(a, Diff(a, b))`
-   equals `b` in the payload component. A `Diff` encodes the change faithfully
-   and `Apply` reproduces it exactly.
+1. **Round-trip** — given chain-integrity preconditions, `Apply<T>(a, Diff<T>(a, b))`
+   equals `b` in the payload component. A `Diff<T>` encodes the change faithfully
+   and `Apply<T>` reproduces it exactly.
 
 2. **Identity-diff** — `Diff(a, a)` produces a Delta whose every payload
    representation is zero-valued. No spurious field updates are emitted for
@@ -642,9 +661,9 @@ companion:
 
 - **Input**: a `runtime.Header`-embedding Snapshot struct with `eddt:"…"` tags
   declaring the entity key and any nested, clearable, omitted, or retired fields.
-- **Output**: a companion `TDelta` struct, package-level `Apply`, `Diff`,
-  `Coalesce`, and `EntityID` functions, and (in same-package mode) ergonomic
-  method wrappers.
+- **Output**: a companion `TDelta` struct; struct-prefixed package-level
+  `Apply<T>`, `Diff<T>`, `Coalesce<T>`, and `EntityID<T>` functions; and (in
+  same-package mode) ergonomic method wrappers with short flat names.
 - **Contract**: the generated code satisfies the round-trip, identity-diff, and
   nil/empty equivalence invariants; chain-integrity validation is delegated to
   the `runtime` package. Full normative requirements are in
