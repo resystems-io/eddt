@@ -63,13 +63,21 @@ Define your Snapshot struct. `delta-gen` needs exactly one embedded
 `runtime.Header`, exactly one entity-key field, and any number of payload
 fields annotated with optional `eddt:"…"` tags:
 
-```go
+```go {: .small-text }
 package pump
 
-import "time"
-import "go.resystems.io/eddt/runtime"
+import (
+    "time"
+    eddt "go.resystems.io/eddt/runtime"
+)
 
-// CalibrationData holds calibration state for the pump.
+// SiteAddress is the physical installation address of a pump.
+type SiteAddress struct {
+    Street string
+    City   string
+}
+
+// CalibrationData holds factory calibration state for a pump.
 type CalibrationData struct {
     OffsetKPa   float32
     LastCalibAt time.Time
@@ -79,18 +87,19 @@ type CalibrationData struct {
 
 // PumpSnapshot is an EDDT Snapshot for a manufacturing line pump.
 type PumpSnapshot struct {
-    runtime.Header                                        // required: chain envelope
-    SerialNumber string         `eddt:"entity.key"`       // required: entity identity
-    PressureKPa  float32                                  // atomic payload field
-    TempCelsius  float32                                  // atomic payload field
-    Calibration  CalibrationData `eddt:"delta.nested"`    // companion Delta emitted
-    FirmwareVer  string          `eddt:"delta.omit"`      // carried forward unchanged
+    eddt.Header
+    SerialNumber string          `eddt:"entity.key"`
+    PressureKPa  float32
+    TempCelsius  float32
+    Location     SiteAddress     `eddt:"delta.nested"`
+    Calibration  CalibrationData `eddt:"delta.nested,delta.clearable"`
+    FirmwareVer  string          `eddt:"delta.omit"`
 }
 ```
 
 Run the generator:
 
-```bash
+```bash {: .small-text }
 go generate ./...
 ```
 
@@ -98,23 +107,22 @@ go generate ./...
 output filename is auto-derived from the struct name: `PumpSnapshot` →
 `pump_snapshot_delta.go`). The generated file contains:
 
-- `PumpSnapshotDelta` — the companion Delta struct.
-- `CalibrationDelta` — a companion Delta for the nested `CalibrationData` type.
-- `Apply`, `Diff`, `Coalesce`, `EntityID` — package-level functions.
-- `Apply`, `Diff`, `Coalesce`, `EntityID` — method wrappers on `*PumpSnapshot`
-  (same-package mode only).
+- `SiteAddressDelta`, `CalibrationDataDelta` — companion Delta types for nested fields.
+- `PumpSnapshotDelta` — the root companion Delta struct.
+- `Apply`, `Diff`, `Coalesce` — package-level functions and method wrappers.
+- `EntityID(k string)` — package-level function (no method wrapper for plain `string` keys).
 
 Minimal calling pattern:
 
-```go
+```go {: .small-text }
 // Compute the delta between two snapshots.
-d, err := pump.Diff(&before, &after)
+d, err := pump.Diff(before, after)
 if err != nil {
     return err
 }
 
 // Apply the delta to advance the snapshot.
-next, err := pump.Apply(&before, d)
+next, err := pump.Apply(before, d)
 if err != nil {
     return err
 }
@@ -131,7 +139,7 @@ Every Snapshot struct must embed exactly one `runtime.Header` field. The
 generator identifies the Header by *type identity*, not by field name, so
 import aliases are fully supported:
 
-```go
+```go {: .small-text }
 import eddt "go.resystems.io/eddt/runtime"
 
 type PumpSnapshot struct {
@@ -168,13 +176,18 @@ otherwise (see §4).
 
 Admitted shapes:
 
-| Shape        | Go syntax            | Delta representation       |
-|:-------------|:---------------------|:---------------------------|
-| Scalar       | `T` (basic or named) | `Set<F> *T`                |
-| Pointer      | `*T`                 | `Set<F> **T`               |
-| Struct value | `NamedStruct`        | `Set<F> *NamedStructDelta` |
-| Slice        | `[]T`                | `Set<F> *<F>Delta`         |
-| Map          | `map[K]V`            | `Set<F> *<F>Delta`         |
+| Shape        | Go syntax            | Default Delta representation | With `delta.nested`    |
+|:-------------|:---------------------|:-----------------------------|:-----------------------|
+| Scalar       | `T` (basic or named) | `Set<F> *T`                  | *(not admitted)*       |
+| Pointer      | `*T`                 | `Set<F> **T`                 | *(not admitted)*       |
+| Struct value | `NamedStruct`        | `Set<F> *NamedStruct`        | `<F> NamedStructDelta` |
+| Slice        | `[]T`                | `Set<F> *[]T`                | `<F> <F>Delta`         |
+| Map          | `map[K]V`            | `Set<F> *map[K]V`            | `<F> <F>Delta`         |
+
+For `delta.nested` fields the Delta entry is a companion type embedded by value
+(not a pointer), so a zero-valued entry means "no change" without any allocation.
+Adding `delta.clearable` to a `delta.nested` field wraps the companion in a
+`runtime.FieldDelta[NamedStructDelta]` tri-state envelope (see §4).
 
 Rejected shapes: function, channel, interface, and anonymous struct types are
 rejected with a diagnostic.
@@ -204,12 +217,13 @@ Tags operate on three independent axes. The most common combination is
 simple `*<T>Delta` pointer (assert-or-no-op) into a
 `runtime.FieldDelta[<T>Delta]` tri-state carrier:
 
-```go
+```go {: .small-text }
 type PumpSnapshot struct {
-    runtime.Header
+    eddt.Header
     SerialNumber string          `eddt:"entity.key"`
-    Location     SiteAddress     `eddt:"delta.nested"`             // *SiteAddressDelta
-    Calibration  CalibrationData `eddt:"delta.nested,delta.clearable"` // FieldDelta[CalibrationDelta]
+    Location     SiteAddress     `eddt:"delta.nested"`                 // → Location SiteAddressDelta
+    Calibration  CalibrationData `eddt:"delta.nested,delta.clearable"` // → Calibration FieldDelta[CalibrationDataDelta]
+    // ...
 }
 ```
 
@@ -271,7 +285,7 @@ as a positional argument or via `--type`.
 
 ### Example CLI Chains
 
-```bash
+```bash {: .small-text }
 # Single struct — output auto-derived as pump_snapshot_delta.go
 delta-gen PumpSnapshot
 
@@ -302,7 +316,7 @@ delta-gen --key-field PumpSnapshot=SerialNo PumpSnapshot
 
 Place the directive in the same package as the Snapshot struct:
 
-```go
+```go {: .small-text }
 // Single struct — output auto-derived
 //go:generate delta-gen PumpSnapshot
 
@@ -315,7 +329,7 @@ Place the directive in the same package as the Snapshot struct:
 
 Run with:
 
-```bash
+```bash {: .small-text }
 go generate ./...
 ```
 
@@ -326,158 +340,202 @@ types and functions.
 
 ### Types Emitted
 
-```go
-// CalibrationDelta is the companion Delta for the delta.nested CalibrationData field.
-type CalibrationDelta struct {
+The following is taken directly from the generated `pump_snapshot_delta.go` for
+the `PumpSnapshot` defined in §2 (elided for brevity):
+
+```go {: .small-text }
+// SiteAddressDelta is the Delta companion for the delta.nested Location field.
+type SiteAddressDelta struct {
+    SetStreet *string
+    SetCity   *string
+}
+
+// CalibrationDataDelta is the Delta companion for the delta.nested+clearable Calibration field.
+type CalibrationDataDelta struct {
     SetOffsetKPa   *float32
     SetLastCalibAt *time.Time
 }
 
-// PumpSnapshotDelta is the companion Delta for PumpSnapshot.
-// FirmwareVer is absent (delta.omit); CalibrationData is a companion pointer.
+// PumpSnapshotDelta is the root companion Delta for PumpSnapshot.
+// FirmwareVer is absent (delta.omit). Location is an embedded value — a
+// zero-valued SiteAddressDelta means "no change". Calibration is a
+// FieldDelta tri-state envelope.
 type PumpSnapshotDelta struct {
-    Header         runtime.Header
+    runtime.Header
     SetPressureKPa *float32
     SetTempCelsius *float32
-    SetCalibration *CalibrationDelta
+    Location       SiteAddressDelta
+    Calibration    runtime.FieldDelta[CalibrationDataDelta]
 }
 ```
 
-For a `delta.clearable` field the Delta entry becomes a `runtime.FieldDelta[T]`
-tri-state carrier instead of a plain pointer:
-
-```go
-// When Location is tagged `delta.nested,delta.clearable`:
-type PumpSnapshotDelta struct {
-    Header      runtime.Header
-    PressureKPa *float32
-    Location    runtime.FieldDelta[SiteAddressDelta] // tri-state: ignore / assert / retract
-}
-```
+Note that `Location` (a plain `delta.nested` field) is embedded by value, not
+as a pointer. A zero-valued `SiteAddressDelta` is a no-op when applied. Only
+`delta.nested,delta.clearable` fields use the `runtime.FieldDelta[T]` envelope.
 
 ### Package-Level Functions
 
-```go
-// Apply folds delta d into snapshot s and returns the advanced snapshot.
-func Apply(s *PumpSnapshot, d *PumpSnapshotDelta) (*PumpSnapshot, error)
+```go {: .small-text }
+// Apply produces the Snapshot that results from applying d to s.
+func Apply(s PumpSnapshot, d PumpSnapshotDelta) (PumpSnapshot, error)
 
-// Diff returns the minimal delta that transforms snapshot a into snapshot b.
-func Diff(a, b *PumpSnapshot) (*PumpSnapshotDelta, error)
+// Diff produces the minimal delta such that Apply(a, d) payload-equals b.
+func Diff(a, b PumpSnapshot) (PumpSnapshotDelta, error)
 
-// Coalesce merges two deltas, with d2 taking precedence over d1 for fields
-// set in both.
-func Coalesce(d1, d2 *PumpSnapshotDelta) (*PumpSnapshotDelta, error)
+// Coalesce applies a slice of deltas to s in order, returning the final Snapshot.
+func Coalesce(s PumpSnapshot, ds []PumpSnapshotDelta) (PumpSnapshot, error)
 
-// EntityID derives the deterministic content-hash of s's entity key.
-func EntityID(s *PumpSnapshot) runtime.EntityID
+// EntityID derives the deterministic content-hash of the entity key value.
+// Takes the key value directly, not a Snapshot pointer.
+func EntityID(k string) runtime.EntityID
 ```
+
+All functions take and return values, not pointers. The `Coalesce` function
+folds a *slice* of deltas onto a base snapshot — it is not a two-delta merge.
 
 ### Same-Package Method Wrappers
 
-When the output package matches the source package, ergonomic method wrappers
-are emitted alongside the package-level functions:
+When the output package matches the source package, method wrappers are emitted:
 
-```go
-func (s *PumpSnapshot) Apply(d *PumpSnapshotDelta) (*PumpSnapshot, error)
-func (a *PumpSnapshot) Diff(b *PumpSnapshot) (*PumpSnapshotDelta, error)
-func (d *PumpSnapshotDelta) Coalesce(other *PumpSnapshotDelta) (*PumpSnapshotDelta, error)
-func (s *PumpSnapshot) EntityID() runtime.EntityID
+```go {: .small-text }
+func (s PumpSnapshot) Apply(d PumpSnapshotDelta) (PumpSnapshot, error)
+func (a PumpSnapshot) Diff(b PumpSnapshot) (PumpSnapshotDelta, error)
+func (s PumpSnapshot) Coalesce(ds []PumpSnapshotDelta) (PumpSnapshot, error)
 ```
+
+The `EntityID` method wrapper is only emitted when the entity-key type is a
+*named* Go type (e.g. `type SerialNumber string`). For a plain `string` key,
+only the package-level `EntityID(k string)` function is generated.
 
 Method wrappers are **not** emitted in cross-package mode (see §7).
 
 ### Calling Pattern
 
-```go
+```go {: .small-text }
 // --- Snapshot authoring ---
 
-pump := &pump.PumpSnapshot{
-    Header:       runtime.Header{EntityID: pump.EntityID(&seed)},
-    SerialNumber: "SN-4719",
+sn := "SN-4719"
+a := pump.PumpSnapshot{
+    Header: runtime.Header{
+        EntityID:    pump.EntityID(sn),
+        ChainID:     "chain-SN-4719",
+        Sequence:    0,
+        EffectiveAt: t0,
+        PublishedAt: t0,
+    },
+    SerialNumber: sn,
     PressureKPa:  850.0,
     TempCelsius:  72.3,
+    Location:     pump.SiteAddress{Street: "Mill Road 1", City: "Berlin"},
 }
 
 // --- Producing a delta via Diff ---
 
-updated := *pump
-updated.PressureKPa = 855.5
+b := a
+b.Header.Sequence = 1
+b.PressureKPa = 855.5
 
-delta, err := pump.Diff(pump, &updated)
+d, err := pump.Diff(a, b) // or: a.Diff(b)
 if err != nil {
     return err
 }
 
 // --- Applying a delta ---
 
-next, err := pump.Apply(pump, delta)
+next, err := pump.Apply(a, d) // or: a.Apply(d)
 if err != nil {
     return err
 }
+// Round-trip: next.PressureKPa == b.PressureKPa
 
-// Round-trip invariant always holds: Apply(a, Diff(a, b)).payload == b.payload
+// --- Coalescing a sequence of deltas ---
+
+result, err := pump.Coalesce(a, []pump.PumpSnapshotDelta{d1, d2, d3})
 ```
 
 ### Direct Delta Construction
 
 A `TDelta` is a plain Go struct and can be constructed directly. This is
 preferable when the change source already knows exactly which fields changed
-(e.g. an incoming sensor message or a partial update from an external system)
-and constructing a full updated snapshot just to call `Diff` would be wasteful.
+(e.g. an incoming sensor reading) and diffing two full snapshots would be
+wasteful.
 
-Every field in the Delta struct is a pointer (or a `runtime.FieldDelta[T]` for
-clearable fields). A nil pointer means *no change*; a non-nil pointer carries
-the new value. Only set the fields you intend to advance.
+For atomic fields (`SetPressureKPa`, `SetTempCelsius`) a nil pointer means
+*no change*. For `delta.nested` fields (`Location`) the companion struct is an
+embedded value — a zero-valued `SiteAddressDelta` is also a no-op. For
+`delta.clearable` fields (`Calibration`) set the `Op` explicitly.
 
-```go
-// --- Direct construction: update pressure only ---
+```go {: .small-text }
+// ptr is a generic helper for building pointer literals.
+func ptr[T any](v T) *T { return &v }
 
-newPressure := float32(855.5)
-now := time.Now()
-
-delta := &pump.PumpSnapshotDelta{
-    Header: runtime.Header{
-        EntityID:    current.Header.EntityID,
-        ChainID:     current.Header.ChainID,
-        Sequence:    current.Header.Sequence + 1,
+// advance builds the Header for the next delta in the chain, copying
+// EntityID and ChainID from the prior snapshot and incrementing Sequence.
+advance := func(prior pump.PumpSnapshot) runtime.Header {
+    return runtime.Header{
+        EntityID:    prior.Header.EntityID,
+        ChainID:     prior.Header.ChainID,
+        Sequence:    prior.Header.Sequence + 1,
         EffectiveAt: now,
         PublishedAt: now,
-        Provenance:  append(current.Header.Provenance, runtime.Provenance{
+        Provenance:  append(prior.Header.Provenance, runtime.Provenance{
             PublishedAt: now,
             Solution:    "plant-control",
             Component:   "pressure-monitor",
         }),
+    }
+}
+
+// --- Step 1: update one atomic field ---
+
+d1 := pump.PumpSnapshotDelta{
+    Header:         advance(current),
+    SetPressureKPa: ptr(float32(855.5)),
+    // SetTempCelsius: nil  — temperature unchanged
+    // Location:       zero — no location change (zero SiteAddressDelta is a no-op)
+    // Calibration:    zero — no calibration change (OpIgnore is the zero value)
+}
+step1, err := pump.Apply(current, d1)
+
+// --- Step 2: update the delta.nested Location field ---
+//
+// Location is a SiteAddressDelta value embedded directly in PumpSnapshotDelta.
+// Only set the sub-fields that should change; nil sub-fields are left unchanged.
+
+d2 := pump.PumpSnapshotDelta{
+    Header:   advance(step1),
+    Location: pump.SiteAddressDelta{SetCity: ptr("Hamburg")},
+}
+step2, err := pump.Apply(step1, d2)
+
+// --- Step 3: assert a new Calibration value (OpAssert) ---
+//
+// OpAssert applies the inner CalibrationDataDelta to the existing value.
+
+d3 := pump.PumpSnapshotDelta{
+    Header: advance(step2),
+    Calibration: runtime.FieldDelta[pump.CalibrationDataDelta]{
+        Op:    runtime.OpAssert,
+        Value: pump.CalibrationDataDelta{SetOffsetKPa: ptr(float32(-0.3))},
     },
-    SetPressureKPa: &newPressure,
-    // SetTempCelsius: nil — temperature unchanged
-    // SetCalibration: nil — calibration unchanged
 }
+step3, err := pump.Apply(step2, d3)
 
-next, err := pump.Apply(current, delta)
+// --- Step 4: retract the Calibration field (OpRetract) ---
+//
+// OpRetract resets Calibration to its zero value.
 
-// --- Direct construction: update a nested companion field ---
-
-offset := float32(-0.3)
-calibDelta := &pump.CalibrationDelta{
-    SetOffsetKPa: &offset,
-    // SetLastCalibAt: nil — leave timestamp unchanged
+d4 := pump.PumpSnapshotDelta{
+    Header:      advance(step3),
+    Calibration: runtime.FieldDelta[pump.CalibrationDataDelta]{Op: runtime.OpRetract},
 }
+step4, err := pump.Apply(step3, d4)
+// step4.Calibration == CalibrationData{} (zero value)
 
-delta.SetCalibration = calibDelta
-
-// --- Direct construction: clearable field ---
-// (when Location is tagged delta.nested,delta.clearable)
-
-delta.Location = runtime.FieldDelta[pump.SiteAddressDelta]{
-    Op:    runtime.OpAssert,
-    Value: pump.SiteAddressDelta{SetCity: ptr("Berlin")},
-}
-
-// Retract a clearable field (reset to zero):
-delta.Location = runtime.FieldDelta[pump.SiteAddressDelta]{Op: runtime.OpRetract}
-
-// Leave a clearable field unchanged (zero value = OpIgnore):
-// delta.Location is left as its zero value — no action needed
+// A zero-valued FieldDelta (Op == OpIgnore) leaves the field unchanged —
+// omit the Calibration assignment entirely when constructing a delta that
+// does not touch it.
+_ = step4
 ```
 
 ## Cross-Package Mode
@@ -497,7 +555,7 @@ Compared to same-package mode, cross-package mode:
 - **Silently drops unexported fields** — fields not accessible outside the
   source package cannot appear in the generated code.
 - **Qualifies type references** — a field of type `CalibrationData` becomes
-  `*model.CalibrationData` in the generated Delta struct when the source package
+  `model.CalibrationData` in the generated Delta struct when the source package
   is `model`.
 
 ### Key Flags for Cross-Package Mode
@@ -510,7 +568,7 @@ Compared to same-package mode, cross-package mode:
 
 ### Example Invocations
 
-```bash
+```bash {: .small-text }
 # Baseline: same-package mode (method wrappers emitted)
 delta-gen PumpSnapshot
 
@@ -591,3 +649,8 @@ companion:
   nil/empty equivalence invariants; chain-integrity validation is delegated to
   the `runtime` package. Full normative requirements are in
   [delta-gen-spec.md](delta-gen-spec.md).
+
+A complete, tested example — source Snapshot, generated Delta, and API usage
+tests — is at [`internal/deltagen/example/pump`][pump-example].
+
+[pump-example]: ../internal/deltagen/example/pump/doc.go "EDDT delta-gen example"
