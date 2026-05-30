@@ -204,8 +204,8 @@ func BuildEventRecord() {
 	writer.Append(&e1)
 	writer.Append(&e2)
 
-	// Step 3: Build the final Arrow Record for analytical downstreaming (e.g., Parquet export)
-	record := writer.NewRecord()
+	// Step 3: Build the final Arrow RecordBatch for analytical downstreaming (e.g., Parquet export)
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	fmt.Printf("Successfully built an Arrow record with %d rows!\n", record.NumRows())

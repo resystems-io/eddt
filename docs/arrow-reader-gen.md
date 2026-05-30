@@ -186,7 +186,7 @@ import (
 	"github.com/apache/arrow/go/v18/arrow"
 )
 
-func ReadEventRecord(record arrow.Record) {
+func ReadEventRecord(record arrow.RecordBatch) {
 	// Step 1: Instantiate the generated struct reader (Validation Phase)
 	// This performs ALL strict schema checks, downcasting, and index resolution.
 	reader, err := NewSystemEventArrowReader(record)
