@@ -3,6 +3,8 @@ package readergen
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
@@ -14,8 +16,19 @@ type Generator struct {
 	TargetStructs []string
 	OutPath       string
 	Verbose       bool
-	PkgAliases    []string // raw alias mappings in "original=replacement" format
-	Version       string   // short commitish for the generated header; may be empty
+	PkgAliases    []string  // raw alias mappings in "original=replacement" format
+	Version       string    // short commitish for the generated header; may be empty
+	Warn          io.Writer // destination for diagnostic warnings; defaults to os.Stderr
+}
+
+// warnf writes a formatted diagnostic message to g.Warn, falling back to
+// os.Stderr when the field is nil.
+func (g *Generator) warnf(format string, args ...any) {
+	w := g.Warn
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, format, args...)
 }
 
 // NewGenerator initializes a new Generator.
@@ -80,7 +93,7 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	for _, si := range structs {
 		for _, f := range si.Fields {
 			if f.MarshalMethod == "String" && f.UnmarshalMethod == "" {
-				fmt.Printf("Warning: field %s.%s uses String() with no unmarshal inverse; skipping in reader\n", si.Name, f.Name)
+				g.warnf("Warning: field %s.%s uses String() with no unmarshal inverse; skipping in reader\n", si.Name, f.Name)
 			}
 		}
 	}

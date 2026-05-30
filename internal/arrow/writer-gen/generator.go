@@ -1,6 +1,10 @@
 package writergen
 
 import (
+	"fmt"
+	"io"
+	"os"
+
 	"go.resystems.io/eddt/internal/arrow/gencommon"
 )
 
@@ -10,8 +14,19 @@ type Generator struct {
 	TargetStructs []string
 	OutPath       string
 	Verbose       bool
-	PkgAliases    []string // raw alias mappings in "original=replacement" format
-	Version       string   // short commitish for the generated header; may be empty
+	PkgAliases    []string  // raw alias mappings in "original=replacement" format
+	Version       string    // short commitish for the generated header; may be empty
+	Warn          io.Writer // destination for diagnostic warnings; defaults to os.Stderr
+}
+
+// warnf writes a formatted diagnostic message to g.Warn, falling back to
+// os.Stderr when the field is nil.
+func (g *Generator) warnf(format string, args ...any) {
+	w := g.Warn
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, format, args...)
 }
 
 // NewGenerator initializes a new Generator.
