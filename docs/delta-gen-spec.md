@@ -463,12 +463,20 @@ constraint.
 
 The Code Emitter translates a validated Snapshot model produced by
 the Snapshot Parser into a Go source artefact. The artefact contains
-the companion Delta type, the package-level `Apply`, `Diff`,
-`Coalesce`, and `EntityID` functions, and — in same-package mode —
-the corresponding method wrappers on the Snapshot type. The Code
-Emitter is the sole producer of generated source; its decisions about
-field representation, function signatures, and companion-type
-ordering constitute the Output Contract.
+the companion Delta type, struct-prefixed package-level functions
+`Apply<T>`, `Diff<T>`, `Coalesce<T>`, and `EntityID<T>` (where `<T>`
+is the snapshot struct name, e.g. `ApplyFooSnapshot`), and — in
+same-package mode — ergonomic method wrappers with flat names (`Apply`,
+`Diff`, `Coalesce`) that delegate to the struct-prefixed functions.
+The struct-prefix naming prevents Go's flat package namespace from
+causing compile-time `redeclared in this block` errors when multiple
+snapshot types share an output package, consistent with how the Code
+Emitter already names nested-companion functions (`ApplyFoo`,
+`DiffFoo`). When multiple snapshots share the same named entity-key
+type, the EntityID method wrapper is emitted at most once for that
+key type. The Code Emitter is the sole producer of generated source;
+its decisions about field representation, function signatures, and
+companion-type ordering constitute the Output Contract.
 
 #### <a id="s-dg-03"></a>`S-DG-03` — Runtime Library
 
@@ -715,20 +723,27 @@ properties of the artefacts that downstream code binds to.
 #### <a id="r-dg-012"></a>`R-DG-012` — Package-level operation signatures
 
 > *For each Snapshot type `T`, the Code Emitter SHALL produce
-> package-level functions with the following signatures in the
-> generated package:*
+> package-level functions whose names are formed by prepending the
+> snapshot struct name to the operation name. Using `T` as the struct
+> name token, the signatures are:*
 >
 > ```go
-> func Apply(s T, d TDelta) (T, error)
-> func Diff(a, b T) (TDelta, error)
-> func Coalesce(s T, ds []TDelta) (T, error)
-> func EntityID(s T) runtime.EntityID
+> func Apply<T>(s T, d TDelta) (T, error)      // e.g. ApplyFooSnapshot
+> func Diff<T>(a, b T) (TDelta, error)          // e.g. DiffFooSnapshot
+> func Coalesce<T>(s T, ds []TDelta) (T, error) // e.g. CoalesceFooSnapshot
+> func EntityID<T>(k K) runtime.EntityID        // e.g. EntityIDFooSnapshot; K = key type
 > ```
+>
+> *The struct-prefix naming convention ensures that two Snapshot types
+> in the same output package do not produce conflicting package-level
+> identifiers (Go prohibits function overloading). The naming is
+> consistent with the nested-companion function naming already required
+> by `R-DG-016` (`ApplyFoo`, `DiffFoo` for nested types).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring; `N-DG-002` Cross-Layer Schema Harmonisation
 - **Source (A5):** Upstream spec §6; observed implementation (sub-templates)
-- **Rationale (A1):** The function signatures are the primary contract surface that downstream code — twin maintainers, delta publishers, sibling generators — depends on; any change to a signature is a breaking change.
+- **Rationale (A1):** The struct-prefixed function signatures are the primary contract surface that downstream code — twin maintainers, delta publishers, sibling generators — depends on. The prefix prevents Go namespace collisions when bundling multiple snapshot types into one output package (observed failure mode: `redeclared in this block` for flat `Apply`). Same-package callers use the ergonomic method wrappers (`R-DG-013`) and are unaffected by the prefix.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-03` Runtime Library
 - **Priority (A32):** P0
@@ -738,18 +753,24 @@ properties of the artefacts that downstream code binds to.
 
 > *In same-package mode — when the output package name equals the
 > source package name — the Code Emitter SHALL additionally emit the
-> following methods on the Snapshot type `T`:*
+> following methods on the Snapshot type `T`. Each method body SHALL
+> delegate to the corresponding struct-prefixed package-level function
+> (R-DG-012):*
 >
 > ```go
-> func (s T) Apply(d TDelta) (T, error)
-> func (s T) Diff(b T) (TDelta, error)
-> func (s T) Coalesce(ds []TDelta) (T, error)
+> func (s T) Apply(d TDelta) (T, error)     { return Apply<T>(s, d) }
+> func (s T) Diff(b T) (TDelta, error)      { return Diff<T>(s, b) }
+> func (s T) Coalesce(ds []TDelta) (T, error) { return Coalesce<T>(s, ds) }
 > ```
+>
+> *Method wrappers retain flat names (`Apply`, `Diff`, `Coalesce`) because
+> method dispatch on distinct receiver types does not conflict even when
+> multiple snapshot types share the package.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
 - **Source (A5):** Upstream spec §6.1; R-DG-020, R-DG-038
-- **Rationale (A1):** Method syntax on the Snapshot type allows callers to write `snap.Apply(d)` rather than `pkg.Apply(snap, d)`, which improves readability at call sites that already hold a `snap` variable.
+- **Rationale (A1):** Method syntax on the Snapshot type allows callers to write `snap.Apply(d)` rather than `pkg.Apply<T>(snap, d)`, which improves readability at call sites that already hold a `snap` variable.
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
 - **Priority (A32):** P1
@@ -757,16 +778,22 @@ properties of the artefacts that downstream code binds to.
 
 #### <a id="r-dg-014"></a>`R-DG-014` — EntityID method wrapper
 
-> *The Code Emitter SHALL emit an `(s T) EntityID() runtime.EntityID`
-> method on the Snapshot type `T` if and only if the type of the
-> entity-key field is a named Go type. When the entity-key field's
-> type is an unnamed basic type (e.g. an untyped `string`), the
-> method SHALL be omitted.*
+> *The Code Emitter SHALL emit a `(k K) EntityID() runtime.EntityID`
+> method on the entity-key type `K` if and only if the entity-key
+> field's type is a named Go type and the output is in same-package
+> mode. When the entity-key field's type is an unnamed basic type
+> (e.g. an untyped `string`), the method SHALL be omitted.*
+>
+> *When multiple snapshot types in the same bundled output share
+> the same named key type `K`, the EntityID method wrapper SHALL
+> be emitted at most once for type `K`. Duplicate emissions would
+> produce a compile error; the Code Emitter deduplicates by tracking
+> which key type names have already received a wrapper.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
-- **Source (A5):** R-DG-034; observed implementation (`EmitEntityIDMethod`)
-- **Rationale (A1):** Go does not permit methods on unnamed types; emitting an `EntityID` method on a Snapshot with an unnamed key type produces a compile error.
+- **Source (A5):** R-DG-034; observed implementation (`EmitEntityIDMethod`, `seenKeyTypes`)
+- **Rationale (A1):** Go does not permit methods on unnamed types; emitting an `EntityID` method on a Snapshot with an unnamed key type produces a compile error. Deduplication is required because multiple snapshot types may share a single key type (e.g. all event types in a domain package keyed by the same identifier type).
 - **V&V method (A2):** Compile check
 - **Allocation (A8):** `S-DG-02` Code Emitter
 - **Priority (A32):** P1
@@ -902,8 +929,11 @@ respectively.*
 ### 5.3 Behavioural Invariants
 
 The requirements in this section state the algebraic and chain-safety
-laws that the generated `Apply`, `Diff`, `Coalesce`, and `EntityID`
-operations must satisfy. These are universal claims over the space of
+laws that the generated `Apply<T>`, `Diff<T>`, `Coalesce<T>`, and
+`EntityID<T>` operations must satisfy. For brevity, the formulae use
+the short forms `Apply`, `Diff`, and `Coalesce` to denote the
+struct-prefixed functions mandated by R-DG-012 (e.g. `ApplyFooSnapshot`
+stands for `Apply` in the context of Snapshot type `T = FooSnapshot`). These are universal claims over the space of
 valid input values; conformance cannot in general be established by
 finite testing alone, hence `A2 = Analysis` for all invariants. The
 conformance corpus under `internal/deltagen/testdata/corpus/` provides
