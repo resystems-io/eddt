@@ -36,9 +36,7 @@ package deltagen
 import (
 	"bytes"
 	"fmt"
-	"go/format"
 	"go/types"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -1690,18 +1688,6 @@ func executeEmit(snapshots []*ParsedSnapshot, g *Generator) error {
 		return fmt.Errorf("delta-gen: template execution failed: %w", err)
 	}
 
-	// Step 6: format the generated source; wrap errors with raw output for debugging.
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf(
-			"delta-gen: generated source is not valid Go: %w\n--- raw source ---\n%s",
-			err, buf.String())
-	}
-
-	// Step 7: write to the output file.
-	if err := os.WriteFile(g.OutPath, formatted, 0644); err != nil {
-		return fmt.Errorf("delta-gen: writing output file %q: %w", g.OutPath, err)
-	}
-
-	return nil
+	// Steps 6-7: format the generated source and write to the output file.
+	return writeFormattedGo(g.OutPath, &buf)
 }

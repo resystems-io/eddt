@@ -30,7 +30,6 @@ package deltagen
 import (
 	"bytes"
 	"fmt"
-	"go/format"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -401,16 +400,5 @@ func emitStandaloneTypes(g *Generator) error {
 		return fmt.Errorf("delta-gen: standalone types template execution failed: %w", err)
 	}
 
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf(
-			"delta-gen: standalone types source is not valid Go: %w\n--- raw source ---\n%s",
-			err, buf.String())
-	}
-
-	if err := os.WriteFile(typesPath, formatted, 0644); err != nil {
-		return fmt.Errorf("delta-gen: writing standalone types file %q: %w", typesPath, err)
-	}
-
-	return nil
+	return writeFormattedGo(typesPath, &buf)
 }
