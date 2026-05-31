@@ -1,3 +1,5 @@
+// Command delta-gen generates Apply, Diff, Coalesce, and EntityID from an
+// annotated EDDT Snapshot struct. Run delta-gen --help for full usage.
 package main
 
 import (
