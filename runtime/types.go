@@ -1,12 +1,10 @@
 // Package runtime provides the envelope types and contract functions that
 // delta-gen-emitted code calls into. It is the minimum runtime surface
-// specified in eddt-delta-gen-spec.md §6 and eddt-chain-lifecycle-spec.md §3.
+// specified in eddt-delta-gen-spec.md and eddt-chain-lifecycle-spec.md.
 //
-// Scope: this package delivers the baseline (Phases 1–6) types and functions.
 // The tri-state clearable extension — FieldDelta[T], FieldDeltaOp, and the
-// three Op* constants — is added in Phase 7 (R-DG-026). The single-type-parameter
-// ApplyFieldDelta from the spec is superseded (R-DG-007); the per-field Apply
-// switch is generator-emitted (R-DG-016).
+// three Op* constants — supports R-DG-026. The per-field Apply switch is
+// generator-emitted (R-DG-016).
 package runtime
 
 import "time"
