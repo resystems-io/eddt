@@ -9,3 +9,20 @@ CLAUDE.md
 
 # scratch files
 tmp/
+
+# Generated documentation PDFs (built from .md sources)
+docs/*.pdf
+docs/build/
+
+# Generated diagram artifacts (built from .tex sources)
+docs/diagrams/*.pdf
+docs/diagrams/*.svg
+
+# LaTeX auxiliary files (also handled by `make clean` via latex-clean)
+docs/diagrams/*.aux
+docs/diagrams/*.log
+docs/diagrams/*.fls
+docs/diagrams/*.fdb_latexmk
+docs/diagrams/*.synctex.gz
+docs/diagrams/*.xdv
+docs/diagrams/*.out
