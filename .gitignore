@@ -11,7 +11,7 @@ CLAUDE.md
 tmp/
 
 # Generated documentation PDFs (built from .md sources)
-docs/*.pdf
+docs/**/*.pdf
 docs/build/
 
 # Generated diagram artifacts (built from .tex sources)
