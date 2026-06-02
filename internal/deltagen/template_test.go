@@ -20,7 +20,7 @@ package deltagen
 //   - TestEmitTemplate_AtomicApply_CrossPackage: asserts Apply in cross-package
 //     mode: qualified signature, no method wrapper (R-DG-012, R-DG-013, R-DG-019, R-DG-012, R-DG-013).
 //   - TestEmitTemplate_NestedNotYet: asserts that delta.nested triggers the
-//     Phase-5 sentinel error.
+//     R-DG-016 sentinel error.
 //   - TestEmitTemplate_CrossPackageQualifier: asserts type-string qualification
 //     in cross-package mode.
 //   - TestEmitTemplate_Nested_Map_SamePkg: asserts R-DG-016 map delta encoding —

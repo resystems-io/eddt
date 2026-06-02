@@ -140,8 +140,8 @@ func (g *Generator) log() *slog.Logger {
 //     and excluded from Fields. Per-struct key-field overrides are carried via
 //     KeyFields.
 //   - Tag    (tag.go):      parse and validate eddt: tag values.
-//   - Emit    (template.go): render the TDelta struct (R-DG-015) and, in later
-//     Phase-4 items, Apply/Diff/Coalesce/EntityID bodies.
+//   - Emit    (template.go): render the TDelta struct (R-DG-015) and the
+//     Apply/Diff/Coalesce/EntityID function bodies.
 func (g *Generator) Run() error {
 	pkgs, err := g.loadStage()
 	if err != nil {
@@ -210,7 +210,7 @@ func (g *Generator) parseStage(pkgs []*packages.Package) ([]*ParsedSnapshot, err
 		}
 
 		// Conflict warning: when --key-field overrides a tagged entity.key field,
-		// the tagged field falls back into ps.Fields (G-04 contract). Detect and
+		// the tagged field falls back into ps.Fields (R-DG-010). Detect and
 		// warn unconditionally so the Snapshot author is informed.
 		if g.KeyFields[structName] != "" {
 			for _, f := range ps.Fields {

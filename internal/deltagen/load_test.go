@@ -199,7 +199,7 @@ func TestLoad_ImportPathNotInGoMod(t *testing.T) {
 // makes its transitive dependencies available via FindPkgByPath. Specifically
 // it asserts that after loading the eddt runtime package the Header type can be
 // looked up from the package's type scope — exactly the operation the parse
-// stage (G-03) will perform to identify embedded runtime.Header fields.
+// stage will perform to identify embedded runtime.Header fields.
 // Covers: R-DG-037 (NeedDeps correctness)
 func TestLoad_DepsIncluded(t *testing.T) {
 	pkgs, err := loadPackages([]string{runtimePkgPath}, slog.Default())
@@ -209,7 +209,7 @@ func TestLoad_DepsIncluded(t *testing.T) {
 
 	// FindPkgByPath must locate the runtime package even though it is returned
 	// as the top-level package here; the test also validates the traversal path
-	// used by G-03 for non-top-level dependencies.
+	// used by the parse stage for non-top-level dependencies.
 	rp := FindPkgByPath(pkgs, runtimePkgPath)
 	if rp == nil {
 		t.Fatalf("FindPkgByPath(%q) returned nil; NeedDeps / NeedImports may not be working", runtimePkgPath)
@@ -220,7 +220,7 @@ func TestLoad_DepsIncluded(t *testing.T) {
 		t.Fatal("runtime package has nil Types; type-checker information not loaded")
 	}
 
-	// Header must be directly look-up-able — this is the lookup G-03 will use.
+	// Header must be directly look-up-able — this is the lookup the parse stage will use.
 	headerObj := rp.Types.Scope().Lookup("Header")
 	if headerObj == nil {
 		t.Errorf("runtime.Header type object not found in package scope; delta-gen parse stage cannot identify embedded Header fields")
