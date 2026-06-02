@@ -1,37 +1,30 @@
 package deltagen
 
-// template.go implements the code-emission stage (Phase 4) for delta-gen.
-// It provides text/template-driven generation of the TDelta companion struct
-// (R-DG-015) and, in later Phase-4 items, the Apply, Diff, Coalesce, and
-// EntityID function bodies (R-DG-012, R-DG-013, R-DG-014, R-DG-034).
+// template.go implements the code-emission stage for delta-gen. It provides
+// text/template-driven generation of the TDelta companion struct (R-DG-015)
+// and the Apply, Diff, Coalesce, and EntityID function bodies (R-DG-012,
+// R-DG-013, R-DG-014, R-DG-034).
 //
 // # Architecture
 //
 // View construction is separated from template execution:
 //
-//   - templateData / snapshotView / fieldView / importSpec are stable view
-//     types shared by all Phase-4 items.
+//   - templateData / snapshotView / fieldView / importSpec are view types
+//     consumed by the template.
 //   - buildImports constructs the import set and a types.Qualifier closure;
 //     the qualifier side-effects the import set as types.TypeString encounters
 //     foreign-package references during view construction. The returned
 //     recordExtra closure allows callers to inject additional imports (e.g.
 //     "reflect") after view construction is complete.
 //   - buildSnapshotView translates one ParsedSnapshot into a snapshotView;
-//     it applies suppression (omit/retired) and the Phase-5 sentinel
-//     (delta.nested) before rendering each field's Delta-side type via
-//     types.TypeString. Sets UseReflectEq via types.Comparable per field
-//     and NeedsReflect per snapshot for the conditional reflect-import
-//     logic (R-DG-012, R-DG-013). Only non-comparable types (slice, map, complex structs)
-//     trigger reflect; comparable types including pointers use !=.
+//     it applies suppression (omit/retired) and the delta.nested sentinel
+//     before rendering each field's Delta-side type via types.TypeString.
+//     Sets UseReflectEq via types.Comparable per field and NeedsReflect per
+//     snapshot for the conditional reflect-import logic (R-DG-012, R-DG-013).
+//     Only non-comparable types (slice, map, complex structs) trigger reflect;
+//     comparable types including pointers use !=.
 //   - executeEmit orchestrates build → execute → go/format → WriteFile,
 //     called by generator.go's emitStage.
-//
-// # Extending for R-DG-012, R-DG-013, R-DG-014, R-DG-034
-//
-// Add new fields to fieldView and snapshotView, new named sub-templates under
-// deltaTemplateStr, and new rendering logic in buildSnapshotView.  The
-// templateData shape, buildImports, and executeEmit pipeline are intended to
-// remain stable across all Phase-4 items.
 
 import (
 	"bytes"
@@ -80,8 +73,8 @@ const (
 
 // ── View types ────────────────────────────────────────────────────────────────
 
-// templateData is the top-level input to the delta template. Fields are stable
-// across R-DG-015 through R-DG-034 so sub-templates added in later items can reuse them.
+// templateData is the top-level input to the delta template. Fields are
+// shared across R-DG-015 through R-DG-034.
 type templateData struct {
 	// Version is the CLI --version string embedded in the generated file header.
 	Version string
@@ -1104,7 +1097,7 @@ func buildSnapshotView(ps *ParsedSnapshot, qualifier types.Qualifier, emitMethod
 
 // ── Emit orchestration ────────────────────────────────────────────────────────
 
-// executeEmit runs the full Phase-4 emit pipeline:
+// executeEmit runs the full emit pipeline:
 //
 //  1. Parse --pkg-alias entries and derive emitOpts.
 //  2. Build the qualifier, import-recorder, and extra-import injector via
