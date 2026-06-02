@@ -1,5 +1,5 @@
 // Package bad_chan provides a Snapshot fixture with a channel payload field,
-// used to exercise the unsupported-shape rejection path in G-03 parse tests.
+// used to exercise the unsupported-shape rejection path in parse tests (R-DG-001–R-DG-003).
 package bad_chan
 
 import eddt "go.resystems.io/eddt/runtime"

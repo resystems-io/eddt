@@ -26,7 +26,7 @@ type ContactDetails struct {
 
 // CompositeSnapshot covers all three compositional shapes under delta.nested.
 //
-// Delta encoding axes covered (§1.6.3 + Phase 5):
+// Delta encoding axes covered (§1.6.3 ):
 //   - Details: ShapeStructValue + delta.nested → DetailsDelta (R-DG-016)
 //   - Labels:  ShapeMap         + delta.nested → UpdatedLabels / RemovedLabels (R-DG-016)
 //   - Groups:  ShapeSlice       + delta.nested → AddedGroups / RemovedGroups (R-DG-016, R-DG-028)

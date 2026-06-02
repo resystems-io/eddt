@@ -1,5 +1,5 @@
 // Package multi_header provides a struct with two embedded runtime.Header
-// fields, used to exercise the "multiple Headers" error path in G-03 parse
+// fields, used to exercise the "multiple Headers" error path in parse stage (R-DG-001–R-DG-003)
 // tests.
 package multi_header
 

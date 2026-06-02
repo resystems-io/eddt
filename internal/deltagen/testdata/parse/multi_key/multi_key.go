@@ -1,5 +1,5 @@
 // Package multi_key provides a Snapshot fixture with two fields tagged
-// eddt:"entity.key". G-04 must reject this with a "multiple" error: at most
+// eddt:"entity.key". R-DG-010 must reject this with a "multiple" error: at most
 // one entity-key field is permitted per Snapshot.
 package multi_key
 
@@ -12,7 +12,7 @@ type KeyA struct{ ID string }
 // which is the error condition this fixture exercises.
 type KeyB struct{ Name string }
 
-// MultiKeySnapshot has two entity.key-tagged fields. G-04's parseKeyField
+// MultiKeySnapshot has two entity.key-tagged fields. parseKeyField (R-DG-010)
 // must return an error mentioning "multiple" when it encounters this shape.
 type MultiKeySnapshot struct {
 	eddt.Header

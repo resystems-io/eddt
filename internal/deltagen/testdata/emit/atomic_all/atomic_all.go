@@ -1,7 +1,7 @@
 // Package atomic_all provides a Snapshot fixture exercising every atomic-row
 // emission case for R-DG-015. One field per payload shape, plus the three
-// Phase-4-relevant tag families (delta.omit, delta.retired, delta.commutative).
-// delta.nested is deliberately absent — it is a Phase-5 concern (R-DG-016).
+// tag families (delta.omit, delta.retired, delta.commutative).
+// delta.nested is deliberately absent — it is a covered by R-DG-016.
 package atomic_all
 
 import eddt "go.resystems.io/eddt/runtime"

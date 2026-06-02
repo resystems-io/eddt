@@ -1,5 +1,5 @@
 // Package bad_iface provides a Snapshot fixture with an interface-typed payload
-// field, used to exercise the unsupported-shape rejection path in G-03 parse
+// field, used to exercise the unsupported-shape rejection path in parse stage (R-DG-001–R-DG-003)
 // tests.
 package bad_iface
 

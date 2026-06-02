@@ -1,5 +1,5 @@
 // Package no_key provides a conforming Snapshot fixture that omits the
-// eddt:"entity.key" tag. It serves two G-04 test cases:
+// eddt:"entity.key" tag. It serves two R-DG-010 test cases:
 //
 //   - G.4 no-key error: parseSnapshot with default opts produces a "no field
 //     tagged entity.key" error.
