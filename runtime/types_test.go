@@ -146,7 +146,7 @@ func TestFieldDeltaEquality(t *testing.T) {
 	}
 
 	// Instantiation breadth: ensure the generic compiles for pointer inner types
-	// (the form Phase 7 uses for compositional clearable fields).
+	// (the form used for compositional clearable fields — R-DG-026).
 	_ = FieldDelta[*int32]{Op: OpIgnore}
 	pfd := FieldDelta[*int32]{Op: OpAssert}
 	if pfd.Op != OpAssert {

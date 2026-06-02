@@ -1,8 +1,9 @@
 package deltagen
 
-// parse_test.go exercises the Snapshot type parser introduced in G-03,
-// reshaped in G-07 (ParseOpts option carrier; walkFields helper), and
-// extended in G-04 (parseKeyField; entity-key recognition and validation).
+// parse_test.go exercises the Snapshot type parser (R-DG-001–R-DG-010):
+// struct resolution, Header recognition, field shape classification
+// (R-DG-003), tag parsing (R-DG-004, R-DG-005), and entity-key field
+// identification (R-DG-010).
 //
 // # Group F: Snapshot structural parsing
 //
@@ -19,7 +20,7 @@ package deltagen
 //       CrossPackage: false; a KeyFieldOverride pointing at the same field
 //       as the entity.key tag yields a structurally-equal result.
 //
-// # Group G: Entity-key recognition (G-04)
+// # Group G: Entity-key recognition (R-DG-010)
 //
 // Tests cover the parseKeyField responsibilities:
 //
@@ -260,9 +261,9 @@ func TestParse_CrossPackageFiltersUnexported(t *testing.T) {
 //     a structurally-identical result (the override path and tag path
 //     converge when they pick the same field).
 //
-// These guarantees keep the call-site signature stable: G-06 can route the
-// CLI value through ParseOpts.KeyFieldOverride without changing the parser's
-// observable behaviour for tag-conforming Snapshots.
+// These guarantees keep the call-site signature stable: the CLI layer routes
+// the --key-field value through ParseOpts.KeyFieldOverride (R-DG-040) without
+// changing the parser's observable behaviour for tag-conforming Snapshots.
 // Covers: R-DG-002, R-DG-003, R-DG-010
 func TestParse_ParseOptsEquivalence(t *testing.T) {
 	pkgs := loadFixture(t, "valid")
@@ -288,9 +289,9 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 		if snap.HeaderVar == nil {
 			t.Errorf("HeaderVar nil; expected populated")
 		}
-		// G-04 contract: KeyVar is always populated for a successful parse.
+		// R-DG-010: KeyVar is always populated for a successful parse.
 		if snap.KeyVar == nil {
-			t.Errorf("KeyVar nil; expected populated after G-04")
+			t.Errorf("KeyVar nil; expected populated (R-DG-010)")
 			continue
 		}
 		if snap.KeyVar.Name() != "Key" {
@@ -305,7 +306,7 @@ func TestParse_ParseOptsEquivalence(t *testing.T) {
 	}
 }
 
-// ── Group G: Entity-key recognition (G-04) ────────────────────────────────────
+// ── Group G: Entity-key recognition (R-DG-010) ────────────────────────────────
 
 // TestParse_KeyField_TagFoundStruct verifies the happy path for tag-based
 // key-field discovery with a struct-valued key. ValidSnapshot has a `Key UEKey
@@ -453,8 +454,8 @@ func TestParse_KeyField_OverrideMissing(t *testing.T) {
 // TestParse_KeyField_OverrideWinsOverTag verifies the precedence rule: when
 // both an entity.key tag and a CLI override are present, the override wins.
 // The tagged field falls back into payload Fields rather than being silently
-// discarded. The parser does not warn; the CLI layer (G-06) emits a
-// --verbose warning.
+// discarded. The parser does not warn; the CLI layer emits a --verbose
+// warning (R-DG-040).
 // Covers: R-DG-010, R-DG-040
 func TestParse_KeyField_OverrideWinsOverTag(t *testing.T) {
 	// ValidSnapshot has `Key UEKey \`eddt:"entity.key"\`` AND a comparable

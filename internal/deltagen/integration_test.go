@@ -269,7 +269,7 @@ var tagErrorCases = []tagErrorCase{
 		structName: "UnknownTagSnap",
 		wantErr:    "",
 	},
-	// R-DG-006, R-DG-007 / G-04: tag-based path with no entity.key tag on any direct field.
+	// R-DG-006, R-DG-007 / R-DG-010: tag-based path with no entity.key tag on any direct field.
 	// Qualifies: error only when Config.KeyFields[struct] == "" (tag-based path).
 	{
 		label:      "T03/NoEntityKeyTag",
@@ -277,7 +277,7 @@ var tagErrorCases = []tagErrorCase{
 		structName: "NoKeyTagSnap",
 		wantErr:    "no field tagged",
 	},
-	// R-DG-006, R-DG-007 / G-04: two DIRECT fields on the outer struct are both tagged entity.key.
+	// R-DG-006, R-DG-007 / R-DG-010: two DIRECT fields on the outer struct are both tagged entity.key.
 	{
 		label:      "T03/MultipleEntityKeyTags",
 		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype MultiKeySnap struct {\n\teddt.Header\n\tKey1 string `eddt:\"entity.key\"`\n\tKey2 string `eddt:\"entity.key\"`\n}\n",
@@ -293,7 +293,7 @@ var tagErrorCases = []tagErrorCase{
 		structName: "EmbeddedKeySnap",
 		wantErr:    "no field tagged",
 	},
-	// R-DG-006, R-DG-007 / G-06: Config.KeyFields override names a field not present in the struct.
+	// R-DG-006, R-DG-007 / R-DG-040: Config.KeyFields override names a field not present in the struct.
 	{
 		label:      "T03/KeyOverrideFieldNotFound",
 		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype OverrideSnap struct {\n\teddt.Header\n\tKey  string `eddt:\"entity.key\"`\n\tName string\n}\n",
@@ -301,14 +301,14 @@ var tagErrorCases = []tagErrorCase{
 		keyFields:  map[string]string{"OverrideSnap": "NonExistentField"},
 		wantErr:    "override names field",
 	},
-	// R-DG-006, R-DG-007 / G-04 / R-DG-034, R-DG-035: slice-typed entity-key field; slices are not comparable.
+	// R-DG-006, R-DG-007 / R-DG-010 / R-DG-034, R-DG-035: slice-typed entity-key field; slices are not comparable.
 	{
 		label:      "T03/SliceEntityKey",
 		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype SliceKeySnap struct {\n\teddt.Header\n\tKey  []string `eddt:\"entity.key\"`\n\tName string\n}\n",
 		structName: "SliceKeySnap",
 		wantErr:    "not comparable",
 	},
-	// R-DG-006, R-DG-007 / G-04 / R-DG-034, R-DG-035: map-typed entity-key field; maps are not comparable.
+	// R-DG-006, R-DG-007 / R-DG-010 / R-DG-034, R-DG-035: map-typed entity-key field; maps are not comparable.
 	{
 		label:      "T03/MapEntityKey",
 		src:        "package snap\n\nimport eddt \"go.resystems.io/eddt/runtime\"\n\ntype MapKeySnap struct {\n\teddt.Header\n\tKey  map[string]string `eddt:\"entity.key\"`\n\tName string\n}\n",
@@ -369,7 +369,7 @@ func tagErrorCheck(t *testing.T, src, structName string, keyFields map[string]st
 //
 // TestIntegration_KeyFieldOverride verifies that Config.KeyFields selects the
 // entity-key field by name even when no eddt:"entity.key" tag is present,
-// and that the resulting generated code compiles (R-DG-006, R-DG-007 / G-06 override path).
+// and that the resulting generated code compiles (R-DG-006, R-DG-007 / R-DG-040 override path).
 func TestIntegration_KeyFieldOverride(t *testing.T) {
 	t.Run("T03/OverrideWithNoTag", func(t *testing.T) {
 		// Snapshot with Key string but no entity.key tag; override supplies the key.

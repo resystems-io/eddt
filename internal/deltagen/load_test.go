@@ -1,6 +1,6 @@
 package deltagen
 
-// load_test.go exercises the package loading stage (G-02) in five groups:
+// load_test.go exercises the package loading stage (R-DG-037) in five groups:
 //
 //   A. Filesystem path loading  — R-DG-037
 //   B. Import path loading      — R-DG-037, R-DG-037

@@ -310,8 +310,8 @@ func TestCLI_KeyField_UnrecognisedStructError(t *testing.T) {
 // TestCLI_KeyField_VerboseConflictWarning verifies that when both an
 // eddt:"entity.key" tag and a --key-field override are present, the generator
 // emits a slog Warn entry to stderr identifying the override and the tagged
-// field. After G-08 the warning fires unconditionally (at Warn level) without
-// requiring --verbose. The valid fixture has Key tagged entity.key; overriding
+// field. The warning fires unconditionally (at Warn level) without requiring
+// --verbose. The valid fixture has Key tagged entity.key; overriding
 // to Bearer triggers the conflict.
 // Covers: R-DG-036, R-DG-037, R-DG-038, R-DG-040
 func TestCLI_KeyField_VerboseConflictWarning(t *testing.T) {
