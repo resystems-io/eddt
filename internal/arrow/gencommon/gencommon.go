@@ -10,12 +10,28 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
+
+// warnOut is the writer used by gencommon to emit diagnostic warnings.
+// It defaults to os.Stderr and can be redirected in tests via SetWarnOutput.
+var warnOut io.Writer = os.Stderr
+
+// SetWarnOutput redirects gencommon's internal warning output. Tests call this
+// to suppress or capture warning messages without affecting the default stderr
+// behaviour in production.
+func SetWarnOutput(w io.Writer) { warnOut = w }
+
+// warnf writes a formatted warning message to warnOut (default: os.Stderr).
+func warnf(format string, args ...any) {
+	fmt.Fprintf(warnOut, format, args...)
+}
 
 // -- types: Core data structures shared by writer-gen and reader-gen.
 
@@ -228,7 +244,7 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 			pkg := FindPkgByPath(allPkgs, pkgPath)
 			if pkg == nil {
 				if verbose {
-					fmt.Printf("Warning: Package %s not loaded for generic instantiation %s; skipping\n", pkgPath, ref.Name)
+					warnf("Warning: Package %s not loaded for generic instantiation %s; skipping\n", pkgPath, ref.Name)
 				}
 				continue
 			}
@@ -250,7 +266,7 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 				}
 				fi, err := fieldInfoFromType(pkg, allPkgs, f.Name(), f.Type(), false, &queue, processed)
 				if err != nil {
-					fmt.Printf("Warning: Skipping field %s in generic instantiation %s: %v\n", f.Name(), ref.Name, err)
+					warnf("Warning: Skipping field %s in generic instantiation %s: %v\n", f.Name(), ref.Name, err)
 					continue
 				}
 				info.Fields = append(info.Fields, fi)
@@ -350,7 +366,7 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 						}
 						fieldInfo, err := fieldInfoFromExpr(pkg, allPkgs, fieldName, field.Type, &queue, processed)
 						if err != nil {
-							fmt.Printf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
+							warnf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
 							continue
 						}
 
@@ -370,7 +386,7 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 		}
 
 		if !found && verbose {
-			fmt.Printf("Warning: Could not find definition for targeted struct: %s\n", ref.Name)
+			warnf("Warning: Could not find definition for targeted struct: %s\n", ref.Name)
 		}
 	}
 
@@ -388,7 +404,7 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 	// Detect pointer embedding (*Base) — skip for now.
 	fieldType := field.Type
 	if _, isPtr := fieldType.(*ast.StarExpr); isPtr {
-		fmt.Println("Warning: Skipping pointer-embedded struct (not yet supported)")
+		warnf("Warning: Skipping pointer-embedded struct (not yet supported)\n")
 		return nil
 	}
 
@@ -400,12 +416,12 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 
 	named, ok := typ.(*types.Named)
 	if !ok {
-		fmt.Printf("Warning: Embedded type %s is not a named type; skipping\n", typ)
+		warnf("Warning: Embedded type %s is not a named type; skipping\n", typ)
 		return nil
 	}
 
 	if _, isStruct := named.Underlying().(*types.Struct); !isStruct {
-		fmt.Printf("Warning: Embedded type %s is not a struct; skipping\n", named.Obj().Name())
+		warnf("Warning: Embedded type %s is not a struct; skipping\n", named.Obj().Name())
 		return nil
 	}
 
@@ -416,7 +432,7 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 	}
 	loadedPkg := FindPkgByPath(allPkgs, embObjPkg.Path())
 	if loadedPkg == nil {
-		fmt.Printf("Warning: Package %s for embedded struct %s is not loaded; skipping\n",
+		warnf("Warning: Package %s for embedded struct %s is not loaded; skipping\n",
 			embObjPkg.Path(), named.Obj().Name())
 		return nil
 	}
@@ -441,7 +457,7 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 	}
 
 	if structType == nil {
-		fmt.Printf("Warning: Could not find AST declaration for embedded struct %s\n", structName)
+		warnf("Warning: Could not find AST declaration for embedded struct %s\n", structName)
 		return nil
 	}
 
@@ -460,7 +476,7 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 
 		fieldInfo, err := fieldInfoFromExpr(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
 		if err != nil {
-			fmt.Printf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
+			warnf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
 			continue
 		}
 
@@ -501,7 +517,7 @@ func FilterUnexportedFields(structs []StructInfo, outputPkg string) {
 		filtered := si.Fields[:0]
 		for _, f := range si.Fields {
 			if !token.IsExported(f.Name) {
-				fmt.Printf("Warning: Skipping unexported field %s in %s (inaccessible from output package %q)\n",
+				warnf("Warning: Skipping unexported field %s in %s (inaccessible from output package %q)\n",
 					f.Name, si.Name, outputPkg)
 				continue
 			}

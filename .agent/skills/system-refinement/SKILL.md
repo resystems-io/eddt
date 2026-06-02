@@ -1,7 +1,7 @@
 ---
 name: system-refinement
 description: Structured process for planning, implementing, verifying and
-  documenting refinements to existing Go subsystems. Covers code review,
+  documenting refinements to existing subsystems. Covers code review,
   design planning, incremental implementation, test verification, and
   documentation updates.
 disable-model-invocation: false
@@ -12,6 +12,8 @@ triggers:
   - "fix bug in generator"
   - "implement checklist item"
   - "address refinement"
+  - "system refinement"
+  - "system analysis and planning"
 ---
 
 # System Refinement Process

@@ -1,5 +1,5 @@
 ---
-name: arrow-generator
+name: go-arrow-high-performance
 description: Enforces strict memory and performance rules when generating Apache
   Arrow builder code in Go.
 triggers:

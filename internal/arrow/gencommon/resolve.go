@@ -173,6 +173,13 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			fi := innerInfo
 			fi.GoType = "*" + innerInfo.GoType
 			fi.EltInfo = &innerCopy
+			// Clear method fields inherited from the inner *T FieldInfo: the outer
+			// **T is not directly marshallable. The template discriminant for **T is
+			// IsPointer+EltInfo (not MarshalMethod/ConvertMethod), so these must be
+			// empty to route to the correct EltInfo dereference path.
+			fi.MarshalMethod = ""
+			fi.ConvertMethod = ""
+			fi.CastType = ""
 			return fi, nil
 		}
 

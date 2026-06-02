@@ -289,6 +289,49 @@ type WebLink struct {
 			mustNotContain: []string{"MarshalText"},
 		},
 		{
+			// **T where T implements fmt.Stringer: outer **T must dereference once
+			// before calling .String(). The resolver fix clears MarshalMethod on the
+			// outer FieldInfo so the template takes the IsPointer+EltInfo path and
+			// emits a two-level nil guard + .String() on the inner *T.
+			name: "double-pointer-stringer",
+			goCode: `package mypkg
+
+import "net/url"
+
+type OptionalLink struct {
+	Site **url.URL
+}
+`,
+			targetStruct: "OptionalLink",
+			mustContain: []string{
+				`{Name: "Site",`,
+				"AppendNull",
+				".String()",
+			},
+			// The bug was calling .String() directly on **url.URL, which has no method set.
+			mustNotContain: []string{"row.Site.String()"},
+		},
+		{
+			// **T where T implements encoding.TextMarshaler: same resolver fix ensures
+			// MarshalText is called on the dereferenced *T, not on **T.
+			name: "double-pointer-text-marshaler",
+			goCode: `package mypkg
+
+import "net/netip"
+
+type OptionalAddr struct {
+	Addr **netip.Addr
+}
+`,
+			targetStruct: "OptionalAddr",
+			mustContain: []string{
+				`{Name: "Addr",`,
+				"AppendNull",
+				".MarshalText()",
+			},
+			mustNotContain: []string{"row.Addr.MarshalText()"},
+		},
+		{
 			name: "external-type-unsupported-skipped",
 			goCode: `package mypkg
 
@@ -1563,6 +1606,124 @@ type Event struct {
 			for _, unwanted := range tt.mustNotContain {
 				if strings.Contains(outStr, unwanted) {
 					t.Errorf("Expected output NOT to contain %q, got:\n%s", unwanted, outStr)
+				}
+			}
+		})
+	}
+}
+
+// TestGenerator_ElidesExistingSchemas verifies that when a companion .go file in
+// the output directory already declares a schema helper (e.g. NewInnerSchema),
+// the generator suppresses re-declaration of that helper and emits an elision
+// comment block instead. The target struct (Outer) is still fully generated.
+// TestGenerator_SchemaElision covers the three elision scenarios for writer-gen:
+// companion-file elision, no-self-elide on re-generation, and empty-dir baseline.
+func TestGenerator_SchemaElision(t *testing.T) {
+	innerOuterSrc := `package mypkg
+
+type Inner struct {
+	X int32
+}
+
+type Outer struct {
+	ID    int32
+	Child Inner
+}
+`
+	targetSrc := `package mypkg
+
+type Target struct {
+	ID int32
+}
+`
+
+	tests := []struct {
+		name           string
+		sourceCode     string
+		targets        []string
+		companion      string // content of companion.go; empty = no companion
+		priorOutput    string // content written to outPath before Run; empty = no prior
+		wantContains   []string
+		wantNotContain []string
+	}{
+		{
+			name:       "elides-companion-schema",
+			sourceCode: innerOuterSrc,
+			targets:    []string{"Outer"},
+			companion:  "package mypkg\n\nfunc NewInnerSchema() interface{} { return nil }\n",
+			wantContains: []string{
+				"func NewOuterSchema()",
+				"NewInnerSchema()", // still referenced
+				"Schema helpers elided",
+				"companion.go",
+			},
+			wantNotContain: []string{
+				"func NewInnerSchema()", // must be elided
+			},
+		},
+		{
+			name:        "no-self-elide-on-regenerate",
+			sourceCode:  targetSrc,
+			targets:     []string{"Target"},
+			priorOutput: "package mypkg\n\nfunc NewTargetSchema() interface{} { return nil }\n",
+			wantContains: []string{
+				"func NewTargetSchema()", // must not be elided
+			},
+			wantNotContain: []string{
+				"Schema helpers elided",
+			},
+		},
+		{
+			name:       "empty-dir-no-elision",
+			sourceCode: innerOuterSrc,
+			targets:    []string{"Outer"},
+			wantContains: []string{
+				"func NewOuterSchema()",
+				"func NewInnerSchema()",
+			},
+			wantNotContain: []string{
+				"Schema helpers elided",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(tmpDir, "structs.go"), []byte(tt.sourceCode), 0644); err != nil {
+				t.Fatalf("write structs.go: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+				t.Fatalf("write go.mod: %v", err)
+			}
+			if tt.companion != "" {
+				if err := os.WriteFile(filepath.Join(tmpDir, "companion.go"), []byte(tt.companion), 0644); err != nil {
+					t.Fatalf("write companion.go: %v", err)
+				}
+			}
+			outPath := filepath.Join(tmpDir, "out_writer.go")
+			if tt.priorOutput != "" {
+				if err := os.WriteFile(outPath, []byte(tt.priorOutput), 0644); err != nil {
+					t.Fatalf("write prior output: %v", err)
+				}
+			}
+			g := NewGenerator([]string{tmpDir}, tt.targets, outPath, false, nil)
+			if err := g.Run(""); err != nil {
+				t.Fatalf("Run() failed: %v", err)
+			}
+			outBytes, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+			outStr := string(outBytes)
+			for _, want := range tt.wantContains {
+				if !strings.Contains(outStr, want) {
+					t.Errorf("want %q in output, not found\n%s", want, outStr)
+				}
+			}
+			for _, notWant := range tt.wantNotContain {
+				if strings.Contains(outStr, notWant) {
+					t.Errorf("want %q absent from output, but found it\n%s", notWant, outStr)
 				}
 			}
 		})

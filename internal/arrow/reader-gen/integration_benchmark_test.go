@@ -1,62 +1,19 @@
 package readergen
 
 import (
-	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"go.resystems.io/eddt/internal/arrow/arrowtest"
 	writergen "go.resystems.io/eddt/internal/arrow/writer-gen"
 )
 
-// runBenchmarkCmd runs a go test benchmark and maps the results to the outer benchmark.
+// runBenchmarkCmd runs a go test benchmark and maps the results to the outer
+// benchmark. Delegates to arrowtest.RunBenchmarkCmd.
 func runBenchmarkCmd(b *testing.B, dir string) {
-	b.Helper()
-	cmd := exec.Command("go", "test", "-bench=.", "-benchmem")
-	cmd.Dir = dir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		b.Fatalf("Benchmark failed: %v\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
-	}
-
-	fmt.Printf("\n--- Inner Benchmark Output ---\n%s\n------------------------------\n", stdout.String())
-
-	// Parse the output to report metrics to the outer benchmark.
-	// A typical line: BenchmarkArrowLoadRow-12    2686888    451.9 ns/op    0 B/op    0 allocs/op
-	lines := strings.Split(stdout.String(), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "Benchmark") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				for i, p := range parts {
-					if p == "ns/op" && i > 0 {
-						var nsOp float64
-						fmt.Sscanf(parts[i-1], "%f", &nsOp)
-						b.ReportMetric(nsOp, "ns/op")
-					}
-					if p == "B/op" && i > 0 {
-						var bOp float64
-						fmt.Sscanf(parts[i-1], "%f", &bOp)
-						b.ReportMetric(bOp, "B/op")
-					}
-					if p == "allocs/op" && i > 0 {
-						var allocsOp float64
-						fmt.Sscanf(parts[i-1], "%f", &allocsOp)
-						b.ReportMetric(allocsOp, "allocs/op")
-					}
-				}
-			}
-		}
-	}
+	arrowtest.RunBenchmarkCmd(b, dir)
 }
 
 // BenchmarkArrowReaders performs a macro/integration benchmark of the generated Arrow
@@ -150,7 +107,7 @@ func BenchmarkArrowLoadRowSimpleStruct(b *testing.B) {
 			Valid: true,
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -210,7 +167,7 @@ func BenchmarkArrowLoadRowComplexStruct(b *testing.B) {
 			Config: map[string]float64{"score1": 99.5, "score2": 80.0},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -294,7 +251,7 @@ func BenchmarkLoadRowGenericPrimArg(b *testing.B) {
 			Scalar: FieldDelta[int32]{Op: 1, Value: int32(i)},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -392,7 +349,7 @@ func BenchmarkLoadRowGenericStructArg(b *testing.B) {
 			PtrStruct: FieldDelta[*Inner]{Op: 1, Value: v},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -482,7 +439,7 @@ func BenchmarkLoadRowGenericCombined(b *testing.B) {
 			PtrStruct: FieldDelta[*Inner]{Op: 2, Value: inner},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 

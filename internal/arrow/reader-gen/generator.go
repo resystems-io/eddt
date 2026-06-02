@@ -3,8 +3,9 @@ package readergen
 import (
 	"bytes"
 	"fmt"
-	"go/format"
+	"io"
 	"os"
+	"path/filepath"
 
 	"go.resystems.io/eddt/internal/arrow/gencommon"
 )
@@ -15,8 +16,19 @@ type Generator struct {
 	TargetStructs []string
 	OutPath       string
 	Verbose       bool
-	PkgAliases    []string // raw alias mappings in "original=replacement" format
-	Version       string   // short commitish for the generated header; may be empty
+	PkgAliases    []string  // raw alias mappings in "original=replacement" format
+	Version       string    // short commitish for the generated header; may be empty
+	Warn          io.Writer // destination for diagnostic warnings; defaults to os.Stderr
+}
+
+// warnf writes a formatted diagnostic message to g.Warn, falling back to
+// os.Stderr when the field is nil.
+func (g *Generator) warnf(format string, args ...any) {
+	w := g.Warn
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, format, args...)
 }
 
 // NewGenerator initializes a new Generator.
@@ -53,6 +65,14 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
+	// Elide schema helpers already declared by companion files in the output package.
+	// See internal/arrow/gencommon/output_scan.go for semantics and limitations.
+	existing, err := gencommon.ScanOutputPackageSchemas(filepath.Dir(g.OutPath), g.OutPath, "ArrowReader")
+	if err != nil {
+		return fmt.Errorf("scanning output package for existing schemas: %w", err)
+	}
+	structs, elidedSchemas := gencommon.PartitionByExistingSchemas(structs, existing, "ArrowReader")
+
 	// Reader-gen imports arrow and array but not memory.
 	reserved := map[string]bool{"arrow": true, "array": true}
 	packageName, imports, err := gencommon.ResolveOutputContext(parsedPkgName, structs, outPkgNameOverride, pkgAliases, reserved)
@@ -61,41 +81,19 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 
 	// Collect extra imports needed by ConvertBackExpr (e.g. "time", protobuf packages).
-	extraImports := gencommon.CollectConvertBackImports(structs)
-	if len(extraImports) > 0 {
-		existing := map[string]bool{}
-		for _, imp := range imports {
-			existing[imp.Path] = true
-		}
-		for _, imp := range extraImports {
-			if !existing[imp.Path] {
-				imports = append(imports, imp)
-				existing[imp.Path] = true
-			}
-		}
-	}
+	imports = gencommon.MergeImports(imports, gencommon.CollectConvertBackImports(structs))
 
 	// Compute unmarshal flag and collect unmarshal imports (e.g. "net/netip").
 	hasUnmarshal := gencommon.HasUnmarshalFields(structs)
 	if hasUnmarshal {
-		unmarshalImports := gencommon.CollectUnmarshalImports(structs)
-		existing := map[string]bool{}
-		for _, imp := range imports {
-			existing[imp.Path] = true
-		}
-		for _, imp := range unmarshalImports {
-			if !existing[imp.Path] {
-				imports = append(imports, imp)
-				existing[imp.Path] = true
-			}
-		}
+		imports = gencommon.MergeImports(imports, gencommon.CollectUnmarshalImports(structs))
 	}
 
 	// Warn about Stringer-only fields (no unmarshal inverse).
 	for _, si := range structs {
 		for _, f := range si.Fields {
 			if f.MarshalMethod == "String" && f.UnmarshalMethod == "" {
-				fmt.Printf("Warning: field %s.%s uses String() with no unmarshal inverse; skipping in reader\n", si.Name, f.Name)
+				g.warnf("Warning: field %s.%s uses String() with no unmarshal inverse; skipping in reader\n", si.Name, f.Name)
 			}
 		}
 	}
@@ -106,6 +104,7 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		Imports:            imports,
 		Structs:            structs,
 		HasUnmarshalFields: hasUnmarshal,
+		ElidedSchemas:      elidedSchemas,
 	}
 
 	var buf bytes.Buffer
@@ -113,14 +112,5 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("failed to format generated source: %w\nSource:\n%s", err, buf.String())
-	}
-
-	if err := os.WriteFile(g.OutPath, formatted, 0644); err != nil {
-		return fmt.Errorf("failed to write output file: %w", err)
-	}
-
-	return nil
+	return gencommon.WriteFormattedGo(g.OutPath, &buf)
 }

@@ -1,7 +1,6 @@
 package writergen
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +66,7 @@ func TestArrowMemoryAndDuckDB(t *testing.T) {
 	writer.Append(&u2)
 
 	// Build Arrow Record
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -202,7 +201,7 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 	writer.Append(&u3)
 
 	// Build Arrow Record
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -372,7 +371,7 @@ func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
 	writer.Append(&u2)
 	writer.Append(&u3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -606,7 +605,7 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -756,7 +755,7 @@ func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 	writer.Append(&u1)
 	writer.Append(&u2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -873,7 +872,7 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 	writer.Append(&r2)
 	writer.Append(&r3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1022,7 +1021,7 @@ func TestFixedSizeArrayArrowWriter(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1187,7 +1186,7 @@ func TestBlankIdentifierFieldSkipped(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1314,7 +1313,7 @@ func TestNestedSlices(t *testing.T) {
 	writer.Append(&m2)
 	writer.Append(&m3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1505,7 +1504,7 @@ func TestTripleNestedSlices(t *testing.T) {
 	writer.Append(&c2)
 	writer.Append(&c3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1565,7 +1564,7 @@ func TestMapWithSliceValue(t *testing.T) {
 	writer.Append(&g2)
 	writer.Append(&g3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1622,7 +1621,7 @@ func TestNestedMaps(t *testing.T) {
 	writer.Append(&c2)
 	writer.Append(&c3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1675,7 +1674,7 @@ func TestEmbeddedStruct(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1792,7 +1791,7 @@ func TestTimeDuration(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1917,7 +1916,7 @@ func TestTimeTimestamp(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2070,7 +2069,7 @@ func TestProtobufDuration(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2222,7 +2221,7 @@ func TestProtobufTimestamp(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2400,7 +2399,7 @@ func TestMultiPackageArrowWriter(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2574,7 +2573,7 @@ func TestCrossPackageUnexportedFields(t *testing.T) {
 	d := srcpkg.Device{ID: 42, Label: "test"}
 	writer.Append(&d)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 1 {
@@ -2690,7 +2689,7 @@ func TestImportPathDevice(t *testing.T) {
 	d := Device{ID: 1, Name: "sensor-1", Score: 42.5}
 	writer.Append(&d)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 1 {
@@ -2835,7 +2834,7 @@ func TestNullableCompoundWriter(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -3051,7 +3050,7 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -3120,54 +3119,13 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	runInnerTest(t, tmpDir, testCode, "")
 }
 
-// TestGenericClearableField verifies that arrow-writer-gen correctly handles
-// generic-instantiation field types (e.g. FieldDelta[int32]). The generated
-// writer must compile without errors.
-//
-// Covers: GI-02 (writer template generic row type), GI-01 (gencommon *ast.IndexExpr)
-func TestGenericClearableField(t *testing.T) {
-
-	const goCode = `package dummy
-
-type FieldDeltaOp int8
-
-type FieldDelta[T any] struct {
-	Op    FieldDeltaOp
-	Value T
-}
-
-type Inner struct {
-	Z string
-}
-
-type Snapshot struct {
-	Seq       int64
-	Scalar    FieldDelta[int32]
-	PtrStruct FieldDelta[*Inner]
-}
-`
-	tmpDir, _ := setupIntegrationTest(t, goCode, []string{"Snapshot"}, "")
-	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-	runCmd(t, tmpDir, "go", "mod", "tidy")
-	runCmd(t, tmpDir, "go", "build", ".")
-}
-
 // setupIntegrationTest creates a temp directory, writes the Go struct source and
 // go.mod, runs the generator, and verifies the output file exists. It returns
 // the temp directory and generated output path. For multi-package layouts use
 // the setup directly rather than this helper.
 func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string, pkgOverride string) (tmpDir, outPath string) {
 	t.Helper()
-	tmpDir = t.TempDir()
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "dummy.go"), []byte(goCode), 0644); err != nil {
-		t.Fatalf("Failed to write dummy.go: %v", err)
-	}
-
-	modContent := "module dummy\n\ngo 1.25.0\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
-		t.Fatalf("Failed to write go.mod: %v", err)
-	}
+	tmpDir = arrowtest.SetupModule(t, goCode)
 
 	outPath = filepath.Join(tmpDir, "dummy_arrow_writer.go")
 	g := NewGenerator([]string{tmpDir}, targetStructs, outPath, false, nil)
@@ -3182,41 +3140,16 @@ func setupIntegrationTest(t *testing.T, goCode string, targetStructs []string, p
 	return tmpDir, outPath
 }
 
-// runInnerTest writes the inner test harness code, fetches dependencies, and
-// executes `go test`. An optional testRunFilter can restrict which inner test
-// function runs (pass "" to run all).
+// runInnerTest writes the inner test harness code, fetches Arrow and DuckDB
+// dependencies, and executes `go test`. An optional testRunFilter can restrict
+// which inner test function runs (pass "" to run all).
+// Delegates to arrowtest.RunInnerTest with DuckDBDep (needed by writer-gen tests).
 func runInnerTest(t *testing.T, tmpDir, testCode, testRunFilter string) {
-	t.Helper()
-
-	if err := os.WriteFile(filepath.Join(tmpDir, "dummy_test.go"), []byte(testCode), 0644); err != nil {
-		t.Fatalf("Failed to write dummy_test.go: %v", err)
-	}
-
-	runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
-	runCmd(t, tmpDir, "go", "get", arrowtest.DuckDBDep)
-	runCmd(t, tmpDir, "go", "mod", "tidy")
-
-	args := []string{"test", "-v"}
-	if testRunFilter != "" {
-		args = append(args, "-run", testRunFilter)
-	}
-	args = append(args, ".")
-	runCmd(t, tmpDir, "go", args...)
+	arrowtest.RunInnerTest(t, tmpDir, testCode, testRunFilter, arrowtest.DuckDBDep)
 }
 
 // runCmd is a helper for running external commands during integration tests.
-func runCmd(t *testing.T, dir, command string, args ...string) {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = dir
-	var outBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
-
-	err := cmd.Run()
-	outputStr := outBuf.String()
-	t.Logf("Running command: %s %s\nOutput:\n%s", command, strings.Join(args, " "), outputStr)
-
-	if err != nil {
-		t.Fatalf("Command '%s %s' failed: %v\nOutput: %s", command, strings.Join(args, " "), err, outputStr)
-	}
+// Delegates to arrowtest.RunCmd.
+func runCmd(t testing.TB, dir, command string, args ...string) {
+	arrowtest.RunCmd(t, dir, command, args...)
 }
