@@ -196,7 +196,7 @@ func TestARSnapshotDeltaRoundTrip(t *testing.T) {
 	writer := NewARSnapshotDeltaArrowWriter(pool)
 	defer writer.Release()
 	writer.Append(&want)
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 1 {
@@ -284,7 +284,7 @@ func TestARExtendedDeltaRoundTrip(t *testing.T) {
 
 	writer.Append(&row0)
 	writer.Append(&row1)
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 2 {
@@ -452,7 +452,7 @@ func TestARClearableDeltaRoundTrip(t *testing.T) {
 	writer.Append(&row0)
 	writer.Append(&row1)
 	writer.Append(&row2)
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 3 {
