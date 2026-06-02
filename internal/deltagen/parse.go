@@ -2,7 +2,7 @@ package deltagen
 
 // parse.go implements the second stage of the delta-gen pipeline: parsing a
 // named Snapshot struct into a structured description that the tag-handling
-// (R-DG-004, R-DG-005 through R-DG-006, R-DG-007) and emit (Phase 4) stages consume.
+// (R-DG-004, R-DG-005 through R-DG-006, R-DG-007) and emit stages consume.
 //
 // # The parse pipeline
 //
@@ -85,8 +85,7 @@ const (
 
 // ParsedField describes one payload field of a Snapshot struct as returned by
 // the parse stage. It carries enough information for both the tag-handling
-// and emit stages (Phase 4, which uses GoType and Var for type-string
-// rendering).
+// and emit stages (GoType and Var are used for type-string rendering).
 type ParsedField struct {
 	// Name is the Go field identifier, preserving the source case. Used
 	// verbatim by the emit stage to derive Delta field names (e.g. SetName).
@@ -105,8 +104,8 @@ type ParsedField struct {
 	// code (e.g. *time.Time, []BearerID).
 	GoType types.Type
 
-	// Var is the underlying types.Var from the struct definition. Downstream
-	// stages use it for package-path lookups and detailed type inspection.
+	// Var is the underlying types.Var from the struct definition. The emit
+	// stage uses it for package-path lookups and detailed type inspection.
 	Var *types.Var
 }
 
@@ -152,7 +151,7 @@ type ParsedSnapshot struct {
 
 // ParseOpts is the options carrier accepted by parseSnapshot. It encapsulates
 // per-invocation tuning so that the function's positional signature does not
-// grow as new parsing concerns land (key-field override in G-04 / G-06,
+// grow as new parsing concerns land (key-field override R-DG-010, R-DG-040,
 // future tag-validation hooks, etc.).
 //
 // The zero value (`ParseOpts{}`) is a valid configuration: same-package mode,
@@ -169,7 +168,7 @@ type ParseOpts struct {
 	// be treated as the entity-key field, bypassing the eddt:"entity.key"
 	// tag scan. The empty string selects tag-based discovery.
 	//
-	// Populated by the CLI layer in G-06 from --key-field; consumed by
+	// Populated by the CLI layer from --key-field (R-DG-040); consumed by
 	// parseKeyField. When both a tag and an override name a key field, the
 	// override silently wins (the CLI layer emits a --verbose warning).
 	KeyFieldOverride string
