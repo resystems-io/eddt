@@ -1,16 +1,12 @@
 package deltagen
 
 // tag.go implements the eddt: struct tag parser for the delta-gen pipeline.
-// It is the entry point for Phase 3 (R-DG-004, R-DG-005 through R-DG-006, R-DG-007):
+// It parses the raw eddt: tag string into a structured ParsedTag (R-DG-004,
+// R-DG-005), validates tag combinations and per-tag field-shape constraints
+// (R-DG-006, R-DG-007), and provides the TagKind enum used by the parse and
+// emit stages.
 //
-//   - R-DG-004, R-DG-005 (this file): parse the raw eddt: tag string into a structured
-//     ParsedTag carrying a TagKind and any comma-separated key=value options.
-//   - R-DG-006, R-DG-007: wire parseTag into walkFields; validate tag combinations and
-//     per-tag field-shape constraints.
-//   - R-DG-006, R-DG-007: migrate all callers to ParsedTag.Kind; consolidate entity.key
-//     and delta.* tag handling onto the same parsed-tag code path.
-//
-// delta.clearable is recognised as a secondary tag (R-DG-004, R-DG-007, Phase 7): it sets
+// delta.clearable is recognised as a secondary tag (R-DG-004, R-DG-007): it sets
 // ParsedTag.Clearable and never occupies ParsedTag.Kind. The Clearable ⟹
 // Nested semantic constraint is enforced by validateTagCombination (R-DG-007).
 
@@ -28,13 +24,13 @@ const (
 	TagKindNone TagKind = iota
 
 	// TagKindEntityKey corresponds to eddt:"entity.key". The tagged field is
-	// the entity-key field recognised by parseKeyField (G-04). Wired into the
-	// parse pipeline in R-DG-006, R-DG-007.
+	// the entity-key field recognised by parseKeyField (R-DG-010). Wired into
+	// the parse pipeline in R-DG-006, R-DG-007.
 	TagKindEntityKey
 
 	// TagKindNested corresponds to eddt:"delta.nested". The tagged field is
 	// a struct value for which the generator recurses and emits a companion
-	// <T>Delta type (delta-gen spec §9.2; Phase 5 R-DG-016).
+	// <T>Delta type (R-DG-016).
 	TagKindNested
 
 	// TagKindOmit corresponds to eddt:"delta.omit". The tagged field is
@@ -187,10 +183,9 @@ func parseTag(raw string) (ParsedTag, error) {
 }
 
 // validateTagShape returns an error if a tag is incompatible with a field
-// shape under the harmonised three-axis model (refinements §1.6.3;
-// R-DG-004, R-DG-005, R-DG-006, R-DG-007, R-DG-016, R-DG-007).
+// shape under the harmonised three-axis model (R-DG-004, R-DG-005, R-DG-006,
+// R-DG-007, R-DG-016).
 //
-// Baseline rules (this function in Phase 3):
 //   - TagKindNested: requires a composite shape (struct value, slice, map).
 //     Rejected on scalar and pointer — there is no decomposition axis to
 //     flip on a non-composite shape.
@@ -201,8 +196,8 @@ func parseTag(raw string) (ParsedTag, error) {
 //     responsibility, not the tag-shape gate's.
 //   - TagKindNone: no tag, no constraint.
 //
-// R-DG-007 (Phase 7) extends this function to gate TagKindClearable (admitted
-// on every shape per R-DG-007) and the nested + clearable combination (R-DG-007, R-DG-016).
+// R-DG-007 extends this function to gate TagKindClearable (admitted on every
+// shape per R-DG-007) and the nested + clearable combination (R-DG-007, R-DG-016).
 func validateTagShape(tag ParsedTag, shape FieldShape) error {
 	switch tag.Kind {
 	case TagKindNested:
