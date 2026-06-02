@@ -19,7 +19,7 @@ package deltagen
 //
 // # Why NeedDeps is required
 //
-// The parse stage (G-03) identifies the embedded runtime.Header field by type
+// The parse stage identifies the embedded runtime.Header field by type
 // identity — not by name — to be robust against aliased imports. For that
 // comparison it needs the *types.TypeName object for runtime.Header, which lives
 // in the go.resystems.io/eddt/runtime package. That package is a dependency of
@@ -47,7 +47,7 @@ import (
 // every package loaded by delta-gen.
 //
 // NeedName / NeedFiles / NeedSyntax provide the package identity and AST needed
-// by the parse stage (G-03) to walk struct declarations.
+// by the parse stage to walk struct declarations.
 //
 // NeedTypes / NeedTypesInfo give the type checker's resolved type objects and
 // expression→type map, used to identify runtime.Header by type identity and to
@@ -132,7 +132,7 @@ func loadPackages(inputPkgs []string, log *slog.Logger) ([]*packages.Package, er
 	var all []*packages.Package
 	var importPaths []string
 
-	// Phase 1: load filesystem paths one-at-a-time.
+	// Filesystem paths: load each directory separately.
 	// Each path gets its own Config.Dir so that separate Go modules are resolved
 	// relative to the correct root. A single call covering multiple separate
 	// modules would fail because go/packages expects a single module root.
@@ -159,7 +159,7 @@ func loadPackages(inputPkgs []string, log *slog.Logger) ([]*packages.Package, er
 		all = append(all, pkgs...)
 	}
 
-	// Phase 2: load import paths in a single batched call.
+	// Import paths: load all in a single batched call.
 	// All import paths are resolved against the go.mod of the current working
 	// directory (the invoking module). Batching is safe here because they all
 	// share a single module context.
