@@ -74,7 +74,7 @@ func TestPrimitiveRoundTrip(t *testing.T) {
 	zero := SimpleStruct{}
 	writer.Append(&zero)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 2 {
@@ -197,7 +197,7 @@ func TestListRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 3 {
@@ -316,7 +316,7 @@ func TestNestedListRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 3 {
@@ -411,7 +411,7 @@ func TestFixedSizeRoundTrip(t *testing.T) {
 	row1 := Packet{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 2 {
@@ -506,7 +506,7 @@ func TestNestedFixedSizeRoundTrip(t *testing.T) {
 	row1 := Matrix{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 2 {
@@ -599,7 +599,7 @@ func TestMixedListFixedRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 3 {
@@ -691,7 +691,7 @@ func TestMapRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 3 {
@@ -792,7 +792,7 @@ func TestIntKeyMapRoundTrip(t *testing.T) {
 	row1 := IntKeyMap{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewIntKeyMapArrowReader(rec)
@@ -872,7 +872,7 @@ func TestNestedMapRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewNestedMapArrowReader(rec)
@@ -969,7 +969,7 @@ func TestMapListValRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewMapListValArrowReader(rec)
@@ -1055,7 +1055,7 @@ func TestNamedMapRoundTrip(t *testing.T) {
 	row1 := NamedMapStruct{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewNamedMapStructArrowReader(rec)
@@ -1134,7 +1134,7 @@ func TestPointerPrimitiveRoundTrip(t *testing.T) {
 	row1 := PtrStruct{ID: 99}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 2 {
@@ -1247,7 +1247,7 @@ func TestStructRoundTrip(t *testing.T) {
 	row1 := Profile{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewProfileArrowReader(rec)
@@ -1328,7 +1328,7 @@ func TestPointerToStructRoundTrip(t *testing.T) {
 	row1 := Profile{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewProfileArrowReader(rec)
@@ -1429,7 +1429,7 @@ func TestNestedStructRoundTrip(t *testing.T) {
 	row1 := Outer{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewOuterArrowReader(rec)
@@ -1509,7 +1509,7 @@ func TestListOfStructsRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewProfileArrowReader(rec)
@@ -1584,7 +1584,7 @@ func TestMapStructValuesRoundTrip(t *testing.T) {
 	row1 := Profile{ID: 2}
 	writer.Append(&row1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewProfileArrowReader(rec)
@@ -1650,7 +1650,7 @@ func TestStructWithContainersRoundTrip(t *testing.T) {
 	}
 	writer.Append(&row0)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewProfileArrowReader(rec)
@@ -1703,7 +1703,7 @@ func TestTimeDurationRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewTimingArrowReader(rec)
@@ -1767,7 +1767,7 @@ func TestTimeTimeRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewEventArrowReader(rec)
@@ -1872,7 +1872,7 @@ func TestProtobufDurationRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewPBDurEventArrowReader(rec)
@@ -1978,7 +1978,7 @@ func TestProtobufTimestampRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewPBTsRecordArrowReader(rec)
@@ -2055,7 +2055,7 @@ func TestListOfConvertRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewScheduleArrowReader(rec)
@@ -2127,7 +2127,7 @@ func TestTextMarshalerRoundTrip(t *testing.T) {
 	r3 := NetRecord{}
 	writer.Append(&r3)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewNetRecordArrowReader(rec)
@@ -2203,7 +2203,7 @@ func TestUnmarshalErrorAccumulation(t *testing.T) {
 	addrCol.Append("not-a-valid-ip")  // bad row
 	addrCol.Append("192.168.1.1")     // good row
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewAddrHolderArrowReader(rec)
@@ -2282,7 +2282,7 @@ func TestListOfTextMarshalerRoundTrip(t *testing.T) {
 	r2 := AddrList{Addrs: nil}
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewAddrListArrowReader(rec)
@@ -2351,7 +2351,7 @@ func TestStringerOnlySkip(t *testing.T) {
 	}
 	writer.Append(&r1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewLinkRecordArrowReader(rec)
@@ -2428,7 +2428,7 @@ func TestNullElementsInConvertList(t *testing.T) {
 	lb.Append(true)
 	vb.AppendNull()
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewEventLogArrowReader(rec)
@@ -2521,7 +2521,7 @@ func TestDictEncodedStringRoundTrip(t *testing.T) {
 	nameBldr.AppendNull()
 	optNameBldr.AppendNull()
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 4 {
@@ -2616,7 +2616,7 @@ func TestDictEncodedBinaryRoundTrip(t *testing.T) {
 	dataBldr.Append([]byte{0xDE, 0xAD}) // repeated dict entry
 	dataBldr.AppendNull()
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	if rec.NumRows() != 4 {
@@ -2755,7 +2755,7 @@ func TestBinaryUnmarshalRoundTrip(t *testing.T) {
 	r2 := BinRecord{}
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewBinRecordArrowReader(rec)
@@ -2807,7 +2807,7 @@ func TestBinaryUnmarshalRoundTrip(t *testing.T) {
 	valCol.Append([]byte{0xDE, 0xAD, 0xBE, 0xEF})
 	optValCol.AppendNull()
 
-	badRec := bldr.NewRecord()
+	badRec := bldr.NewRecordBatch()
 	defer badRec.Release()
 
 	reader2, err := NewBinRecordArrowReader(badRec)
@@ -2879,7 +2879,7 @@ func TestInitErrorPaths(t *testing.T) {
 		}, nil)
 		bldr := array.NewRecordBuilder(pool, schema)
 		bldr.Field(0).(*array.StringBuilder).Append("oops")
-		rec := bldr.NewRecord()
+		rec := bldr.NewRecordBatch()
 		defer rec.Release()
 		defer bldr.Release()
 
@@ -2899,7 +2899,7 @@ func TestInitErrorPaths(t *testing.T) {
 		}, nil)
 		bldr := array.NewRecordBuilder(pool, schema)
 		bldr.Field(0).(*array.Int32Builder).Append(42)
-		rec := bldr.NewRecord()
+		rec := bldr.NewRecordBatch()
 		defer rec.Release()
 		defer bldr.Release()
 
@@ -2923,7 +2923,7 @@ func TestInitErrorPaths(t *testing.T) {
 		}, nil)
 		bldr := array.NewRecordBuilder(pool, schema)
 		bldr.Field(0).(*array.BinaryDictionaryBuilder).Append([]byte{0x01})
-		rec := bldr.NewRecord()
+		rec := bldr.NewRecordBatch()
 		defer rec.Release()
 		defer bldr.Release()
 
@@ -2944,7 +2944,7 @@ func TestInitErrorPaths(t *testing.T) {
 		bldr := array.NewRecordBuilder(pool, schema)
 		bldr.Field(0).(*array.Int32Builder).Append(1)
 		bldr.Field(1).(*array.StringBuilder).Append("ok")
-		rec := bldr.NewRecord()
+		rec := bldr.NewRecordBatch()
 		defer rec.Release()
 		defer bldr.Release()
 
@@ -3002,7 +3002,7 @@ func TestEmbeddedStructRoundTrip(t *testing.T) {
 	}
 	writer.Append(&r1)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	// Verify flat schema (3 columns, not a nested struct)
@@ -3087,7 +3087,7 @@ func TestMissingColumns(t *testing.T) {
 	bldr.Field(0).(*array.Int32Builder).Append(42)
 	bldr.Field(1).(*array.StringBuilder).Append("hello")
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	// Init must succeed despite missing column.
@@ -3254,7 +3254,7 @@ func TestCrossPackageRoundTrip(t *testing.T) {
 		History: []*pkgb.Inner{{X: 1, Y: "x"}, {X: 2, Y: "y"}},
 	})
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewOuterArrowReader(rec)
@@ -3334,7 +3334,7 @@ func TestNullableListRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewNullableListArrowReader(rec)
@@ -3411,7 +3411,7 @@ func TestNullableMapRoundTrip(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewNullableMapArrowReader(rec)
@@ -3493,7 +3493,7 @@ func TestDoublePointerRoundTrip(t *testing.T) {
 	writer.Append(&r2)
 	writer.Append(&r3)
 
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 
 	reader, err := NewDoublePointerArrowReader(rec)

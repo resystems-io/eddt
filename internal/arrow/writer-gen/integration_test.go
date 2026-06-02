@@ -67,7 +67,7 @@ func TestArrowMemoryAndDuckDB(t *testing.T) {
 	writer.Append(&u2)
 
 	// Build Arrow Record
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -202,7 +202,7 @@ func TestArrowMemoryAndDuckDBListsAndMaps(t *testing.T) {
 	writer.Append(&u3)
 
 	// Build Arrow Record
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -372,7 +372,7 @@ func TestArrowMemoryAndDuckDBIntMap(t *testing.T) {
 	writer.Append(&u2)
 	writer.Append(&u3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -606,7 +606,7 @@ func TestArrowMemoryAndDuckDBNestedStructs(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -756,7 +756,7 @@ func TestArrowMemoryAndDuckDBPointerToPrimitive(t *testing.T) {
 	writer.Append(&u1)
 	writer.Append(&u2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -873,7 +873,7 @@ func TestArrowMemoryAndDuckDBSliceOfIPAddresses(t *testing.T) {
 	writer.Append(&r2)
 	writer.Append(&r3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1022,7 +1022,7 @@ func TestFixedSizeArrayArrowWriter(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1187,7 +1187,7 @@ func TestBlankIdentifierFieldSkipped(t *testing.T) {
 	writer.Append(&p1)
 	writer.Append(&p2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1314,7 +1314,7 @@ func TestNestedSlices(t *testing.T) {
 	writer.Append(&m2)
 	writer.Append(&m3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1505,7 +1505,7 @@ func TestTripleNestedSlices(t *testing.T) {
 	writer.Append(&c2)
 	writer.Append(&c3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1565,7 +1565,7 @@ func TestMapWithSliceValue(t *testing.T) {
 	writer.Append(&g2)
 	writer.Append(&g3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1622,7 +1622,7 @@ func TestNestedMaps(t *testing.T) {
 	writer.Append(&c2)
 	writer.Append(&c3)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 3 {
@@ -1675,7 +1675,7 @@ func TestEmbeddedStruct(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1792,7 +1792,7 @@ func TestTimeDuration(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -1917,7 +1917,7 @@ func TestTimeTimestamp(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2070,7 +2070,7 @@ func TestProtobufDuration(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2222,7 +2222,7 @@ func TestProtobufTimestamp(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2400,7 +2400,7 @@ func TestMultiPackageArrowWriter(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -2574,7 +2574,7 @@ func TestCrossPackageUnexportedFields(t *testing.T) {
 	d := srcpkg.Device{ID: 42, Label: "test"}
 	writer.Append(&d)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 1 {
@@ -2690,7 +2690,7 @@ func TestImportPathDevice(t *testing.T) {
 	d := Device{ID: 1, Name: "sensor-1", Score: 42.5}
 	writer.Append(&d)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 1 {
@@ -2835,7 +2835,7 @@ func TestNullableCompoundWriter(t *testing.T) {
 	writer.Append(&r1)
 	writer.Append(&r2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {
@@ -3051,7 +3051,7 @@ func TestNamedSliceAndMapArrowWriter(t *testing.T) {
 	writer.Append(&d1)
 	writer.Append(&d2)
 
-	record := writer.NewRecord()
+	record := writer.NewRecordBatch()
 	defer record.Release()
 
 	if record.NumRows() != 2 {

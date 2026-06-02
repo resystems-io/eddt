@@ -73,10 +73,10 @@ type {{.Name}}ArrowReader struct {
 {{- end}}
 }
 
-// New{{.Name}}ArrowReader creates a new Arrow reader for {{.Name}} from a Record.
+// New{{.Name}}ArrowReader creates a new Arrow reader for {{.Name}} from a RecordBatch.
 // It validates column types at construction time; if a column exists with the wrong
 // type, an error is returned. Missing columns are silently skipped during LoadRow.
-func New{{.Name}}ArrowReader(rec arrow.Record) (*{{.Name}}ArrowReader, error) {
+func New{{.Name}}ArrowReader(rec arrow.RecordBatch) (*{{.Name}}ArrowReader, error) {
 	r := &{{.Name}}ArrowReader{}
 	schema := rec.Schema()
 {{- range .Fields}}

@@ -150,7 +150,7 @@ func BenchmarkArrowLoadRowSimpleStruct(b *testing.B) {
 			Valid: true,
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -210,7 +210,7 @@ func BenchmarkArrowLoadRowComplexStruct(b *testing.B) {
 			Config: map[string]float64{"score1": 99.5, "score2": 80.0},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -294,7 +294,7 @@ func BenchmarkLoadRowGenericPrimArg(b *testing.B) {
 			Scalar: FieldDelta[int32]{Op: 1, Value: int32(i)},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -392,7 +392,7 @@ func BenchmarkLoadRowGenericStructArg(b *testing.B) {
 			PtrStruct: FieldDelta[*Inner]{Op: 1, Value: v},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 
@@ -482,7 +482,7 @@ func BenchmarkLoadRowGenericCombined(b *testing.B) {
 			PtrStruct: FieldDelta[*Inner]{Op: 2, Value: inner},
 		})
 	}
-	rec := writer.NewRecord()
+	rec := writer.NewRecordBatch()
 	defer rec.Release()
 	writer.Release()
 

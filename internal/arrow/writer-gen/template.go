@@ -92,9 +92,9 @@ func Append{{.Name}}Struct(b *array.StructBuilder, row *{{if .GoTypeExpr}}{{.GoT
 {{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "Qualifier" .Qualifier}}
 }
 
-// NewRecord creates a new Arrow Record from the accumulated builder data.
-func (w *{{.Name}}ArrowWriter) NewRecord() arrow.Record {
-	return w.b.NewRecord()
+// NewRecordBatch creates a new Arrow RecordBatch from the accumulated builder data.
+func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
+	return w.b.NewRecordBatch()
 }
 {{end}}
 {{- define "appendFields" -}}
