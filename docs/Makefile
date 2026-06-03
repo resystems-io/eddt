@@ -39,15 +39,17 @@ PDFS = $(SOURCES:.md=.pdf)
 # the X-XXX-NN format expected by refs-linkify. The script scans these
 # for definitions and rewrites references in every source.
 #
-# Currently restricted to eddt-needs.md (N-EDDT-NN / N-ECOL-NN) and
-# delta-gen-spec.md (R-DG-NN / N-DG-NN / E-DG-NN).
+# Currently restricted to eddt-needs.md (N-EDDT-NN / N-ECOL-NN),
+# delta-gen-spec.md (R-DG-NN / N-DG-NN / E-DG-NN), and
+# chain-lifecycle-spec.md (R-CL-NN / N-CL-NN / S-CL-NN / E-CL-NN).
 # The arrow-*-refinements.md docs use a different identifier scheme
 # (R1, R2, B1, …) that refs-linkify does not recognise.
 # delta-gen-refinements.md is a historical record retained in its
 # original R-NN / CL-NN / EM-NN form; its section headers produce
 # duplicate-definition errors when scanned as an index.
 INDEXES = eddt-needs.md \
-          delta-gen-spec.md
+          delta-gen-spec.md \
+          chain-lifecycle-spec.md
 
 # refs-linkify maintains the unified cross-reference block at the
 # foot of each source. Idempotent: repeated runs produce no change
