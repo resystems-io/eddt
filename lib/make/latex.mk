@@ -17,8 +17,17 @@ LATEXMK       ?= latexmk
 LATEXMK_FLAGS ?= -pdfxe -shell-escape -interaction=nonstopmode
 
 # Pattern rule: standalone .tex → .pdf via xelatex
+#
+# SOURCE_DATE_EPOCH=0 pins the build timestamp so xdvipdfmx produces
+# byte-identical PDFs on every run. Without it, xdvipdfmx embeds a
+# time-dependent CreationDate and /ID that cause font-subset glyph
+# definitions to be emitted in a different order each run; dvisvgm
+# faithfully reproduces that ordering in the SVG, making git see a
+# changed file after every rebuild even when the .tex is unchanged.
+# Source version is tracked by the git commit hash, not the build date.
+# (Reproducible Builds spec: reproducible-builds.org/specs/source-date-epoch)
 %.pdf: %.tex
-	$(LATEX) $(LATEXFLAGS) $<
+	SOURCE_DATE_EPOCH=0 $(LATEX) $(LATEXFLAGS) $<
 
 .PHONY: latex-clean
 
