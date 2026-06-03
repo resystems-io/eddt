@@ -130,10 +130,10 @@ func (g *Generator) log() *slog.Logger {
 // Config fields set by New. OutPkgNameOverride drives the resolve stage;
 // OutPkgName and CrossPackage are written to the Generator on return.
 //
-// The pipeline has four stages; each is implemented in its own file:
+// The pipeline has five stages, each implemented in its own file:
 //
 //   - Load    (load.go):    resolve --pkg arguments into type-checked packages.
-//   - Resolve (load.go):    determine output package name and cross-package mode.
+//   - Resolve (resolve.go): determine output package name and cross-package mode.
 //   - Parse   (parse.go):   a single parseSnapshot call per target struct
 //     identifies the embedded runtime.Header, the entity.key field, and
 //     classifies payload fields. The key is surfaced via ParsedSnapshot.KeyVar
@@ -181,7 +181,7 @@ func (g *Generator) resolveStage(pkgs []*packages.Package) {
 	g.OutPkgName, g.CrossPackage = resolveOutputPkg(pkgs, g.OutPkgNameOverride)
 
 	// Promote to cross-package if any source package has an explicit alias.
-	// sourceHasExplicitAlias is in load.go (same package).
+	// sourceHasExplicitAlias is in resolve.go (same package).
 	if !g.CrossPackage && sourceHasExplicitAlias(pkgs, g.PkgAliases) {
 		g.CrossPackage = true
 	}
