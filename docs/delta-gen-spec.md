@@ -21,8 +21,9 @@ the canonical vocabulary. The high-level needs that this generator
 contributes to are listed in [eddt-needs.md](eddt-needs.md) and
 traced upward from the needs in §3 below.
 
-**Status:** Draft v1.1 — Audit pass: redundancy culled, A4 traces refined
-complete.
+- **Status:** Baselined
+- **Version:** 1.0
+- **Date:** 2026-06-03
 
 ---
 
