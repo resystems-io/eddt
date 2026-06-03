@@ -8,14 +8,7 @@
 
 .DEFAULT_GOAL := all
 
-LIB     = ../../lib/make
-SCRIPTS = ../../docs/scripts
-
-# dvisvgm 3.2.1 emits font-subset glyph definitions in non-deterministic
-# order even from identical PDF input. Invoke svg_canonicalise.py after
-# each conversion to sort <defs> children by id and produce stable output.
-SVG_CANONICALISE = python3 $(SCRIPTS)/svg_canonicalise.py
-
+LIB = ../../lib/make
 include $(LIB)/latex.mk
 include $(LIB)/svg.mk
 
