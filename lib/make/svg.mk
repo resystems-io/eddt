@@ -11,7 +11,10 @@
 DVISVGM ?= dvisvgm
 
 # Pattern rule: .pdf → .svg via dvisvgm
-# --font-format=woff2 embeds fonts; --no-fonts converts text to paths
-# (paths ensure correct rendering in all SVG consumers including WeasyPrint)
+# --no-fonts converts text to paths (ensures correct rendering in all SVG
+# consumers including WeasyPrint)
+# --optimize canonicalises the SVG structure, which also eliminates the
+# non-deterministic font-subset glyph ordering that dvisvgm 3.2.1 produces
+# even from identical PDF input — keeping git diff clean on unchanged sources.
 %.svg: %.pdf
-	$(DVISVGM) --pdf --no-fonts $< -o $@
+	$(DVISVGM) --pdf --no-fonts --optimize $< -o $@
