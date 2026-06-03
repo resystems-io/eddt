@@ -1418,7 +1418,7 @@ jointly unless otherwise noted.
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-001` Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.StandaloneHash`; `standaloneTypesSHA256Str`)
-- **Rationale (A1):** `blake2b` preserves EntityID compatibility with the runtime, easing future migration. `sha256` is provided for adopters who require zero non-stdlib dependencies and do not need cross-mode EntityID compatibility.
+- **Rationale (A1):** `blake2b` preserves EntityID compatibility with the runtime, easing future migration. `sha256` is provided for adopters who require zero non-stdlib dependencies and do not need cross-mode EntityID compatibility. (The runtime's choice of Blake2b-256 is explained in §8.2.)
 - **V&V method (A2):** Test (`TestStandalone_CompanionFileSHA256`)
 - **Allocation (A8):** `S-DG-02` Code Emitter; `S-DG-04` Generator CLI
 - **Priority (A32):** P3
@@ -1549,14 +1549,26 @@ an anchor), and concatenates `Provenance` from both inputs
 
 ### 8.2 EntityID hashing (R-DG-034, R-DG-035)
 
-The current Runtime Library provides `NewHash() *Hash` and
-`(*Hash).Finalise() EntityID` with typed writer methods
-(`WriteString`, `WriteInt32`, `WriteFloat64`, etc.) for each
-supported key field type. The Code Emitter generates the `EntityID`
+The Runtime Library provides `NewHash() hash.Hash` and
+`Finalise(hash.Hash) EntityID`, together with typed writer helpers
+(`WriteString`, `WriteUint8`/`16`/`32`/`64`, `WriteBool`,
+`WriteNilMarker`) that give each key field type a canonical,
+length-aware byte encoding. The Code Emitter generates the `EntityID`
 function body by sorting the entity-key field names lexicographically
 and emitting a `Write*` call for each field in that order. This
 satisfies R-DG-034 (lexicographic-order hashing) and produces a
 32-byte `EntityID` (R-DG-035).
+
+The hash is Blake2b-256. `EntityID` is a content-addressed identifier
+and routing key, not a security tag, so the governing property is
+collision resistance over the canonical field encoding rather than
+keyed-MAC strength. Blake2b-256 is a fast, well-reviewed
+collision-resistant hash (available via `golang.org/x/crypto/blake2b`)
+whose 256-bit digest fills the fixed 32-byte `EntityID` exactly. The
+algorithm is an implementation choice, not a normative requirement —
+R-DG-034/R-DG-035 mandate only determinism and the 32-byte form — but
+because changing it would invalidate every stored `EntityID`, the
+runtime treats it as fixed.
 
 ### 8.3 Output formatting (R-DG-021, R-DG-022)
 
@@ -1623,7 +1635,8 @@ having the same identifier). Applying the struct-prefix convention
 from R-DG-012 (`EntityIDFooSnapshot`) cleanly resolves the ambiguity
 without introducing a separate naming exception.
 
-**Hash algorithm:** `blake2b` is the default because it produces
+**Hash algorithm:** The runtime hashes with Blake2b-256 (rationale:
+§8.2). In standalone mode, `blake2b` is the default because it produces
 `EntityID` values byte-identical to those produced by the runtime
 library for the same key fields. This preserves interoperability: a
 codebase that starts in standalone mode can migrate to runtime-coupled
