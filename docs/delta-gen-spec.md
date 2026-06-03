@@ -1475,7 +1475,7 @@ Errata are identified `E-DG-NNN`. Each erratum records:
 - The resolution (or *open*, with the date opened).
 - The resolution date once closed.
 
-At v1.1 the register is empty.
+At v1.0 the register is empty.
 
 | ID | Affected | Description | Resolution | Date |
 |:---|:---------|:------------|:-----------|:-----|
