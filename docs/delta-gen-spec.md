@@ -331,7 +331,8 @@ can be explained from its inputs and reproduced from its source.*
   Analytics consumer
 - **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data
   Completeness & Fidelity); platform need [N-ECOL-007][n-ecol-007]
-  (Configuration & Baseline Management); chain-lifecycle spec
+  (Configuration & Baseline Management);
+  [chain-lifecycle spec R-CL-001](chain-lifecycle-spec.md#r-cl-001)
   (`Header` carriage)
 - **Rationale (A1):** Three traceability concerns share a common
   rationale: the system's outputs are explained by their inputs at
@@ -1152,7 +1153,7 @@ struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** `N-DG-004` Chain Safety
-- **Source (A5):** Upstream spec §8.4; chain-lifecycle spec §7.4
+- **Source (A5):** Upstream spec §8.4; [chain-lifecycle spec R-CL-014](chain-lifecycle-spec.md#r-cl-014)
 - **Rationale (A1):** Purity is a prerequisite for idempotent re-delivery, deterministic catch-up, and safe concurrent use; any side effect would make the operations non-replayable and would couple generated code to environmental state.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** `S-DG-02` Code Emitter
@@ -1514,13 +1515,9 @@ Companion documents in this repository:
 - [arrow-reader-gen.md](arrow-reader-gen.md) and
   [arrow-writer-gen.md](arrow-writer-gen.md) — Sibling code
   generators that consume `delta-gen`'s output.
-
-Upstream references not carried over into this repository:
-
-- The chain-lifecycle specification, which defines the runtime
-  semantics of chains (anchored Snapshots, monotonic Sequence,
-  ChainID, Header, Frontier, Taint) that `delta-gen`'s output
-  satisfies.
+- [chain-lifecycle-spec.md](chain-lifecycle-spec.md) — The runtime
+  chain contract (anchored Snapshots, monotonic Sequence, ChainID,
+  Header, Frontier, Taint) that `delta-gen`'s output satisfies.
 
 ---
 
