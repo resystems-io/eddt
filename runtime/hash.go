@@ -9,8 +9,12 @@ import (
 )
 
 // NewHash returns a new Blake2b-256 hasher for use in EntityID() methods
-// emitted by delta-gen. The hash function is fixed forever; changing it
-// would invalidate all stored EntityIDs (R-DG-034, R-DG-035).
+// emitted by delta-gen. EntityID is a content-addressed identifier and
+// routing key, not a security tag, so Blake2b-256 is chosen as a fast,
+// collision-resistant 256-bit hash whose digest fills the fixed 32-byte
+// EntityID. The hash function is fixed forever; changing it would
+// invalidate all stored EntityIDs (R-DG-034, R-DG-035; rationale in
+// delta-gen-spec.md §8.2).
 //
 // Generated EntityID() methods follow this pattern:
 //
