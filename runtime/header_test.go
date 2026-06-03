@@ -45,7 +45,7 @@ func isZeroHeader(h Header) bool {
 // ── HeaderAfterApply ──────────────────────────────────────────────────────────
 
 // TestHeaderAfterApply_HappyPath verifies every output field of HeaderAfterApply
-// against the field-by-field assignment rules in chain-lifecycle-spec.md §6.1.
+// against the field-by-field assignment rules in chain-lifecycle-spec.md R-CL-012.
 func TestHeaderAfterApply_HappyPath(t *testing.T) {
 	// Covers: R-DG-029, R-DG-031
 	chainID := "chain-abc"
@@ -76,7 +76,7 @@ func TestHeaderAfterApply_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// EntityID and ChainID propagate from s (chain-lifecycle §6.1).
+	// EntityID and ChainID propagate from s (chain-lifecycle R-CL-012).
 	if result.EntityID != s.EntityID {
 		t.Errorf("EntityID: got %x, want %x", result.EntityID, s.EntityID)
 	}
@@ -96,7 +96,7 @@ func TestHeaderAfterApply_HappyPath(t *testing.T) {
 		t.Errorf("Closed: want nil, got %v", result.Closed)
 	}
 
-	// Sequence, EffectiveAt, PublishedAt come from d (chain-lifecycle §6.1).
+	// Sequence, EffectiveAt, PublishedAt come from d (chain-lifecycle R-CL-012).
 	if result.Sequence != d.Sequence {
 		t.Errorf("Sequence: got %d, want %d", result.Sequence, d.Sequence)
 	}
@@ -108,7 +108,7 @@ func TestHeaderAfterApply_HappyPath(t *testing.T) {
 		t.Errorf("PublishedAt: got %v, want %v", result.PublishedAt, d.PublishedAt)
 	}
 
-	// Provenance = s.Provenance ⊕ d.Provenance (chain-lifecycle §3.2.1).
+	// Provenance = s.Provenance ⊕ d.Provenance (chain-lifecycle R-CL-018).
 	wantLen := len(provS) + len(provD)
 	if len(result.Provenance) != wantLen {
 		t.Fatalf("Provenance length: got %d, want %d", len(result.Provenance), wantLen)
@@ -166,42 +166,42 @@ func TestHeaderAfterApply_Validation(t *testing.T) {
 			wantErrFrag: "delta EntityID is zero",
 		},
 		{
-			// chain-lifecycle §6.1: entity integrity — the two notifications
+			// chain-lifecycle R-CL-012: entity integrity — the two notifications
 			// must belong to the same logical entity.
 			name:        "EntityID_mismatch",
 			mutate:      func(_, d *Header) { d.EntityID = eid(0x02) },
 			wantErrFrag: "EntityID mismatch",
 		},
 		{
-			// chain-lifecycle §6.1: chain integrity — both notifications must
+			// chain-lifecycle R-CL-012: chain integrity — both notifications must
 			// be on the same chain.
 			name:        "ChainID_mismatch",
 			mutate:      func(_, d *Header) { d.ChainID = "chain-2" },
 			wantErrFrag: "ChainID mismatch",
 		},
 		{
-			// chain-lifecycle Inv. 5: Sequence must be strictly increasing.
+			// chain-lifecycle R-CL-015: Sequence must be strictly increasing.
 			// Equal Sequences indicate a duplicate or idempotent re-delivery.
 			name:        "Sequence_equal",
 			mutate:      func(s, d *Header) { d.Sequence = s.Sequence },
 			wantErrFrag: "Sequence",
 		},
 		{
-			// chain-lifecycle Inv. 5: Sequence must be strictly increasing.
+			// chain-lifecycle R-CL-015: Sequence must be strictly increasing.
 			// A lower Sequence on the delta indicates an out-of-order application.
 			name:        "Sequence_lower",
 			mutate:      func(s, d *Header) { d.Sequence = s.Sequence - 1 },
 			wantErrFrag: "Sequence",
 		},
 		{
-			// chain-lifecycle Inv. 7: EffectiveAt must be non-decreasing.
+			// chain-lifecycle R-CL-017: EffectiveAt must be non-decreasing.
 			// A delta with an earlier EffectiveAt indicates a domain-time rollback.
 			name:        "EffectiveAt_before",
 			mutate:      func(s, d *Header) { d.EffectiveAt = s.EffectiveAt.Add(-time.Second) },
 			wantErrFrag: "EffectiveAt",
 		},
 		{
-			// chain-lifecycle Inv. 12: no notifications may be applied to a
+			// chain-lifecycle R-CL-020: no notifications may be applied to a
 			// chain that has already been terminated (s.Closed != nil).
 			name:        "snapshot_closed",
 			mutate:      func(s, _ *Header) { s.Closed = &closedAt },
@@ -237,7 +237,7 @@ func TestHeaderAfterApply_Validation(t *testing.T) {
 // are accepted. The spec requires d.EffectiveAt >= s.EffectiveAt (non-decrease,
 // not strict increase), so simultaneous changes sharing one instant are valid.
 func TestHeaderAfterApply_EffectiveAt_Equal(t *testing.T) {
-	// Covers: R-DG-029, R-DG-031 (boundary between valid and invalid for Inv. 7)
+	// Covers: R-DG-029, R-DG-031 (boundary between valid and invalid for R-CL-017)
 	entity := eid(0x01)
 	instant := ts(3)
 
@@ -250,11 +250,11 @@ func TestHeaderAfterApply_EffectiveAt_Equal(t *testing.T) {
 }
 
 // TestHeaderAfterApply_SequenceGap confirms that a sequence gap larger than 1
-// is accepted. chain-lifecycle Inv. 6 specifies gap-tolerant apply: only strict
+// is accepted. chain-lifecycle R-CL-016 specifies gap-tolerant apply: only strict
 // monotonicity (d.Sequence > s.Sequence) is required; skipped Sequences become
 // taint entries in the consumer state machine, not a rejection reason here.
 func TestHeaderAfterApply_SequenceGap(t *testing.T) {
-	// Covers: R-DG-029, R-DG-031 (gap-tolerant apply, Inv. 6)
+	// Covers: R-DG-029, R-DG-031 (gap-tolerant apply, R-CL-016)
 	entity := eid(0x01)
 
 	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0)}
@@ -325,7 +325,7 @@ func TestHeaderAfterApply_Provenance_OneNil(t *testing.T) {
 // TestHeaderAfterApply_Provenance_NoAlias verifies that result.Provenance does
 // not share a backing array with either s.Provenance or d.Provenance. If it did,
 // appending to an input slice after the call would silently corrupt the result,
-// violating the append-only contract of chain-lifecycle §3.2.1.
+// violating the append-only contract of chain-lifecycle R-CL-018.
 func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
 	// Covers: R-DG-029, R-DG-031 (Provenance slice aliasing safety)
 	entity := eid(0x01)
@@ -355,7 +355,7 @@ func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
 // ── HeaderForDiff ─────────────────────────────────────────────────────────────
 
 // TestHeaderForDiff_HappyPath verifies every output field of HeaderForDiff
-// against the field-by-field assignment rules in chain-lifecycle-spec.md §6.2.
+// against the field-by-field assignment rules in chain-lifecycle-spec.md R-CL-013.
 func TestHeaderForDiff_HappyPath(t *testing.T) {
 	// Covers: R-DG-030
 	entity := eid(0x01)
@@ -369,7 +369,7 @@ func TestHeaderForDiff_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// EntityID and ChainID come from b (chain-lifecycle §6.2).
+	// EntityID and ChainID come from b (chain-lifecycle R-CL-013).
 	if result.EntityID != b.EntityID {
 		t.Errorf("EntityID: got %x, want %x", result.EntityID, b.EntityID)
 	}
@@ -400,7 +400,7 @@ func TestHeaderForDiff_HappyPath(t *testing.T) {
 	}
 
 	// Provenance is always nil: Diff is a pure transformation; lineage is
-	// supplied by the call site if needed (chain-lifecycle §6.2).
+	// supplied by the call site if needed (chain-lifecycle R-CL-013).
 	if result.Provenance != nil {
 		t.Errorf("Provenance: want nil, got %v", result.Provenance)
 	}
@@ -408,7 +408,7 @@ func TestHeaderForDiff_HappyPath(t *testing.T) {
 
 // TestHeaderForDiff_ProvenanceAlwaysNil verifies that even when a and b carry
 // non-nil Provenance slices, the result's Provenance is nil. The call site is
-// responsible for appending its own lineage entries (chain-lifecycle §6.2).
+// responsible for appending its own lineage entries (chain-lifecycle R-CL-013).
 func TestHeaderForDiff_ProvenanceAlwaysNil(t *testing.T) {
 	// Covers: R-DG-030
 	entity := eid(0x01)
@@ -464,7 +464,7 @@ func TestHeaderForDiff_Validation(t *testing.T) {
 			wantErrFrag: "ChainID mismatch",
 		},
 		{
-			// chain-lifecycle §6.2: b.Sequence < a.Sequence is rejected.
+			// chain-lifecycle R-CL-013: b.Sequence < a.Sequence is rejected.
 			// b.Sequence == a.Sequence is explicitly allowed (identity diff).
 			name:        "Sequence_lower",
 			mutate:      func(a, b *Header) { b.Sequence = a.Sequence - 1 },

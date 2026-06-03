@@ -8,7 +8,7 @@ import (
 // HeaderAfterApply produces the result Header for a generated Apply(s, d)
 // invocation, where s is the prior Snapshot's Header and d is the applied
 // Delta's Header. It performs all chain-envelope validations mandated by
-// chain-lifecycle-spec.md §6.1 plus the EntityID zero-rejection required by
+// chain-lifecycle-spec.md R-CL-012 plus the EntityID zero-rejection required by
 // R-DG-034, R-DG-035. Delta-gen-emitted Apply methods call this function exactly once
 // and must not replicate or bypass these validations (delta-gen-spec.md §5.2).
 //
@@ -34,7 +34,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 		return Header{}, errors.New("HeaderAfterApply: delta EntityID is zero")
 	}
 
-	// 2. Validate entity integrity (chain-lifecycle §6.1, Inv. 4 — entity).
+	// 2. Validate entity integrity (chain-lifecycle R-CL-012/R-CL-014 — entity).
 	//    Both notifications must belong to the same logical entity. A mismatch
 	//    means two different real-world objects are being conflated on one chain,
 	//    which is always a producer bug.
@@ -42,7 +42,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 		return Header{}, errors.New("HeaderAfterApply: EntityID mismatch between snapshot and delta")
 	}
 
-	// 3. Validate chain integrity (chain-lifecycle §6.1, Inv. 4 — chain).
+	// 3. Validate chain integrity (chain-lifecycle R-CL-012/R-CL-014 — chain).
 	//    Both notifications must belong to the same chain. Cross-chain
 	//    application is categorically disallowed; the consumer state machine
 	//    is per-chain and cannot handle cross-chain merges.
@@ -51,10 +51,10 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 			s.ChainID, d.ChainID)
 	}
 
-	// 4. Validate Sequence strict monotonicity (chain-lifecycle §6.1, Inv. 5/6).
+	// 4. Validate Sequence strict monotonicity (chain-lifecycle R-CL-015/R-CL-016).
 	//    d.Sequence must be strictly greater than s.Sequence. Equal or lower
 	//    Sequences indicate a duplicate, an out-of-order application, or a
-	//    producer that failed to increment. Note that gaps are allowed (Inv. 6):
+	//    producer that failed to increment. Note that gaps are allowed (R-CL-016):
 	//    d.Sequence = s.Sequence + 100 is valid; the skipped Sequences become
 	//    taint entries in the consumer's state machine.
 	if d.Sequence <= s.Sequence {
@@ -63,7 +63,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 			d.Sequence, s.Sequence)
 	}
 
-	// 5. Validate EffectiveAt non-decrease (chain-lifecycle §6.1, Inv. 7).
+	// 5. Validate EffectiveAt non-decrease (chain-lifecycle R-CL-017).
 	//    Domain time must not roll backwards within a chain. Simultaneous changes
 	//    sharing the same EffectiveAt instant are permitted (>= not >), but a
 	//    strictly earlier EffectiveAt on the delta indicates a domain-model error
@@ -74,7 +74,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 			d.EffectiveAt, s.EffectiveAt)
 	}
 
-	// 6. Validate chain finiteness (chain-lifecycle §6.1, Inv. 12).
+	// 6. Validate chain finiteness (chain-lifecycle R-CL-020).
 	//    A non-nil Closed on the snapshot means the chain was already terminated
 	//    by a prior terminator Snapshot. No further notifications may be applied
 	//    to a closed chain; the consumer must free its per-chain waiting state
@@ -83,7 +83,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 		return Header{}, errors.New("HeaderAfterApply: snapshot chain is already closed (Closed != nil)")
 	}
 
-	// All validations passed. Construct the result Header per chain-lifecycle §6.1.
+	// All validations passed. Construct the result Header per chain-lifecycle R-CL-012.
 
 	// EntityID and ChainID propagate from s. Both are guaranteed equal to d by
 	// the checks above; we use s as the canonical source.
@@ -100,7 +100,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 		PublishedAt: d.PublishedAt,
 	}
 
-	// Provenance = s.Provenance ⊕ d.Provenance (chain-lifecycle §3.2.1).
+	// Provenance = s.Provenance ⊕ d.Provenance (chain-lifecycle R-CL-018).
 	// We always allocate a fresh slice so that subsequent appends to s.Provenance
 	// or d.Provenance cannot silently mutate result.Provenance (or vice versa).
 	// When both inputs are nil the double-append produces nil, preserving the
@@ -112,7 +112,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 
 // HeaderForDiff produces the Header for the Delta d such that Apply(a, d) == b,
 // where a and b are two Snapshots on the same chain. It performs the validations
-// mandated by chain-lifecycle-spec.md §6.2 plus EntityID zero-rejection
+// mandated by chain-lifecycle-spec.md R-CL-013 plus EntityID zero-rejection
 // (R-DG-034, R-DG-035). Delta-gen-emitted Diff methods call this function exactly once and must
 // not replicate or bypass these validations (delta-gen-spec.md §5.2).
 //
@@ -141,7 +141,7 @@ func HeaderForDiff(a, b Header) (Header, error) {
 		return Header{}, errors.New("HeaderForDiff: second snapshot EntityID is zero")
 	}
 
-	// 2. Validate entity integrity (chain-lifecycle §6.2 — entity).
+	// 2. Validate entity integrity (chain-lifecycle R-CL-013/R-CL-014 — entity).
 	//    Both snapshots must belong to the same logical entity. Computing a diff
 	//    between two different entities would produce a semantically meaningless
 	//    delta.
@@ -149,7 +149,7 @@ func HeaderForDiff(a, b Header) (Header, error) {
 		return Header{}, errors.New("HeaderForDiff: EntityID mismatch between snapshots")
 	}
 
-	// 3. Validate chain integrity (chain-lifecycle §6.2 — chain).
+	// 3. Validate chain integrity (chain-lifecycle R-CL-013/R-CL-014 — chain).
 	//    Both snapshots must be on the same chain. Cross-chain diffs are
 	//    undefined — ChainID is part of the Header of the produced Delta and
 	//    must be a single, consistent value.
@@ -157,7 +157,7 @@ func HeaderForDiff(a, b Header) (Header, error) {
 		return Header{}, fmt.Errorf("HeaderForDiff: ChainID mismatch (%q vs %q)", a.ChainID, b.ChainID)
 	}
 
-	// 4. Validate Sequence ordering (chain-lifecycle §6.2, Inv. 5).
+	// 4. Validate Sequence ordering (chain-lifecycle R-CL-015).
 	//    b.Sequence must be >= a.Sequence. Equal Sequences are permitted to
 	//    support the identity-diff Diff(a, a) (where Sequence is the same on
 	//    both sides). Strictly lower Sequences indicate that b is an earlier
@@ -168,7 +168,7 @@ func HeaderForDiff(a, b Header) (Header, error) {
 			b.Sequence, a.Sequence)
 	}
 
-	// 5. Validate EffectiveAt ordering (chain-lifecycle §6.2, Inv. 7).
+	// 5. Validate EffectiveAt ordering (chain-lifecycle R-CL-017).
 	//    b.EffectiveAt must be >= a.EffectiveAt. Same rationale as Sequence:
 	//    the diff represents the change from a to b, so b must not be earlier
 	//    in domain time than a.
@@ -178,7 +178,7 @@ func HeaderForDiff(a, b Header) (Header, error) {
 			b.EffectiveAt, a.EffectiveAt)
 	}
 
-	// All validations passed. Construct the result Header per chain-lifecycle §6.2.
+	// All validations passed. Construct the result Header per chain-lifecycle R-CL-013.
 
 	// EntityID and ChainID come from b (validated equal to a).
 	// Sequence, EffectiveAt, and PublishedAt come from b: the produced Delta

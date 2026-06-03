@@ -155,7 +155,7 @@ func TestFieldDeltaEquality(t *testing.T) {
 }
 
 // TestHeaderProvenanceAccumulation verifies that appending to Provenance
-// preserves source order (the append-only contract from chain-lifecycle §3.2.1).
+// preserves source order (the append-only contract from chain-lifecycle R-CL-018).
 func TestHeaderProvenanceAccumulation(t *testing.T) {
 	// Covers: R-DG-029, R-DG-030, R-DG-032
 	now := time.Now()

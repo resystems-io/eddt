@@ -32,7 +32,7 @@ type Header struct {
 	EntityID EntityID
 
 	// ChainID is the opaque chain identifier, unique across the deployment
-	// and stable for the chain's lifetime (chain-lifecycle §3.1.2).
+	// and stable for the chain's lifetime (chain-lifecycle R-CL-003).
 	ChainID string
 
 	// PreviousChainID is set only on the birth Snapshot (Sequence == 0) when
@@ -52,7 +52,7 @@ type Header struct {
 	Sequence uint64
 
 	// EffectiveAt is the domain time when the state or change took effect.
-	// Monotonic non-decreasing within a chain (Inv. 7).
+	// Monotonic non-decreasing within a chain (R-CL-017).
 	EffectiveAt time.Time
 
 	// PublishedAt is the wall-clock instant the notification was emitted.
@@ -67,7 +67,7 @@ type Header struct {
 // Provenance records a single component's contribution to a notification's
 // lineage. A conforming producer appends one entry naming itself on every
 // notification it emits; a conforming aggregator appends its own entry while
-// preserving upstream entries (chain-lifecycle §3.2).
+// preserving upstream entries (chain-lifecycle R-CL-004).
 type Provenance struct {
 	// PublishedAt is the wall-clock instant this component emitted its output.
 	PublishedAt time.Time
@@ -113,7 +113,7 @@ const (
 )
 
 // FieldDelta is the tri-state carrier for a clearable Delta field
-// (delta-gen-spec §5.2 / chain-lifecycle §3.3). Per R-DG-007 the only
+// (delta-gen-spec §5.2 / chain-lifecycle R-CL-006). Per R-DG-007 the only
 // clearable form is compositional, so T is always a generated inner *delta*
 // type, never the Snapshot field type.
 type FieldDelta[T any] struct {
