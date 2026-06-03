@@ -243,7 +243,8 @@ kind. A `delta.clearable` without `delta.nested` is rejected with a diagnostic.
 
 ```mermaid
 flowchart TD
-    A[go/packages load] --> B[Locate target struct]
+    A[go/packages load\nload.go] --> R[Resolve output pkg / cross-package\nresolve.go]
+    R --> B[Locate target struct]
     B --> C[Parse Header / key / fields\nparse.go]
     C --> D[Validate tags + shapes + cycles\ntag.go]
     D --> E[Build template views\ntemplate.go]
@@ -252,12 +253,16 @@ flowchart TD
     G --> H[Write output file]
 ```
 
-The pipeline has four stages, each implemented in its own file:
+The pipeline has five stages, each implemented in its own file:
 
 - **Load** (`load.go`) — resolves `--pkg` arguments into fully type-checked
   `*packages.Package` values using `golang.org/x/tools/go/packages`. Filesystem
   paths and Go import paths are handled separately so that each path can belong
   to its own Go module.
+- **Resolve** (`resolve.go`) — determines the output package name and whether
+  emission is cross-package (true when `--pkg-name` differs from the source
+  package, or a `--pkg-alias` names the source package). Downstream stages use
+  this to drop unexported fields and omit method wrappers.
 - **Parse** (`parse.go`) — locates the target struct, identifies the embedded
   `runtime.Header` by type identity, discovers the entity-key field, and
   classifies each payload field's shape.
