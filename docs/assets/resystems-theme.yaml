@@ -1,0 +1,57 @@
+# PDF theme for scripts/markdown-pdf.py.
+#
+# Auto-loaded when present alongside the script's default asset dir
+# (docs/assets/). Any key may be omitted; missing keys fall back to the
+# neutral built-in palette (see BUILTIN_THEME in markdown-pdf.py).
+
+colors:
+  _accent:             "#e57222"  # brand orange: h2 border, h3, links, blockquote, brand prefix
+  accent:             "#993333"  # brand orange: h2 border, h3, links, blockquote, brand prefix
+  heading:            "#434343"  # h1-h4 text, thead background, brand suffix
+  body:               "#333333"
+  muted:              "#555555"
+  subtle:             "#999999"
+  faint:              "#bbbbbb"
+  border:             "#e0e0e0"
+  code_bg:            "#f4f4f4"
+  row_alt:            "#f8f8f8"
+  status_resolved:    "#2e7d32"
+  status_choice:      "#ef6c00"
+  status_investigate: "#c62828"
+
+brand:
+  name:     "ReSystems"
+  subtitle: "Architecture"
+  split:
+    prefix: "Re"
+    suffix: "Systems"
+    prefix_color: "#993333"      # optional override; defaults to colors.accent
+    suffix_color: "#555555"      # optional override; defaults to colors.heading
+
+# Per-level heading overrides. Each level inherits the BUILTIN_HEADINGS
+# defaults; only the keys set here override. Without this map the
+# document renders with the built-in defaults (h1/h2/h4 dark grey, h3
+# accent, h4 in the same dark grey as the body's bold text — making
+# h4 hard to scan).
+#
+# OneLayer's choice: lift h4 onto the accent palette and italicise
+# it, so it sits visually between the louder accent-coloured h3 and
+# the ordinary bold body text. h1, h2, h3 inherit the built-in
+# styling.
+headings:
+  h4:
+    colour:           accent
+    style:            italic
+
+# Optional page watermark (off by default). Uncomment and set `text`
+# to enable a rotated, semi-transparent watermark on every page —
+# typically a "DRAFT" overlay for review builds. The CLI flag
+# `--watermark TEXT` overrides any value here at render time;
+# `--no-watermark` forces it off.
+#
+# watermark:
+#   text:    "DRAFT"
+#   colour:  status_red
+#   opacity: 0.15
+#   size:    "120pt"
+#   angle:   -30
