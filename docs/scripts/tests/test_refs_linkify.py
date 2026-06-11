@@ -446,6 +446,45 @@ class TestIdentifierShapes(RefsLinkifyTestCase):
         content = target.read_text()
         self.assertIn("[n-eddt-001]: reify-refinements.md#n-eddt-001", content)
 
+    def test_two_letter_category_in_checklist(self):
+        # 2-letter domain codes (e.g. C-DG-NNN, N-DG-NNN) must be
+        # recognised after the regex widened to [A-Z]{2,4}.
+        self.write_refinements("- [ ] **C-DG-001: Data sovereignty constraint**\n")
+        target = self.write_target("Per C-DG-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[C-DG-001][c-dg-001]", content)
+        self.assertIn("[c-dg-001]: reify-refinements.md#c-dg-001", content)
+
+    def test_two_letter_category_in_table(self):
+        # 2-letter domain code defined via tier-4 table first column.
+        ref = self.write_refinements(textwrap.dedent("""\
+            | ID        | Summary               |
+            |:----------|:----------------------|
+            | N-DG-003  | Flat numbering need.  |
+        """))
+        result = self.run_tool(ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = ref.read_text()
+        self.assertIn('<a id="n-dg-003"></a>', content)
+
+    def test_two_letter_category_across_indexes(self):
+        # A 2-letter code in one index and a 4-letter code in another
+        # must both resolve in the target.
+        a = self.dir / "primary.md"
+        a.write_text("- [ ] **C-DG-001: DG constraint**\n")
+        b = self.dir / "secondary.md"
+        b.write_text("- [ ] **N-EDDT-001: EDDT need**\n")
+        target = self.write_target("Per C-DG-001 and N-EDDT-001.\n")
+        result = self.run_tool(target, "--index", str(a), "--index", str(b))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[C-DG-001][c-dg-001]", content)
+        self.assertIn("[N-EDDT-001][n-eddt-001]", content)
+        self.assertIn("[c-dg-001]: primary.md#c-dg-001", content)
+        self.assertIn("[n-eddt-001]: secondary.md#n-eddt-001", content)
+
 
 # --- Multi-index resolution ----------------------------------------------
 
@@ -521,6 +560,22 @@ class TestMultipleIndexes(RefsLinkifyTestCase):
         self.assertIn("[a-01]: #a-01", content)
         # N-01 lives in secondary → cross-file form.
         self.assertIn("[n-01]: secondary.md#n-01", content)
+
+    def test_relative_paths_for_indexes_in_different_directories(self):
+        # Index in parent dir
+        ref = self.write_named("reify-refinements.md", "- [ ] **A-01: Primary**\n")
+        
+        # Target in sub dir
+        sub_dir = self.dir / "analyses"
+        sub_dir.mkdir()
+        target = sub_dir / "consumer.md"
+        target.write_text("Per A-01.\n")
+
+        result = self.run_tool(target, "--index", str(ref))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        # Should correctly use relative path pointing up
+        self.assertIn("[a-01]: ../reify-refinements.md#a-01", content)
 
 
 # --- H1 skip ---------------------------------------------------------------

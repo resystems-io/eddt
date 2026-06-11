@@ -22,8 +22,8 @@ error):
                           has not already matched a higher tier.
                           Author-written; not auto-inserted.
 
-Identifier shape: `[A-Z]-(?:[A-Z]{3,4}-)?\\d{2,3}` — supports
-`X-nn`, `X-nnn`, `X-ABC-nnn`, `X-ABCD-nnn` shapes.
+Identifier shape: `[A-Z]-(?:[A-Z]{2,4}-)?\\d{2,3}` — supports
+`X-nn`, `X-nnn`, `X-AB-nn`, `X-ABC-nnn`, `X-ABCD-nnn` shapes.
 
 Reference rewrites: every body-text occurrence of the identifier
 (outside fenced code blocks, outside link defs, and on lines that
@@ -54,12 +54,13 @@ from pathlib import Path
 # Bare identifier in upper-case body text:
 #   X-nn        e.g. D-22, A-01
 #   X-nnn       e.g. D-100
+#   X-AB-nn     e.g. C-DG-01, N-DG-003
 #   X-ABC-nn    e.g. R-PKG-01, R-RES-04
 #   X-ABCD-nnn  e.g. N-EDDT-001
-ID = r"[A-Z]-(?:[A-Z]{3,4}-)?\d{2,3}"
+ID = r"[A-Z]-(?:[A-Z]{2,4}-)?\d{2,3}"
 
 # Anchor / link-def slug form (lowercase, hyphenated).
-ID_LOWER = r"[a-z]-(?:[a-z]{3,4}-)?\d{2,3}"
+ID_LOWER = r"[a-z]-(?:[a-z]{2,4}-)?\d{2,3}"
 
 ID_RE = re.compile(rf"\b({ID})\b")
 
@@ -508,7 +509,11 @@ def emit_reference_block(
             if same_file:
                 href = f"#{anchor_or_slug}"
             else:
-                index_name = d.index_path.name if d.index_path else fallback_index_name
+                import os
+                if d.index_path:
+                    index_name = os.path.relpath(d.index_path, target_path.parent)
+                else:
+                    index_name = fallback_index_name
                 href = f"{index_name}#{anchor_or_slug}"
         lines.append(f"[{lower_anchor(id_str)}]: {href}")
     lines.append("")
