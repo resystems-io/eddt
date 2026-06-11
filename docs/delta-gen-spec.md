@@ -453,8 +453,8 @@ how the current implementation realises each subsystem.
 
 ### 4.1 Subsystems
 
-| ID        | Name            | Counterparty                | Owns                                         |
-|:----------|:----------------|:----------------------------|:---------------------------------------------|
+| ID                   | Name            | Counterparty                | Owns                                         |
+|:---------------------|:----------------|:----------------------------|:---------------------------------------------|
 | `[S-DG-01][s-dg-01]` | Snapshot Parser | Snapshot authors            | Authoring Contract (§5.1)                    |
 | `[S-DG-02][s-dg-02]` | Code Emitter    | Consumers of generated code | Output Contract (§5.2)                       |
 | `[S-DG-03][s-dg-03]` | Runtime Library | Consumers of generated code | Runtime types; chain-lifecycle preconditions |
@@ -1523,11 +1523,11 @@ Errata are identified `E-DG-NNN`. Each erratum records:
 
 The following errata were identified and resolved at v1.1.
 
-| ID                                        | Affected           | Description                                                                                                                                                                                                            | Resolution                                               | Date       |
-|:------------------------------------------|:-------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------|:-----------|
-| <a id="e-dg-001"></a>[E-DG-001][e-dg-001] | [R-DG-016][r-dg-016]           | Traced only to [N-DG-001][n-dg-001]/002/005; omitted [N-DG-003][n-dg-003] (System Traceability / historical readability), the need that motivates field retirement and carry-through                                                           | Added [N-DG-003][n-dg-003] as parent need on [R-DG-016][r-dg-016]; see also §8.9 | 2026-06-11 |
-| <a id="e-dg-002"></a>[E-DG-002][e-dg-002] | [R-DG-016][r-dg-016], [R-DG-023][r-dg-023] | Apply carry-through for suppressed (omit/retired/entity.key) fields was implied jointly by [R-DG-016][r-dg-016] and [R-DG-023][r-dg-023] but never stated as an explicit obligation; a conforming implementation could silently zero the field | Added [R-DG-050][r-dg-050] (suppressed-field Apply carry-through)    | 2026-06-11 |
-| <a id="e-dg-003"></a>[E-DG-003][e-dg-003] | [R-DG-004][r-dg-004], [R-DG-005][r-dg-005] | The `since=<date>` modifier's semantics and parser-tolerance obligation were left unspecified; only [R-DG-005][r-dg-005]'s generic `key=value` option syntax implied acceptance                                                    | Added [R-DG-051][r-dg-051] (`since` option tolerance); see also §8.9 | 2026-06-11 |
+| ID                                        | Affected                                   | Description                                                                                                                                                                                                                                    | Resolution                                                                       | Date       |
+|:------------------------------------------|:-------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------|:-----------|
+| <a id="e-dg-001"></a>[E-DG-001][e-dg-001] | [R-DG-016][r-dg-016]                       | Traced only to [N-DG-001][n-dg-001]/002/005; omitted [N-DG-003][n-dg-003] (System Traceability / historical readability), the need that motivates field retirement and carry-through                                                           | Added [N-DG-003][n-dg-003] as parent need on [R-DG-016][r-dg-016]; see also §8.9 | 2026-06-11 |
+| <a id="e-dg-002"></a>[E-DG-002][e-dg-002] | [R-DG-016][r-dg-016], [R-DG-023][r-dg-023] | Apply carry-through for suppressed (omit/retired/entity.key) fields was implied jointly by [R-DG-016][r-dg-016] and [R-DG-023][r-dg-023] but never stated as an explicit obligation; a conforming implementation could silently zero the field | Added [R-DG-050][r-dg-050] (suppressed-field Apply carry-through)                | 2026-06-11 |
+| <a id="e-dg-003"></a>[E-DG-003][e-dg-003] | [R-DG-004][r-dg-004], [R-DG-005][r-dg-005] | The `since=<date>` modifier's semantics and parser-tolerance obligation were left unspecified; only [R-DG-005][r-dg-005]'s generic `key=value` option syntax implied acceptance                                                                | Added [R-DG-051][r-dg-051] (`since` option tolerance); see also §8.9             | 2026-06-11 |
 
 ---
 
@@ -1736,7 +1736,7 @@ A field that is no longer written — either because it is obsolete or
 because its semantics have shifted — is marked as retired rather than
 removed. Building on the `PumpSnapshot` introduced in §2.4:
 
-```go
+```go {: .small-text }
 type PumpSnapshot struct {
     runtime.Header
     SerialNumber   string  `eddt:"entity.key"`
