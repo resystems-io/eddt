@@ -129,7 +129,10 @@ class TestTier2BoldedList(RefsLinkifyTestCase):
 # --- Tier 3: section header -----------------------------------------------
 
 class TestTier3Heading(RefsLinkifyTestCase):
-    def test_h4_recognised_via_slug(self):
+    def test_h4_colon_heading_anchor_targeted(self):
+        # Colon-form headings are anchor-targeted, not slug-targeted.
+        # The link-def resolves to `#r-pkg-01`, not the python-markdown
+        # slug `#r-pkg-01-single-binary-dual-context-distribution`.
         self.write_refinements(textwrap.dedent("""\
             #### R-PKG-01: Single-Binary Dual-Context Distribution
             **Statement:** something.
@@ -138,26 +141,22 @@ class TestTier3Heading(RefsLinkifyTestCase):
         result = self.run_tool(target)
         self.assertEqual(result.returncode, 0, result.stderr)
         content = target.read_text()
-        self.assertIn(
-            "[r-pkg-01]: reify-refinements.md#r-pkg-01-single-binary-dual-context-distribution",
-            content,
-        )
+        self.assertIn("[r-pkg-01]: reify-refinements.md#r-pkg-01", content)
+        self.assertNotIn("r-pkg-01-single-binary", content)
 
-    def test_h2_also_recognised(self):
+    def test_h2_colon_heading_anchor_targeted(self):
+        # Same anchor-targeting rule for H2 headings.
         self.write_refinements("## A-01: Some heading\nbody\n")
         target = self.write_target("Per A-01.\n")
         result = self.run_tool(target)
         self.assertEqual(result.returncode, 0, result.stderr)
         content = target.read_text()
-        self.assertIn(
-            "[a-01]: reify-refinements.md#a-01-some-heading",
-            content,
-        )
+        self.assertIn("[a-01]: reify-refinements.md#a-01", content)
+        self.assertNotIn("a-01-some-heading", content)
 
-    def test_heading_definition_line_not_linkified(self):
-        # In the refinements doc itself, the heading line that defines
-        # the identifier must not have its identifier text rewritten
-        # to a self-link.
+    def test_colon_heading_definition_line_not_linkified(self):
+        # Running on the definition doc: anchor is inserted; the heading
+        # identifier must not become a self-link.
         ref = self.write_refinements(textwrap.dedent("""\
             #### R-PKG-01: Title
 
@@ -166,10 +165,119 @@ class TestTier3Heading(RefsLinkifyTestCase):
         result = self.run_tool(ref)
         self.assertEqual(result.returncode, 0, result.stderr)
         content = ref.read_text()
-        self.assertIn("#### R-PKG-01: Title", content)
+        # Anchor is inserted before the identifier.
+        self.assertIn('<a id="r-pkg-01"></a>', content)
+        # Identifier text in heading stays bare (no self-link).
+        self.assertNotIn("[R-PKG-01] — ", content)
+        self.assertNotIn("[R-PKG-01]: ", content)
         self.assertNotIn("#### [R-PKG-01]", content)
         # Body reference IS linkified.
         self.assertIn("Body referencing [R-PKG-01][r-pkg-01]", content)
+
+    # --- Em-dash heading tests (tier-3, em-dash separator) ------------------
+
+    def test_emdash_heading_recognised(self):
+        # Em-dash separator `#### ID — Title` is a tier-3 definition;
+        # references in other docs resolve to `#id` (anchor form).
+        self.write_refinements("#### N-DG-001 — Declarative Authoring\nbody.\n")
+        target = self.write_target("Per N-DG-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[N-DG-001][n-dg-001]", content)
+        self.assertIn("[n-dg-001]: reify-refinements.md#n-dg-001", content)
+
+    def test_emdash_heading_with_anchor_prefix_recognised(self):
+        # Em-dash heading that already carries `<a id="…"></a>` must match.
+        self.write_refinements(
+            '#### <a id="n-dg-001"></a>N-DG-001 — Declarative Authoring\nbody.\n'
+        )
+        target = self.write_target("Per N-DG-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[n-dg-001]: reify-refinements.md#n-dg-001", content)
+
+    def test_emdash_heading_anchor_inserted(self):
+        # Running on the definition doc auto-inserts `<a id="…"></a>`
+        # immediately after the `#### ` marker.
+        ref = self.write_refinements("#### N-DG-001 — Declarative Authoring\nbody.\n")
+        result = self.run_tool(ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = ref.read_text()
+        self.assertIn('#### <a id="n-dg-001"></a>', content)
+
+    def test_emdash_heading_anchor_idempotent(self):
+        # Anchor already present → no-op; two runs produce byte-identical output.
+        ref = self.write_refinements(
+            '#### <a id="n-dg-001"></a>N-DG-001 — Declarative Authoring\nbody.\n'
+        )
+        self.run_tool(ref)
+        first = ref.read_text()
+        self.run_tool(ref)
+        second = ref.read_text()
+        self.assertEqual(first.count('<a id="n-dg-001">'), 1)
+        self.assertEqual(first, second)
+
+    def test_emdash_heading_def_line_not_linkified(self):
+        # The heading line that defines the identifier must not have it
+        # rewritten to a self-link; only body text is linkified.
+        ref = self.write_refinements(textwrap.dedent("""\
+            #### N-DG-001 — Declarative Authoring
+
+            Body referencing N-DG-001.
+        """))
+        result = self.run_tool(ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = ref.read_text()
+        self.assertIn("N-DG-001 — Declarative Authoring", content)
+        self.assertNotIn("[N-DG-001] —", content)
+        # Body reference IS linkified.
+        self.assertIn("Body referencing [N-DG-001][n-dg-001]", content)
+
+    def test_second_identifier_in_heading_title_linkified(self):
+        # The leading (defining) id stays bare; a SECOND id in the title
+        # IS linkified.
+        ref = self.write_refinements(textwrap.dedent("""\
+            #### R-DG-005 — Tag syntax; see also R-DG-051
+
+            #### R-DG-051 — Since option tolerance
+        """))
+        result = self.run_tool(ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = ref.read_text()
+        # Leading id keeps its bare form.
+        self.assertIn("R-DG-005 — Tag syntax", content)
+        self.assertNotIn("[R-DG-005] —", content)
+        # Second id in the R-DG-005 heading title is linkified.
+        self.assertIn("[R-DG-051][r-dg-051]", content)
+
+    def test_emdash_with_and_without_surrounding_spaces(self):
+        # Em-dash WITH surrounding spaces ` — ` (normal) AND without spaces
+        # `—` must both match.
+        ref = self.write_refinements(textwrap.dedent("""\
+            #### A-01 — Title with spaces around em-dash
+            #### B-02—Title without spaces
+        """))
+        target = self.write_target("Per A-01 and B-02.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[A-01][a-01]", content)
+        self.assertIn("[B-02][b-02]", content)
+
+    def test_backtick_wrapped_heading_id_recognised(self):
+        # A heading whose id is still wrapped in backticks (not-yet-cleaned
+        # form) must still be recognised as a tier-3 definition.
+        ref = self.write_refinements(
+            '#### <a id="n-cl-001"></a>`N-CL-001` — Convergent Replication\nbody.\n'
+        )
+        target = self.write_target("Per N-CL-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[N-CL-001][n-cl-001]", content)
+        self.assertIn("[n-cl-001]: reify-refinements.md#n-cl-001", content)
 
 
 # --- Tier 4: table column --------------------------------------------------
@@ -219,6 +327,39 @@ class TestTier5Anchor(RefsLinkifyTestCase):
         content = target.read_text()
         self.assertIn("[d-99]: reify-refinements.md#d-99", content)
 
+    def test_tier5_hyphenated_anchor_resolves(self):
+        # A bare <a id="n-dg-001"></a> (hyphenated subsystem code) must
+        # produce the fully-uppercase identifier N-DG-001. The old buggy
+        # re.sub path produced mixed-case N-Dg-001 which fails fullmatch.
+        self.write_refinements(
+            'Some prose <a id="n-dg-001"></a> inline anchor.\n'
+        )
+        target = self.write_target("Per N-DG-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[N-DG-001][n-dg-001]", content)
+        self.assertIn("[n-dg-001]: reify-refinements.md#n-dg-001", content)
+        # Must NOT contain any mixed-case form.
+        self.assertNotIn("N-Dg-001", content)
+
+    def test_no_mixed_case_identifier_emitted(self):
+        # refs-linkify must never emit mixed-case identifier tokens
+        # (e.g. N-Dg-001). All canonical ids are fully uppercase;
+        # all anchors/link-def keys are fully lowercase.
+        import re as _re
+        self.write_refinements(
+            'Some prose <a id="n-dg-001"></a> inline anchor.\n'
+        )
+        target = self.write_target("Per N-DG-001.\n")
+        self.run_tool(target)
+        content = target.read_text()
+        # No X-Xx-NNN style mixed-case identifier anywhere.
+        mixed = _re.findall(
+            r'\b[A-Z]-[A-Za-z]*[a-z][A-Za-z]*-\d{2,3}\b', content
+        )
+        self.assertEqual(mixed, [], f"mixed-case identifiers found: {mixed}")
+
 
 # --- Mixed identifiers across tiers ---------------------------------------
 
@@ -250,7 +391,7 @@ class TestMixedTiers(RefsLinkifyTestCase):
         for href in (
             "[a-01]: reify-refinements.md#a-01",
             "[n-01]: reify-refinements.md#n-01",
-            "[r-pkg-01]: reify-refinements.md#r-pkg-01-some-requirement",
+            "[r-pkg-01]: reify-refinements.md#r-pkg-01",
             "[d-22]: reify-refinements.md#d-22",
             "[d-99]: reify-refinements.md#d-99",
         ):
@@ -446,6 +587,45 @@ class TestIdentifierShapes(RefsLinkifyTestCase):
         content = target.read_text()
         self.assertIn("[n-eddt-001]: reify-refinements.md#n-eddt-001", content)
 
+    def test_two_letter_category_in_checklist(self):
+        # 2-letter domain codes (e.g. C-DG-NNN, N-DG-NNN) must be
+        # recognised after the regex widened to [A-Z]{2,4}.
+        self.write_refinements("- [ ] **C-DG-001: Data sovereignty constraint**\n")
+        target = self.write_target("Per C-DG-001.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[C-DG-001][c-dg-001]", content)
+        self.assertIn("[c-dg-001]: reify-refinements.md#c-dg-001", content)
+
+    def test_two_letter_category_in_table(self):
+        # 2-letter domain code defined via tier-4 table first column.
+        ref = self.write_refinements(textwrap.dedent("""\
+            | ID        | Summary               |
+            |:----------|:----------------------|
+            | N-DG-003  | Flat numbering need.  |
+        """))
+        result = self.run_tool(ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = ref.read_text()
+        self.assertIn('<a id="n-dg-003"></a>', content)
+
+    def test_two_letter_category_across_indexes(self):
+        # A 2-letter code in one index and a 4-letter code in another
+        # must both resolve in the target.
+        a = self.dir / "primary.md"
+        a.write_text("- [ ] **C-DG-001: DG constraint**\n")
+        b = self.dir / "secondary.md"
+        b.write_text("- [ ] **N-EDDT-001: EDDT need**\n")
+        target = self.write_target("Per C-DG-001 and N-EDDT-001.\n")
+        result = self.run_tool(target, "--index", str(a), "--index", str(b))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[C-DG-001][c-dg-001]", content)
+        self.assertIn("[N-EDDT-001][n-eddt-001]", content)
+        self.assertIn("[c-dg-001]: primary.md#c-dg-001", content)
+        self.assertIn("[n-eddt-001]: secondary.md#n-eddt-001", content)
+
 
 # --- Multi-index resolution ----------------------------------------------
 
@@ -472,10 +652,7 @@ class TestMultipleIndexes(RefsLinkifyTestCase):
         self.assertIn("[R-FOO-01][r-foo-01]", content)
         # A-01 link def points at primary.md; R-FOO-01 at secondary.md.
         self.assertIn("[a-01]: primary.md#a-01", content)
-        self.assertIn(
-            "[r-foo-01]: secondary.md#r-foo-01-secondary-requirement",
-            content,
-        )
+        self.assertIn("[r-foo-01]: secondary.md#r-foo-01", content)
 
     def test_aliases_refinements_index_indexes_all_work(self):
         a = self.write_named("alpha.md", "- [ ] **A-01: Alpha**\n")
@@ -521,6 +698,22 @@ class TestMultipleIndexes(RefsLinkifyTestCase):
         self.assertIn("[a-01]: #a-01", content)
         # N-01 lives in secondary → cross-file form.
         self.assertIn("[n-01]: secondary.md#n-01", content)
+
+    def test_relative_paths_for_indexes_in_different_directories(self):
+        # Index in parent dir
+        ref = self.write_named("reify-refinements.md", "- [ ] **A-01: Primary**\n")
+        
+        # Target in sub dir
+        sub_dir = self.dir / "analyses"
+        sub_dir.mkdir()
+        target = sub_dir / "consumer.md"
+        target.write_text("Per A-01.\n")
+
+        result = self.run_tool(target, "--index", str(ref))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        # Should correctly use relative path pointing up
+        self.assertIn("[a-01]: ../reify-refinements.md#a-01", content)
 
 
 # --- H1 skip ---------------------------------------------------------------
@@ -572,6 +765,63 @@ class TestH1Skip(RefsLinkifyTestCase):
         self.run_tool(target)
         content = target.read_text()
         self.assertIn("## Section about [A-05][a-05]", content)
+
+
+# --- Inline code spans --------------------------------------------------------
+
+class TestInlineCode(RefsLinkifyTestCase):
+    def test_inline_backtick_id_not_linkified(self):
+        # An identifier inside a backtick inline-code span is literal text
+        # and must NOT be rewritten to a reference link.
+        self.write_refinements("- [ ] **A-01: Analysis**\n")
+        target = self.write_target(textwrap.dedent("""\
+            Body prose references A-01 normally.
+            The tag is `A-01` and must stay literal.
+        """))
+        self.run_tool(target)
+        content = target.read_text()
+        # Prose reference IS rewritten.
+        self.assertIn("references [A-01][a-01]", content)
+        # Inline-code span is preserved verbatim.
+        self.assertIn("`A-01`", content)
+        self.assertNotIn("`[A-01]", content)
+
+    def test_backticked_id_not_collected_as_used(self):
+        # An identifier that appears ONLY inside backtick spans must not be
+        # collected as "used" — no link-def emitted, no unknown warning.
+        self.write_refinements("- [ ] **A-01: Analysis**\n")
+        target = self.write_target("The tag `B-02` is literal only; A-01 is a ref.\n")
+        result = self.run_tool(target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        # No link-def for B-02.
+        self.assertNotIn("[b-02]:", content)
+        # No unknown-identifier warning for B-02.
+        self.assertNotIn("unknown identifier B-02", result.stderr)
+
+
+# --- Heading wins over table (same file) --------------------------------------
+
+class TestHeadingWins(RefsLinkifyTestCase):
+    def test_heading_wins_over_table_same_file(self):
+        # When both a tier-3 heading and a tier-4 table first-column cell
+        # define the same identifier in the same file, the heading wins
+        # and no duplicate-definition error is raised.
+        ref = self.write_refinements(textwrap.dedent("""\
+            | ID      | Name            |
+            |:--------|:----------------|
+            | S-DG-01 | Snapshot Parser |
+
+            #### S-DG-01 — Snapshot Parser
+
+            Description of S-DG-01.
+        """))
+        target = self.write_target("Uses S-DG-01.\n")
+        result = self.run_tool(target, "--index", str(ref))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = target.read_text()
+        self.assertIn("[S-DG-01][s-dg-01]", content)
+        self.assertIn("[s-dg-01]: reify-refinements.md#s-dg-01", content)
 
 
 if __name__ == "__main__":
