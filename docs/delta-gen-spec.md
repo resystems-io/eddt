@@ -22,7 +22,7 @@ contributes to are listed in [eddt-needs.md](eddt-needs.md) and
 traced upward from the needs in §3 below.
 
 - **Status:** Revised
-- **Version:** 1.1
+- **Version:** 1.2
 - **Baselined-Date:** 2026-06-03
 - **Revised-Date:** 2026-06-11
 
@@ -63,6 +63,16 @@ traced upward from the needs in §3 below.
   - [8.7 Verbose flag](#87-verbose-flag)
   - [8.8 Standalone mode](#88-standalone-mode)
   - [8.9 Schema evolution and field retirement](#89-schema-evolution-and-field-retirement)
+  - [8.10 `delta.commutative` (reserved)](#810-deltacommutative-reserved)
+  - [8.11 Snapshot as a degenerate Delta](#811-snapshot-as-a-degenerate-delta)
+- [9. Worked Example *(informative)*](#9-worked-example-informative)
+  - [9.1 Input Snapshot](#91-input-snapshot)
+  - [9.2 Generated Delta type and companion types](#92-generated-delta-type-and-companion-types)
+  - [9.3 Generated Apply](#93-generated-apply)
+  - [9.4 Generated Diff](#94-generated-diff)
+  - [9.5 Generated Coalesce](#95-generated-coalesce)
+  - [9.6 EntityID](#96-entityid)
+  - [9.7 Round-trip test](#97-round-trip-test)
 
 <!-- /TOC -->
 
@@ -599,7 +609,7 @@ offending Snapshot type.
 
 - **Type (A38):** Functional
 - **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
-- **Source (A5):** Upstream spec §4.4; observed implementation (`tagKindFor`); Design note §8.9 (`delta.retired` and `delta.omit` semantics)
+- **Source (A5):** Upstream spec §4.4; observed implementation (`tagKindFor`); Design note §8.9 (`delta.retired` and `delta.omit` semantics); Design note §8.10 (`delta.commutative` reserved semantics)
 - **Rationale (A1):** A closed vocabulary prevents authoring errors from silently producing incorrect Delta semantics; an unrecognised tag would be ignored rather than rejected, hiding mistakes.
 - **V&V method (A2):** Test
 - **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
@@ -611,9 +621,9 @@ offending Snapshot type.
 > *An `eddt:` tag value SHALL consist of comma-separated tokens or
 > `key=value` option pairs. A payload field SHALL carry at most one
 > primary semantic tag (`entity.key`, `delta.nested`, `delta.omit`,
-> `delta.retired`, or `delta.clearable`) in its `eddt:` tag. The
-> Snapshot Parser SHALL reject fields with conflicting primary tags
-> with a diagnostic.*
+> `delta.retired`, `delta.commutative`, or `delta.clearable`) in its
+> `eddt:` tag. The Snapshot Parser SHALL reject fields with
+> conflicting primary tags with a diagnostic.*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
@@ -1845,6 +1855,341 @@ deliberate data-engineering migration operation belonging to the
 consuming pipeline, not an automated transformation the generator
 should attempt.
 
+### 8.10 `delta.commutative` (reserved)
+
+**See:** [R-DG-004][r-dg-004], [R-DG-005][r-dg-005]
+
+The `delta.commutative` tag is reserved for future late-arrival-lift semantics —
+LWW-Register, ORSet, G-Counter, or analogous CRDT-style merges. In v1 the
+generator accepts the tag without semantic effect: the tagged field emits exactly
+as if untagged (last-writer-wins atomic `Set<F>` pointer). The tag is preserved
+in the source for future generator iterations to honour.
+
+Per [R-DG-004][r-dg-004], the token is part of the recognised vocabulary (the
+parser accepts and validates it) and is a primary semantic tag: a field carrying
+`delta.commutative` may not also carry a conflicting primary tag
+([R-DG-005][r-dg-005]).
+
+**Generator effect (v1).** A scalar field tagged `delta.commutative` emits a
+`Set<F> *T` pointer in TDelta — the standard atomic last-writer-wins
+representation — indistinguishable from an untagged scalar. No
+commutative-specific code is generated.
+
+**Future intent.** The tag marks a field as a candidate for late-arrival lift.
+Until that iteration the effective conflict-resolution strategy is strong
+rejection (out-of-order deltas are rejected at the chain-lifecycle layer).
+
+**No type constraints in v1.** Future iterations MAY restrict which field types
+are compatible with commutative-merge semantics.
+
+### 8.11 Snapshot as a degenerate Delta
+
+**See:** [R-DG-012][r-dg-012], §9.3
+
+*(Conceptual aid — not a normative invariant; see note below.)*
+
+A useful mental model: a Snapshot is conceptually the result of applying, to an
+empty/zero Snapshot `S∅`, a Delta `d_all` that asserts every payload field to
+its desired value:
+
+```
+Apply(S∅, d_all)  ≡  s       (payload fields only)
+```
+
+where every `Set<F>` pointer in `d_all` is non-nil and points to the
+corresponding value from target Snapshot `s`, and `S∅` has every payload field
+at its zero value.
+
+This unification is useful when building mental models of the system: creating
+a new entity is the same operation as advancing an existing one — both are
+instances of Apply. It also explains why TDelta is self-sufficient: no separate
+"create" message type is needed; a Delta with every field asserted *is* a
+creation event.
+
+**Not a normative invariant.** The Header envelope (ChainID, Sequence,
+EffectiveAt, Provenance) of a real Snapshot and of the corresponding asserting
+Delta necessarily differ — the runtime validates them via `HeaderAfterApply`
+([R-DG-012][r-dg-012]; see `chain-lifecycle-spec.md` [R-CL-012][r-cl-012]). The
+conceptual equality holds at the *payload level* only. Any claim about full
+Snapshot equality would require additional chain-lifecycle preconditions and is
+out of scope here.
+
+## 9. Worked Example *(informative)*
+
+This section illustrates the complete input-to-output mapping of `delta-gen`
+using `PumpSnapshot` — introduced in §2.4 — as a representative Snapshot type.
+Every code block is verbatim from `internal/deltagen/example/pump/` in the
+reference implementation; `pump_delta_test.go` verifies each property shown
+here. This section is non-normative; normative behaviour is fully specified in
+§§3–8. For runtime types referenced here (`runtime.Header`,
+`runtime.FieldDelta[T]`, `runtime.HeaderAfterApply`, `runtime.HeaderForDiff`,
+`runtime.EntityID`) see `chain-lifecycle-spec.md`
+([R-CL-001][r-cl-001], [R-CL-006][r-cl-006], [R-CL-012][r-cl-012],
+[R-CL-013][r-cl-013], [R-DG-034][r-dg-034]).
+
+### 9.1 Input Snapshot
+
+The input is `pump.go`, which defines `PumpSnapshot` and two nested types:
+
+```go
+package pump
+
+import (
+	"time"
+
+	eddt "go.resystems.io/eddt/runtime"
+)
+
+// SiteAddress is the physical installation address of a pump.
+type SiteAddress struct {
+	Street string
+	City   string
+}
+
+// CalibrationData holds factory calibration offsets for a pump.
+type CalibrationData struct {
+	OffsetKPa   float32
+	LastCalibAt time.Time
+}
+
+//go:generate delta-gen PumpSnapshot
+
+type PumpSnapshot struct {
+	eddt.Header
+	SerialNumber string          `eddt:"entity.key"`
+	PressureKPa  float32
+	TempCelsius  float32
+	Location     SiteAddress     `eddt:"delta.nested"`
+	Calibration  CalibrationData `eddt:"delta.nested,delta.clearable"`
+	FirmwareVer  string          `eddt:"delta.omit"`
+}
+```
+
+Field coverage: SerialNumber is the scalar entity key ([R-DG-014][r-dg-014]);
+PressureKPa and TempCelsius are untagged atomic scalars; Location is
+`delta.nested` (companion struct delta); Calibration is
+`delta.nested,delta.clearable` (tri-state `runtime.FieldDelta[T]` envelope,
+[R-CL-006][r-cl-006]); FirmwareVer is `delta.omit` (absent from TDelta; Apply
+carries it forward). The `//go:generate` directive records the equivalent CLI
+invocation:
+
+```
+delta-gen --pkg . --out pump_snapshot_delta.go PumpSnapshot
+```
+
+### 9.2 Generated Delta type and companion types
+
+`pump_snapshot_delta.go` opens with `// Code generated by delta-gen (eb1a7c95). DO NOT EDIT.`
+
+Companion types for the two nested structs are emitted first
+([R-DG-016][r-dg-016]):
+
+```go
+type SiteAddressDelta struct {
+	// Street: source SiteAddress.Street (string) — atomic replace; nil = no change.
+	SetStreet *string
+	// City: source SiteAddress.City (string) — atomic replace; nil = no change.
+	SetCity *string
+}
+
+type CalibrationDataDelta struct {
+	// OffsetKPa: source CalibrationData.OffsetKPa (float32) — atomic replace; nil = no change.
+	SetOffsetKPa *float32
+	// LastCalibAt: source CalibrationData.LastCalibAt (time.Time) — atomic replace; nil = no change.
+	SetLastCalibAt *time.Time
+}
+```
+
+Then the top-level TDelta type:
+
+```go
+type PumpSnapshotDelta struct {
+	// Header: chain-lifecycle envelope (ChainID, Sequence, Provenance).
+	runtime.Header
+	// PressureKPa: source PumpSnapshot.PressureKPa (float32) — atomic replace; nil = no change.
+	SetPressureKPa *float32
+	// TempCelsius: source PumpSnapshot.TempCelsius (float32) — atomic replace; nil = no change.
+	SetTempCelsius *float32
+	// Location: source PumpSnapshot.Location (SiteAddress) — compositional delta; recursive Apply.
+	Location SiteAddressDelta
+	// Calibration: source PumpSnapshot.Calibration (CalibrationData) — tri-state envelope (OpIgnore / OpAssert / OpRetract); inner Apply via ApplyCalibrationData.
+	Calibration runtime.FieldDelta[CalibrationDataDelta]
+}
+```
+
+SerialNumber (entity.key) and FirmwareVer (delta.omit) are absent from TDelta.
+Location is a plain struct value — a zero-valued `SiteAddressDelta` means no
+change. Calibration uses the `runtime.FieldDelta[T]` tri-state envelope
+(OpIgnore / OpAssert / OpRetract).
+
+### 9.3 Generated Apply
+
+`ApplyPumpSnapshot` and its value-receiver wrapper, verbatim from
+`pump_snapshot_delta.go`:
+
+```go
+func ApplyPumpSnapshot(s PumpSnapshot, d PumpSnapshotDelta) (PumpSnapshot, error) {
+	var result PumpSnapshot
+	hdr, err := runtime.HeaderAfterApply(s.Header, d.Header)
+	if err != nil {
+		return result, err
+	}
+	result.Header = hdr
+	result.SerialNumber = s.SerialNumber
+	if d.SetPressureKPa != nil {
+		result.PressureKPa = *d.SetPressureKPa
+	} else {
+		result.PressureKPa = s.PressureKPa
+	}
+	if d.SetTempCelsius != nil {
+		result.TempCelsius = *d.SetTempCelsius
+	} else {
+		result.TempCelsius = s.TempCelsius
+	}
+	result.Location = s.Location.Apply(d.Location)
+	switch d.Calibration.Op {
+	case runtime.OpRetract:
+		result.Calibration = CalibrationData{}
+	case runtime.OpAssert:
+		result.Calibration = ApplyCalibrationData(s.Calibration, d.Calibration.Value)
+	default:
+		result.Calibration = s.Calibration
+	}
+	result.FirmwareVer = s.FirmwareVer
+	return result, nil
+}
+
+func (s PumpSnapshot) Apply(d PumpSnapshotDelta) (PumpSnapshot, error) {
+	return ApplyPumpSnapshot(s, d)
+}
+```
+
+Chain-envelope validation is delegated to `runtime.HeaderAfterApply`
+([R-CL-012][r-cl-012]); SerialNumber and FirmwareVer are carried forward
+unchanged (entity.key and delta.omit respectively); the clearable Calibration
+field uses an inlined tri-state switch — OpIgnore carries forward, OpAssert
+applies recursively, OpRetract zeros the field.
+
+### 9.4 Generated Diff
+
+`DiffPumpSnapshot` and its value-receiver wrapper:
+
+```go
+func DiffPumpSnapshot(a, b PumpSnapshot) (PumpSnapshotDelta, error) {
+	hdr, err := runtime.HeaderForDiff(a.Header, b.Header)
+	if err != nil {
+		return PumpSnapshotDelta{}, err
+	}
+	d := PumpSnapshotDelta{Header: hdr}
+	if a.PressureKPa != b.PressureKPa {
+		d.SetPressureKPa = &b.PressureKPa
+	}
+	if a.TempCelsius != b.TempCelsius {
+		d.SetTempCelsius = &b.TempCelsius
+	}
+	d.Location = a.Location.Diff(b.Location)
+	if a.Calibration != b.Calibration {
+		if b.Calibration == (CalibrationData{}) {
+			d.Calibration = runtime.FieldDelta[CalibrationDataDelta]{Op: runtime.OpRetract}
+		} else {
+			d.Calibration = runtime.FieldDelta[CalibrationDataDelta]{Op: runtime.OpAssert, Value: DiffCalibrationData(a.Calibration, b.Calibration)}
+		}
+	}
+	return d, nil
+}
+
+func (a PumpSnapshot) Diff(b PumpSnapshot) (PumpSnapshotDelta, error) {
+	return DiffPumpSnapshot(a, b)
+}
+```
+
+Chain-envelope construction is delegated to `runtime.HeaderForDiff`
+([R-CL-013][r-cl-013]). Only changed fields set their `Set<F>` pointer (minimal
+delta, [R-DG-027][r-dg-027]). For the clearable field: if `b.Calibration` is
+zero, OpRetract; otherwise OpAssert with a recursive Diff.
+
+### 9.5 Generated Coalesce
+
+```go
+func CoalescePumpSnapshot(s PumpSnapshot, ds []PumpSnapshotDelta) (PumpSnapshot, error) {
+	result := s
+	for _, d := range ds {
+		var err error
+		result, err = ApplyPumpSnapshot(result, d)
+		if err != nil {
+			return PumpSnapshot{}, err
+		}
+	}
+	return result, nil
+}
+
+func (s PumpSnapshot) Coalesce(ds []PumpSnapshotDelta) (PumpSnapshot, error) {
+	return CoalescePumpSnapshot(s, ds)
+}
+```
+
+Coalesce is a left-fold of Apply over the delta slice ([R-DG-028][r-dg-028]). An
+empty slice returns `(s, nil)` without any runtime call. Errors from any Apply
+step abort the fold and surface to the caller.
+
+### 9.6 EntityID
+
+```go
+func EntityIDPumpSnapshot(k string) runtime.EntityID {
+	h := runtime.NewHash()
+	runtime.WriteString(h, k)
+	return runtime.Finalise(h)
+}
+```
+
+The entity key (`SerialNumber`, a `string`) is hashed using Blake2b-256 into a
+deterministic `runtime.EntityID` ([R-DG-034][r-dg-034], [R-DG-035][r-dg-035]).
+Same input always produces the same output.
+
+### 9.7 Round-trip test
+
+From `pump_delta_test.go`, the canonical round-trip test verifying Inv. 8.1:
+
+```go
+func TestApply_roundTrip(t *testing.T) {
+	a := pump.PumpSnapshot{
+		Header:       newHeader("SN-4719"),
+		SerialNumber: "SN-4719",
+		PressureKPa:  850.0,
+		TempCelsius:  72.3,
+		Location:     pump.SiteAddress{Street: "Mill Road 1", City: "Berlin"},
+		FirmwareVer:  "v2.1.0",
+	}
+	b := a
+	b.Header = advanceHeader(a.Header, 1)
+	b.PressureKPa = 855.5
+	b.Location = pump.SiteAddress{Street: "Mill Road 1", City: "Hamburg"}
+
+	d, err := a.Diff(b)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	got, err := a.Apply(d)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got.PressureKPa != b.PressureKPa {
+		t.Errorf("PressureKPa: got %v, want %v", got.PressureKPa, b.PressureKPa)
+	}
+	if got.Location.City != b.Location.City {
+		t.Errorf("Location.City: got %q, want %q", got.Location.City, b.Location.City)
+	}
+	if got.FirmwareVer != a.FirmwareVer {
+		t.Errorf("FirmwareVer (omit): got %q, want %q", got.FirmwareVer, a.FirmwareVer)
+	}
+}
+```
+
+`newHeader` and `advanceHeader` are test helpers that construct minimal headers
+for a chain starting from epoch. The test confirms: payload fields updated by the
+delta take the new values; the `delta.omit` field (`FirmwareVer`) is carried
+forward unchanged from `a` regardless of `b`.
+
 <!-- Reference links generated by scripts/refs-linkify.py -->
 
 [e-dg-001]: #e-dg-001
@@ -1862,6 +2207,9 @@ should attempt.
 [n-eddt-008]: eddt-needs.md#n-eddt-008
 [n-eddt-010]: eddt-needs.md#n-eddt-010
 [r-cl-001]: chain-lifecycle-spec.md#r-cl-001
+[r-cl-006]: chain-lifecycle-spec.md#r-cl-006
+[r-cl-012]: chain-lifecycle-spec.md#r-cl-012
+[r-cl-013]: chain-lifecycle-spec.md#r-cl-013
 [r-cl-014]: chain-lifecycle-spec.md#r-cl-014
 [r-dg-001]: #r-dg-001
 [r-dg-002]: #r-dg-002
