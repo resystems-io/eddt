@@ -186,7 +186,7 @@ domain prefix `DG`:
 
 Identifiers do not encode hierarchy; sub-section breaks are
 structural. Cross-references within this document appear inline as
-e.g. `[N-DG-003][n-dg-003]` and resolve via explicit `<a id>` anchors in section
+e.g. [N-DG-003][n-dg-003] and resolve via explicit `<a id>` anchors in section
 headers; within-file navigation uses the generated TOC.
 
 External references cite the source document by short name
@@ -260,7 +260,7 @@ mention.
 
 ### 3.2 Aspirational Needs
 
-#### <a id="n-dg-001"></a>`[N-DG-001][n-dg-001]` — Declarative Authoring
+#### <a id="n-dg-001"></a>N-DG-001 — Declarative Authoring
 
 *A Snapshot type custodian (the Snapshot Author or Schema Steward
 roles) needs to declare and evolve a Snapshot type's delta semantics
@@ -294,7 +294,7 @@ changes to the surrounding code.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
-#### <a id="n-dg-002"></a>`[N-DG-002][n-dg-002]` — Cross-Layer Schema Harmonisation
+#### <a id="n-dg-002"></a>N-DG-002 — Cross-Layer Schema Harmonisation
 
 *A cross-POV consumer of generated types (the Delta Publisher, Twin
 Maintainer, or Analytics Consumer roles) needs the same canonical
@@ -328,7 +328,7 @@ other.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
-#### <a id="n-dg-003"></a>`[N-DG-003][n-dg-003]` — System Traceability
+#### <a id="n-dg-003"></a>N-DG-003 — System Traceability
 
 *A traceability consumer (the Twin Maintainer for runtime provenance,
 the Tool Integrator for reproducible codegen, or the Analytics
@@ -366,7 +366,7 @@ can be explained from its inputs and reproduced from its source.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
-#### <a id="n-dg-004"></a>`[N-DG-004][n-dg-004]` — Chain Safety
+#### <a id="n-dg-004"></a>N-DG-004 — Chain Safety
 
 *A chain participant (the Twin Maintainer consuming a chain, or the
 Delta Publisher producing one) needs delta-driven state movement to
@@ -405,7 +405,7 @@ transport faults.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
-#### <a id="n-dg-005"></a>`[N-DG-005][n-dg-005]` — Operational Performance
+#### <a id="n-dg-005"></a>N-DG-005 — Operational Performance
 
 *A throughput-sensitive consumer of generated code (the Twin
 Maintainer, Delta Publisher, or Analytics Consumer roles) needs the
@@ -453,14 +453,14 @@ how the current implementation realises each subsystem.
 
 ### 4.1 Subsystems
 
-| ID                   | Name            | Counterparty                | Owns                                         |
-|:---------------------|:----------------|:----------------------------|:---------------------------------------------|
-| `[S-DG-01][s-dg-01]` | Snapshot Parser | Snapshot authors            | Authoring Contract (§5.1)                    |
-| `[S-DG-02][s-dg-02]` | Code Emitter    | Consumers of generated code | Output Contract (§5.2)                       |
-| `[S-DG-03][s-dg-03]` | Runtime Library | Consumers of generated code | Runtime types; chain-lifecycle preconditions |
-| `[S-DG-04][s-dg-04]` | Generator CLI   | Build systems; users        | CLI Contract (§5.4)                          |
+| ID                 | Name            | Counterparty                | Owns                                         |
+|:-------------------|:----------------|:----------------------------|:---------------------------------------------|
+| [S-DG-01][s-dg-01] | Snapshot Parser | Snapshot authors            | Authoring Contract (§5.1)                    |
+| [S-DG-02][s-dg-02] | Code Emitter    | Consumers of generated code | Output Contract (§5.2)                       |
+| [S-DG-03][s-dg-03] | Runtime Library | Consumers of generated code | Runtime types; chain-lifecycle preconditions |
+| [S-DG-04][s-dg-04] | Generator CLI   | Build systems; users        | CLI Contract (§5.4)                          |
 
-#### <a id="s-dg-01"></a>`[S-DG-01][s-dg-01]` — Snapshot Parser
+#### <a id="s-dg-01"></a>S-DG-01 — Snapshot Parser
 
 The Snapshot Parser reads Go source packages, identifies the
 designated Snapshot struct types, and validates their structural and
@@ -471,7 +471,7 @@ a malformed Snapshot, the Parser rejects the input and emits a
 diagnostic that names the offending Snapshot and the violated
 constraint.
 
-#### <a id="s-dg-02"></a>`[S-DG-02][s-dg-02]` — Code Emitter
+#### <a id="s-dg-02"></a>S-DG-02 — Code Emitter
 
 The Code Emitter translates a validated Snapshot model produced by
 the Snapshot Parser into a Go source artefact. The artefact contains
@@ -490,7 +490,7 @@ key type. The Code Emitter is the sole producer of generated source;
 its decisions about field representation, function signatures, and
 companion-type ordering constitute the Output Contract.
 
-#### <a id="s-dg-03"></a>`[S-DG-03][s-dg-03]` — Runtime Library
+#### <a id="s-dg-03"></a>S-DG-03 — Runtime Library
 
 The Runtime Library is the companion Go package `go.resystems.io/eddt/runtime`
 that generated code links against at compile time. It provides the
@@ -501,7 +501,7 @@ generated `Apply` and `Diff` functions delegate to at runtime. The
 Runtime Library is part of the Output Contract surface — consumers of
 generated code observe its types directly.
 
-#### <a id="s-dg-04"></a>`[S-DG-04][s-dg-04]` — Generator CLI
+#### <a id="s-dg-04"></a>S-DG-04 — Generator CLI
 
 The Generator CLI is the user-facing program `delta-gen`. It selects
 Snapshot targets from the source packages specified by the caller,
@@ -513,16 +513,16 @@ the CLI Contract and is also responsible for mode selection
 
 ### 4.2 Subsystem Interactions *(informative)*
 
-The Generator CLI (`[S-DG-04][s-dg-04]`) receives user-supplied flags and
+The Generator CLI ([S-DG-04][s-dg-04]) receives user-supplied flags and
 positional arguments, loads the designated source packages, and drives
-the Snapshot Parser (`[S-DG-01][s-dg-01]`) over each named target. For each
+the Snapshot Parser ([S-DG-01][s-dg-01]) over each named target. For each
 target that the Parser accepts, the CLI passes the validated Snapshot
-model to the Code Emitter (`[S-DG-02][s-dg-02]`), which generates the Go source.
+model to the Code Emitter ([S-DG-02][s-dg-02]), which generates the Go source.
 The CLI then writes the source to the designated output path (or a
 derived path in multi-file mode).
 
 The generated source, when compiled by the consuming package, links
-against the Runtime Library (`[S-DG-03][s-dg-03]`). The Runtime Library is not
+against the Runtime Library ([S-DG-03][s-dg-03]). The Runtime Library is not
 invoked at generation time; it becomes a dependency of the downstream
 binary that uses the generated code.
 
@@ -532,12 +532,12 @@ binary that uses the generated code.
 
 ### 5.1 Authoring Contract
 
-The requirements in this section bind the Snapshot Parser (`[S-DG-01][s-dg-01]`).
+The requirements in this section bind the Snapshot Parser ([S-DG-01][s-dg-01]).
 They describe what the Snapshot Parser accepts as valid input and what
 it rejects. Each diagnostic emitted on rejection SHALL name the
 offending Snapshot type.
 
-#### <a id="r-dg-001"></a>`[R-DG-001][r-dg-001]` — Snapshot type identity
+#### <a id="r-dg-001"></a>R-DG-001 — Snapshot type identity
 
 > *The Snapshot Parser SHALL accept only named Go struct types that
 > are declared within the Go source packages provided as input. The
@@ -545,15 +545,15 @@ offending Snapshot type.
 > with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation; upstream spec §4.1
 - **Rationale (A1):** A generator that silently accepts the wrong syntactic form produces output that either fails to compile or does not correspond to the intended entity type; rejecting non-struct types at parse time surfaces authoring errors before any code is written.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-002"></a>`[R-DG-002][r-dg-002]` — Single Header embedding
+#### <a id="r-dg-002"></a>R-DG-002 — Single Header embedding
 
 > *A Snapshot type SHALL embed exactly one field whose declared type
 > is identical to `runtime.Header` (identified by import path and
@@ -562,15 +562,15 @@ offending Snapshot type.
 > with a diagnostic naming the offending Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.2
 - **Rationale (A1):** Every Snapshot must carry exactly one chain envelope; zero leaves the generated `Apply` and `Diff` with no chain context to validate against, and more than one makes the choice of which `Header` to use ambiguous, silently corrupting provenance accumulation.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-003"></a>`[R-DG-003][r-dg-003]` — Admissible payload field shapes
+#### <a id="r-dg-003"></a>R-DG-003 — Admissible payload field shapes
 
 > *A Snapshot type's payload fields — all fields other than the
 > embedded `runtime.Header` and the entity-key field — SHALL be of
@@ -581,15 +581,15 @@ offending Snapshot type.
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.3; observed implementation (`classifyShape`)
 - **Rationale (A1):** Function, channel, and interface-typed fields carry no serialisable value representation; permitting them would require the generator to emit meaningless or non-compilable Delta field declarations.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-004"></a>`[R-DG-004][r-dg-004]` — Tag vocabulary
+#### <a id="r-dg-004"></a>R-DG-004 — Tag vocabulary
 
 > *The `eddt:` struct tag vocabulary recognised by the Snapshot
 > Parser SHALL consist of exactly the following tokens:
@@ -598,15 +598,15 @@ offending Snapshot type.
 > reject unrecognised `eddt:` tokens with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.4; observed implementation (`tagKindFor`); Design note §8.9 (`delta.retired` and `delta.omit` semantics)
 - **Rationale (A1):** A closed vocabulary prevents authoring errors from silently producing incorrect Delta semantics; an unrecognised tag would be ignored rather than rejected, hiding mistakes.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-005"></a>`[R-DG-005][r-dg-005]` — Tag syntax
+#### <a id="r-dg-005"></a>R-DG-005 — Tag syntax
 
 > *An `eddt:` tag value SHALL consist of comma-separated tokens or
 > `key=value` option pairs. A payload field SHALL carry at most one
@@ -616,15 +616,15 @@ offending Snapshot type.
 > with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.4; observed implementation (`parseTag`); [R-DG-051][r-dg-051] (`since=` option)
 - **Rationale (A1):** Multiple primary tags on one field produce an ambiguous field classification; the generator cannot simultaneously treat a field as, for example, both `delta.nested` and `delta.omit`. The `key=value` option syntax allows tags to carry documentary modifiers (e.g. `since=2026-04-01` on `delta.retired`) without additional vocabulary entries.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-051"></a>`[R-DG-051][r-dg-051]` — `since` option tolerance
+#### <a id="r-dg-051"></a>R-DG-051 — `since` option tolerance
 
 > *The Snapshot Parser SHALL accept a `since=<value>` option on a
 > `delta.retired` or `delta.omit` field as documentary metadata. The
@@ -633,15 +633,15 @@ offending Snapshot type.
 > and it SHALL NOT affect generated output.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-003][n-dg-003]` System Traceability
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** [R-DG-005][r-dg-005]; analysis §7.6; observed implementation (`parseTag` — unknown `key=value` options preserved without effect); Design note §8.9
 - **Rationale (A1):** The `since` modifier records the date a field was retired directly in the source artefact, making the schema's evolution history self-describing without any runtime or generated-code effect. Preserving it allows tools and auditors to surface the retirement date from source tags alone.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P1
 - **Criticality (A33):** Medium
 
-#### <a id="r-dg-006"></a>`[R-DG-006][r-dg-006]` — `delta.nested` shape constraint
+#### <a id="r-dg-006"></a>R-DG-006 — `delta.nested` shape constraint
 
 > *The `delta.nested` tag SHALL be admissible only on a payload field
 > whose type is a named struct, a slice, or a map. The Snapshot
@@ -649,15 +649,15 @@ offending Snapshot type.
 > with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.5; observed implementation (`validateTagShape`)
 - **Rationale (A1):** Scalar and pointer fields carry a well-defined atomic-update semantic (Set-pointer presence); applying nested-composite semantics to them would produce a nonsensical Delta field shape.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-007"></a>`[R-DG-007][r-dg-007]` — `delta.clearable` dependency constraint
+#### <a id="r-dg-007"></a>R-DG-007 — `delta.clearable` dependency constraint
 
 > *The `delta.clearable` tag SHALL be admissible only when combined
 > with `delta.nested` on the same payload field. The Snapshot Parser
@@ -665,15 +665,15 @@ offending Snapshot type.
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §5.4; observed implementation (`validateTagCombination`)
 - **Rationale (A1):** `delta.clearable` modifies the nested-composite emission to add an explicit retract capability; without `delta.nested`, there is no composite emission to modify.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-008"></a>`[R-DG-008][r-dg-008]` — Nested struct type is Header-free
+#### <a id="r-dg-008"></a>R-DG-008 — Nested struct type is Header-free
 
 > *A named struct type designated as `delta.nested` SHALL NOT itself
 > embed `runtime.Header`. The Snapshot Parser SHALL reject any
@@ -681,30 +681,30 @@ offending Snapshot type.
 > `runtime.Header`-embedding type with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.5; observed implementation (`containsHeaderEmbed`)
 - **Rationale (A1):** A nested struct that embeds `runtime.Header` would introduce a second, ambiguous chain envelope inside the payload, corrupting chain-lifecycle semantics for the outer Snapshot.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-009"></a>`[R-DG-009][r-dg-009]` — Acyclic nested type graph
+#### <a id="r-dg-009"></a>R-DG-009 — Acyclic nested type graph
 
 > *The type graph reachable from a Snapshot's `delta.nested` fields
 > SHALL be acyclic. The Snapshot Parser SHALL reject Snapshots whose
 > nested type graph contains a cycle with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`validateNestedAcyclic`)
 - **Rationale (A1):** A cyclic nested type graph requires infinite companion Delta types, which cannot be represented in a finite generated source file.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-010"></a>`[R-DG-010][r-dg-010]` — Unique entity-key field
+#### <a id="r-dg-010"></a>R-DG-010 — Unique entity-key field
 
 > *A Snapshot type SHALL contain exactly one entity-key field,
 > identified by the `entity.key` tag or by a per-target
@@ -715,11 +715,11 @@ offending Snapshot type.
 > entity-key candidate with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.6; observed implementation (`parseKeyField`)
 - **Rationale (A1):** `EntityID` hashing requires a single, unambiguous source of entity identity; a missing key leaves entity routing undefined, and multiple keys make the hash input ambiguous across generator invocations.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -727,11 +727,11 @@ offending Snapshot type.
 
 ### 5.2 Output Contract
 
-The requirements in this section bind the Code Emitter (`[S-DG-02][s-dg-02]`).
+The requirements in this section bind the Code Emitter ([S-DG-02][s-dg-02]).
 They describe the names, signatures, type shapes, and structural
 properties of the artefacts that downstream code binds to.
 
-#### <a id="r-dg-011"></a>`[R-DG-011][r-dg-011]` — Generated-file banner
+#### <a id="r-dg-011"></a>R-DG-011 — Generated-file banner
 
 > *Every generated source file SHALL begin with a single-line comment
 > of the form `// Code generated by delta-gen (<rev>). DO NOT EDIT.`
@@ -741,15 +741,15 @@ properties of the artefacts that downstream code binds to.
 > hash), or the string `(devel)` when VCS information is unavailable.*
 
 - **Type (A38):** Compliance
-- **Parent need (A4):** `[N-DG-003][n-dg-003]` System Traceability
+- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** Go toolchain convention (`go generate`); observed implementation (`vcsRevision`)
 - **Rationale (A1):** The banner satisfies the Go toolchain's convention for distinguishing generated from hand-authored source, and embeds the generator version for audit purposes.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-012"></a>`[R-DG-012][r-dg-012]` — Package-level operation signatures
+#### <a id="r-dg-012"></a>R-DG-012 — Package-level operation signatures
 
 > *For each Snapshot type `T`, the Code Emitter SHALL produce
 > package-level functions whose names are formed by prepending the
@@ -767,18 +767,18 @@ properties of the artefacts that downstream code binds to.
 > in the same output package do not produce conflicting package-level
 > identifiers (Go prohibits function overloading). The naming is
 > consistent with the nested-companion function naming already required
-> by `[R-DG-016][r-dg-016]` (`ApplyFoo`, `DiffFoo` for nested types).*
+> by [R-DG-016][r-dg-016] (`ApplyFoo`, `DiffFoo` for nested types).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-002][n-dg-002]` Cross-Layer Schema Harmonisation
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** Upstream spec §6; observed implementation (sub-templates)
-- **Rationale (A1):** The struct-prefixed function signatures are the primary contract surface that downstream code — twin maintainers, delta publishers, sibling generators — depends on. The prefix prevents Go namespace collisions when bundling multiple snapshot types into one output package (observed failure mode: `redeclared in this block` for flat `Apply`). Same-package callers use the ergonomic method wrappers (`[R-DG-013][r-dg-013]`) and are unaffected by the prefix.
+- **Rationale (A1):** The struct-prefixed function signatures are the primary contract surface that downstream code — twin maintainers, delta publishers, sibling generators — depends on. The prefix prevents Go namespace collisions when bundling multiple snapshot types into one output package (observed failure mode: `redeclared in this block` for flat `Apply`). Same-package callers use the ergonomic method wrappers ([R-DG-013][r-dg-013]) and are unaffected by the prefix.
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-013"></a>`[R-DG-013][r-dg-013]` — Method wrappers (same-package mode)
+#### <a id="r-dg-013"></a>R-DG-013 — Method wrappers (same-package mode)
 
 > *In same-package mode — when the output package name equals the
 > source package name — the Code Emitter SHALL additionally emit the
@@ -797,15 +797,15 @@ properties of the artefacts that downstream code binds to.
 > multiple snapshot types share the package.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §6.1; [R-DG-020][r-dg-020], [R-DG-038][r-dg-038]
 - **Rationale (A1):** Method syntax on the Snapshot type allows callers to write `snap.Apply(d)` rather than `pkg.Apply<T>(snap, d)`, which improves readability at call sites that already hold a `snap` variable.
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-014"></a>`[R-DG-014][r-dg-014]` — EntityID method wrapper
+#### <a id="r-dg-014"></a>R-DG-014 — EntityID method wrapper
 
 > *The Code Emitter SHALL emit a `(k K) EntityID() runtime.EntityID`
 > method on the entity-key type `K` if and only if the entity-key
@@ -820,15 +820,15 @@ properties of the artefacts that downstream code binds to.
 > which key type names have already received a wrapper.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-034][r-dg-034]; observed implementation (`EmitEntityIDMethod`, `seenKeyTypes`)
 - **Rationale (A1):** Go does not permit methods on unnamed types; emitting an `EntityID` method on a Snapshot with an unnamed key type produces a compile error. Deduplication is required because multiple snapshot types may share a single key type (e.g. all event types in a domain package keyed by the same identifier type).
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-015"></a>`[R-DG-015][r-dg-015]` — Delta struct shape
+#### <a id="r-dg-015"></a>R-DG-015 — Delta struct shape
 
 > *For each Snapshot type `T`, the Code Emitter SHALL produce a
 > companion struct type named `TDelta`. The `TDelta` struct SHALL
@@ -837,15 +837,15 @@ properties of the artefacts that downstream code binds to.
 > payload fields appear in `T`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-002][n-dg-002]` Cross-Layer Schema Harmonisation
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** Upstream spec §5; observed implementation (`fieldDeclsRange`)
 - **Rationale (A1):** Downstream consumers — sibling generators, persisted columnar layouts, analytics tooling — depend on a stable field ordering that reflects the source struct; an unspecified ordering would make the generated type non-deterministic across runs and break structural alignment.
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-016"></a>`[R-DG-016][r-dg-016]` — Per-payload Delta field representation
+#### <a id="r-dg-016"></a>R-DG-016 — Per-payload Delta field representation
 
 > *The Code Emitter SHALL determine the name(s) and type(s) of each
 > payload field's representation in `TDelta` according to Table 1.
@@ -876,15 +876,15 @@ appending `SliceDelta` or `MapDelta` to the payload field name `<F>`
 respectively.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-002][n-dg-002]` Cross-Layer Schema Harmonisation; `[N-DG-003][n-dg-003]` System Traceability; `[N-DG-005][n-dg-005]` Operational Performance
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation; [N-DG-003][n-dg-003] System Traceability; [N-DG-005][n-dg-005] Operational Performance
 - **Source (A5):** Upstream spec §5; [R-DG-029][r-dg-029], [R-DG-030][r-dg-030], [R-DG-032][r-dg-032], [R-DG-028][r-dg-028], [R-DG-026][r-dg-026], [R-DG-050][r-dg-050]; observed implementation (emission table); Design note §8.9 (rationale for omit/retired suppression)
 - **Rationale (A1):** The field representation is the core output contract for downstream consumers; any deviation from Table 1 is a breaking change for code that reads or writes the generated Delta type. Suppressing `delta.omit` and `delta.retired` fields from `TDelta` preserves the additive-only schema discipline: producers can no longer write retired values via the generated surface, while `Apply` carries prior values forward ([R-DG-050][r-dg-050]), keeping historical snapshots intact.
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-050"></a>`[R-DG-050][r-dg-050]` — Suppressed-field Apply carry-through
+#### <a id="r-dg-050"></a>R-DG-050 — Suppressed-field Apply carry-through
 
 > *For every payload field tagged `delta.omit`, `delta.retired`, or
 > `entity.key` — i.e. every field with no `TDelta` representation per
@@ -895,15 +895,15 @@ respectively.*
 > intent and the optional `since` modifier ([R-DG-051][r-dg-051]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-003][n-dg-003]` System Traceability; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-016][r-dg-016], [R-DG-023][r-dg-023]; analysis §7.6; observed implementation (`fieldView.Suppressed`, `applyField` template); Design note §8.9
 - **Rationale (A1):** Without an explicit carry-through rule, a conforming implementation could leave a suppressed field at its zero value in the Apply result, silently corrupting any Snapshot that carried a non-zero retired-field value. The carry-through is the mechanism that makes retirement non-destructive: prior values survive across every Apply regardless of whether the retired field is populated in new deltas.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-019"></a>`[R-DG-019][r-dg-019]` — Emission modes
+#### <a id="r-dg-019"></a>R-DG-019 — Emission modes
 
 > *The Code Emitter SHALL support two emission modes: bundled mode,
 > in which all Snapshot targets are emitted into a single named
@@ -911,15 +911,15 @@ respectively.*
 > emitted into a separate file whose path is derived per [R-DG-020][r-dg-020].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation
 - **Rationale (A1):** Different projects have different preferences for whether generated code is consolidated (easier to manage) or per-type (easier to diff and review); both modes are needed for broad adoption.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-020"></a>`[R-DG-020][r-dg-020]` — Multi-file output path derivation
+#### <a id="r-dg-020"></a>R-DG-020 — Multi-file output path derivation
 
 > *In multi-file mode, the output file name for a Snapshot type SHALL
 > be derived from the Snapshot struct name by converting the name to
@@ -930,31 +930,31 @@ respectively.*
 > `HTTPHandler` → `http_handler_delta.go`).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation (`deriveOutPath`)
 - **Rationale (A1):** Consistent, predictable output file names allow `//go:generate` directives and CI scripts to refer to generated files without coupling to the exact struct name casing.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-021"></a>`[R-DG-021][r-dg-021]` — Well-formed compilable output
+#### <a id="r-dg-021"></a>R-DG-021 — Well-formed compilable output
 
 > *The source produced by the Code Emitter SHALL be syntactically
 > valid Go that compiles without errors in the target package,
 > including correct resolution of all imported package identifiers.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`executeEmit`)
 - **Rationale (A1):** Generated code that does not compile is indistinguishable from a generator bug; the Output Contract requires that the generated artefact is immediately usable after generation.
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 - **Additional comments (A37):** Go does not permit duplicate top-level type declarations within the same package; this compilability constraint subsumes the single-emission obligation for shared nested companion types (each companion Delta type may appear at most once in the generated output, otherwise [R-DG-021][r-dg-021] is violated). The current implementation's convention of emitting nested companion types in dependency order before their first use is described in §8.
 
-#### <a id="r-dg-022"></a>`[R-DG-022][r-dg-022]` — Byte-identical regeneration
+#### <a id="r-dg-022"></a>R-DG-022 — Byte-identical regeneration
 
 > *When the Code Emitter is invoked on the same source packages with
 > the same target struct names, flags, and `delta-gen` version, the
@@ -964,11 +964,11 @@ respectively.*
 > source packages and flags.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-003][n-dg-003]` System Traceability
+- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** Upstream spec §8.4; [R-DG-024][r-dg-024]; observed implementation
 - **Rationale (A1):** Byte-identical regeneration is required for generated source to be manageable under version control and verifiable in CI; a non-deterministic generator forces re-committing generated files on every run, obscuring genuine changes.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
@@ -987,14 +987,14 @@ finite testing alone, hence `A2 = Analysis` for all invariants. The
 conformance corpus under `internal/deltagen/testdata/corpus/` provides
 property-based test coverage in support of this analysis.
 
-Behavioural invariants are allocated jointly to `[S-DG-02][s-dg-02]` Code Emitter
-(which generates the law-bearing code) and `[S-DG-03][s-dg-03]` Runtime Library
+Behavioural invariants are allocated jointly to [S-DG-02][s-dg-02] Code Emitter
+(which generates the law-bearing code) and [S-DG-03][s-dg-03] Runtime Library
 (which enforces chain-lifecycle preconditions that the generated code
 defers to), unless otherwise noted.
 
 #### 5.3.1 Algebraic Laws
 
-#### <a id="r-dg-023"></a>`[R-DG-023][r-dg-023]` — Apply-Diff round-trip
+#### <a id="r-dg-023"></a>R-DG-023 — Apply-Diff round-trip
 
 > *For every pair of Snapshot values `a` and `b` on the same chain
 > such that the chain-integrity preconditions of [R-DG-029][r-dg-029] hold, the
@@ -1002,15 +1002,15 @@ defers to), unless otherwise noted.
 > `Apply(a, Diff(a, b)) == b` in the payload component.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.1; [R-DG-050][r-dg-050] (suppressed-field carry-through)
 - **Rationale (A1):** Round-trip is the central law justifying that `Diff` is a faithful encoding of the change from `a` to `b`; without it, downstream coalescing, replay, and audit reconstruction lose ground truth. The law jointly constrains `Diff` (must not drop or fabricate field changes) and `Apply` (must not touch fields the delta did not address). For suppressed fields (`delta.omit`, `delta.retired`, `entity.key`) this obligation is satisfied by [R-DG-050][r-dg-050]: `Apply` copies the source field value unchanged so the round-trip identity holds across all payload fields.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-024"></a>`[R-DG-024][r-dg-024]` — Identity-diff minimality
+#### <a id="r-dg-024"></a>R-DG-024 — Identity-diff minimality
 
 > *For any two Snapshot values `a` and `aprime` whose payload fields
 > are pairwise equal and whose Headers satisfy the preconditions of
@@ -1019,15 +1019,15 @@ defers to), unless otherwise noted.
 > `Apply(a, Diff(a, aprime))` SHALL equal `aprime`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety; `[N-DG-005][n-dg-005]` Operational Performance
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety; [N-DG-005][n-dg-005] Operational Performance
 - **Source (A5):** Upstream spec §8.2
 - **Rationale (A1):** A `Diff` that emits spurious field updates for equal payloads wastes wire bandwidth, triggers needless downstream processing, and violates the minimality invariant on which delta compaction (Coalesce) relies.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-025"></a>`[R-DG-025][r-dg-025]` — Coalesce-as-fold and partition-independence
+#### <a id="r-dg-025"></a>R-DG-025 — Coalesce-as-fold and partition-independence
 
 > *`Coalesce(s, [d_1, …, d_n])` SHALL produce a Snapshot equal to
 > the result of sequentially applying `d_1, …, d_n` to `s` via
@@ -1037,15 +1037,15 @@ defers to), unless otherwise noted.
 > equal `Coalesce(s, [d_1, …, d_n])`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.3; [R-DG-012][r-dg-012], [R-DG-013][r-dg-013]
 - **Rationale (A1):** Fold-equivalence means `Coalesce` can replace a sequence of `Apply` calls without referencing intermediate snapshots. Partition-independence (a corollary of fold-equivalence) means a backlog consumer can chunk the delta list at any boundary and resume from the intermediate result, enabling incremental catch-up without centralised coordination.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-026"></a>`[R-DG-026][r-dg-026]` — Clearable truth-table
+#### <a id="r-dg-026"></a>R-DG-026 — Clearable truth-table
 
 > *For a payload field `F` governed by `delta.nested` and
 > `delta.clearable`, `Diff` SHALL classify the `(a.F, b.F)` pair and
@@ -1066,15 +1066,15 @@ defers to), unless otherwise noted.
 struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §5.4
 - **Rationale (A1):** The clearable semantics provide an explicit retract mechanism that nil-pointer presence cannot express for composite fields; the five-row truth-table defines the complete semantics that both `Diff` and `Apply` must honour consistently.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-027"></a>`[R-DG-027][r-dg-027]` — nil equivalent to empty
+#### <a id="r-dg-027"></a>R-DG-027 — nil equivalent to empty
 
 > *For a `delta.nested` map or slice payload field `F`, `Diff` SHALL
 > treat a `nil` value as semantically equal to an empty collection.
@@ -1083,15 +1083,15 @@ struct fields, `nil` for map and slice fields).*
 > one empty.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-007][r-dg-007], [R-DG-006][r-dg-006], [R-DG-016][r-dg-016], [R-DG-028][r-dg-028]
 - **Rationale (A1):** Go's zero value for a slice or map is `nil`, but an initialised empty slice or map is semantically equivalent; treating them as different would produce spurious `Added`/`Removed` payload for initialisation artefacts.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
-#### <a id="r-dg-028"></a>`[R-DG-028][r-dg-028]` — Set-membership semantics for nested slices
+#### <a id="r-dg-028"></a>R-DG-028 — Set-membership semantics for nested slices
 
 > *For a `delta.nested []T` payload field `F`,
 > `Apply(a, d).F` SHALL represent the same set of distinct elements
@@ -1103,11 +1103,11 @@ struct fields, `nil` for map and slice fields).*
 > specified.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §5.3; [R-DG-006][r-dg-006], [R-DG-016][r-dg-016]
 - **Rationale (A1):** Slice fields used to model membership sets (e.g. group membership lists) cannot guarantee order across producers; the set-membership invariant ensures correct convergence regardless of the order in which additions and removals arrive.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
@@ -1115,7 +1115,7 @@ struct fields, `nil` for map and slice fields).*
 
 #### 5.3.2 Chain-Lifecycle Obligations
 
-#### <a id="r-dg-029"></a>`[R-DG-029][r-dg-029]` — Apply chain-integrity enforcement
+#### <a id="r-dg-029"></a>R-DG-029 — Apply chain-integrity enforcement
 
 > *`Apply(s, d)` SHALL return a non-nil error and leave state
 > unchanged when any of the following preconditions is violated:
@@ -1125,15 +1125,15 @@ struct fields, `nil` for map and slice fields).*
 > before `s.Header.EffectiveAt`; `s.Header.Closed` is non-nil.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §6.1; [R-DG-030][r-dg-030], [R-DG-031][r-dg-031], [R-DG-036][r-dg-036], [R-DG-037][r-dg-037], [R-DG-038][r-dg-038]
 - **Rationale (A1):** Each precondition guards a distinct chain-safety invariant: EntityID equality prevents cross-entity corruption, ChainID equality prevents cross-chain application, Sequence strict-monotonicity prevents duplicate or backwards application, EffectiveAt non-decrease enforces domain-time ordering, and Closed rejection prevents extension of a terminated chain.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-030"></a>`[R-DG-030][r-dg-030]` — Diff chain-integrity enforcement
+#### <a id="r-dg-030"></a>R-DG-030 — Diff chain-integrity enforcement
 
 > *`Diff(a, b)` SHALL return a non-nil error and leave state
 > unchanged when any of the following preconditions is violated:
@@ -1144,15 +1144,15 @@ struct fields, `nil` for map and slice fields).*
 > support the identity-diff case `Diff(a, a)`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §6.2; [R-DG-029][r-dg-029], [R-DG-031][r-dg-031]
 - **Rationale (A1):** Computing a diff between snapshots on different chains or with non-monotonic Sequence would produce a semantically meaningless delta whose `Apply` would violate the round-trip invariant ([R-DG-023][r-dg-023]).
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-031"></a>`[R-DG-031][r-dg-031]` — Zero-EntityID rejection
+#### <a id="r-dg-031"></a>R-DG-031 — Zero-EntityID rejection
 
 > *`Apply` and `Diff` SHALL return a non-nil error when either input
 > Header carries a zero-valued `EntityID` (all bytes zero). A zero
@@ -1160,15 +1160,15 @@ struct fields, `nil` for map and slice fields).*
 > a valid runtime value.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-034][r-dg-034], [R-DG-035][r-dg-035]; [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** A zero `EntityID` arises when a caller populates the `Header` without hashing the entity key; silently applying a delta against a zero-identity snapshot would corrupt EntityID-keyed routing and subscription state throughout the system.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-032"></a>`[R-DG-032][r-dg-032]` — Provenance append-only accumulation
+#### <a id="r-dg-032"></a>R-DG-032 — Provenance append-only accumulation
 
 > *The result of `Apply(s, d)` SHALL carry `Provenance` equal to the
 > concatenation of `s.Header.Provenance` followed by
@@ -1176,11 +1176,11 @@ struct fields, `nil` for map and slice fields).*
 > replace the `Provenance` sequence accumulated in any Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-003][n-dg-003]` System Traceability; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §3.2.1; [R-DG-016][r-dg-016]
 - **Rationale (A1):** `Provenance` is the audit trail of lineage entries for a Snapshot; append-only accumulation ensures that any past contributor to a Snapshot's state can be identified from the current Snapshot alone, without replaying the full delta chain.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
@@ -1188,7 +1188,7 @@ struct fields, `nil` for map and slice fields).*
 
 #### 5.3.3 Determinism, Stability, and Purity
 
-#### <a id="r-dg-033"></a>`[R-DG-033][r-dg-033]` — Operational purity
+#### <a id="r-dg-033"></a>R-DG-033 — Operational purity
 
 > *`Apply`, `Diff`, and `Coalesce` SHALL be pure functions of their
 > arguments: the same inputs SHALL always produce the same outputs,
@@ -1197,15 +1197,15 @@ struct fields, `nil` for map and slice fields).*
 > arguments.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.4; [chain-lifecycle spec R-CL-014](chain-lifecycle-spec.md#r-cl-014)
 - **Rationale (A1):** Purity is a prerequisite for idempotent re-delivery, deterministic catch-up, and safe concurrent use; any side effect would make the operations non-replayable and would couple generated code to environmental state.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-034"></a>`[R-DG-034][r-dg-034]` — EntityID content-determination
+#### <a id="r-dg-034"></a>R-DG-034 — EntityID content-determination
 
 > *`EntityID(s)` SHALL compute a deterministic value from the bytes
 > of the entity-key field alone. When the entity-key field has a
@@ -1214,15 +1214,15 @@ struct fields, `nil` for map and slice fields).*
 > declaration order in the source struct.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-003][n-dg-003]` System Traceability; `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-035][r-dg-035]
 - **Rationale (A1):** `EntityID` is the global routing key for all delta-based operations; content-determination from a stable field order ensures that two independent producers for the same real-world entity compute the same `EntityID` without coordination.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
-#### <a id="r-dg-035"></a>`[R-DG-035][r-dg-035]` — EntityID type and zero sentinel
+#### <a id="r-dg-035"></a>R-DG-035 — EntityID type and zero sentinel
 
 > *`EntityID` values SHALL be represented as a 32-byte fixed-width
 > array (`[32]byte`). The all-zero value SHALL be reserved as the
@@ -1230,11 +1230,11 @@ struct fields, `nil` for map and slice fields).*
 > never produce a zero `EntityID`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-004][n-dg-004]` Chain Safety
+- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-034][r-dg-034]; observed implementation (`runtime.EntityID`)
 - **Rationale (A1):** A fixed-width representation with a defined sentinel allows consumers to test validity with a single equality check without importing type-specific logic; the constraint that valid hashes are non-zero is enforced jointly by [R-DG-031][r-dg-031].
 - **V&V method (A2):** Compile check
-- **Allocation (A8):** `[S-DG-03][s-dg-03]` Runtime Library
+- **Allocation (A8):** [S-DG-03][s-dg-03] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -1242,9 +1242,9 @@ struct fields, `nil` for map and slice fields).*
 
 ### 5.4 Generator CLI Contract
 
-The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
+The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 
-#### <a id="r-dg-036"></a>`[R-DG-036][r-dg-036]` — Target struct name supply
+#### <a id="r-dg-036"></a>R-DG-036 — Target struct name supply
 
 > *The Generator CLI SHALL accept the names of Snapshot struct types
 > to process as positional command-line arguments, via the
@@ -1254,15 +1254,15 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > struct names are provided.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-020][r-dg-020]; observed implementation (`RunE`)
 - **Rationale (A1):** Supporting both positional arguments and the `--type` flag allows `//go:generate` directives to use whichever form is most readable; requiring a non-empty union prevents silent no-op invocations.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
-#### <a id="r-dg-037"></a>`[R-DG-037][r-dg-037]` — Source package selection
+#### <a id="r-dg-037"></a>R-DG-037 — Source package selection
 
 > *The Generator CLI SHALL accept source package specifications via
 > the `--pkg` / `-p` flag (repeatable, defaulting to `.`). Each
@@ -1271,15 +1271,15 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > types.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation (`inputPkgs`)
 - **Rationale (A1):** Supporting both filesystem paths and import paths allows the generator to be used from both `//go:generate` directives (typically relative paths) and standalone tooling (typically import paths).
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-038"></a>`[R-DG-038][r-dg-038]` — Output mode selection
+#### <a id="r-dg-038"></a>R-DG-038 — Output mode selection
 
 > *The Generator CLI SHALL accept `--out` / `-o` to specify a single
 > output file path, activating bundled mode. When `--out` is not
@@ -1287,14 +1287,14 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > [R-DG-019][r-dg-019], writing each target to the path derived by [R-DG-020][r-dg-020].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Rationale (A1):** The output mode flag is the only user-visible control over where generated source lands; an absent flag that silently picks a mode could overwrite unexpected paths, so the default (multi-file) is stated explicitly.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-039"></a>`[R-DG-039][r-dg-039]` — Cross-package mode flags
+#### <a id="r-dg-039"></a>R-DG-039 — Cross-package mode flags
 
 > *The Generator CLI SHALL accept `--pkg-name` / `-n` to override the
 > output package name. When the supplied name differs from the source
@@ -1304,15 +1304,15 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > for the generated import block.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring; `[N-DG-002][n-dg-002]` Cross-Layer Schema Harmonisation
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** [R-DG-019][r-dg-019] (cross-package); observed implementation (`parsePkgAliases`)
 - **Rationale (A1):** Cross-package generation is required when the Delta type must live in a different package from the Snapshot (e.g. a public API package); import aliases resolve ambiguous package names in the generated import block.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-040"></a>`[R-DG-040][r-dg-040]` — Key-field override flag
+#### <a id="r-dg-040"></a>R-DG-040 — Key-field override flag
 
 > *The Generator CLI SHALL accept `--key-field` to override the
 > entity-key field for a named Snapshot type, in `FieldName` or
@@ -1321,15 +1321,15 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`parseKeyFields`)
 - **Rationale (A1):** Some Snapshots have their entity key embedded in a struct field that cannot be annotated with `entity.key` (e.g. a shared embedded type); the override provides an escape hatch that keeps the Snapshot struct free of generator-specific tags.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-041"></a>`[R-DG-041][r-dg-041]` — Error reporting and exit status
+#### <a id="r-dg-041"></a>R-DG-041 — Error reporting and exit status
 
 > *On any failure to parse, validate, or emit a Snapshot target, the
 > Generator CLI SHALL exit with a non-zero status code. In multi-file
@@ -1337,11 +1337,11 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 > name. All diagnostic output SHALL be written to `stderr`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`RunE`, `main`)
 - **Rationale (A1):** Build systems and `//go:generate` scripts detect generator failures only through exit status; writing diagnostics to `stderr` keeps the generated source channel clean for use in pipes.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -1349,25 +1349,25 @@ The requirements in this section bind the Generator CLI (`[S-DG-04][s-dg-04]`).
 
 Standalone mode decouples the generated code from `go.resystems.io/eddt/runtime`,
 enabling adoption in codebases that do not depend on the full EDDT ecosystem.
-The requirements below bind `[S-DG-04][s-dg-04]` Generator CLI and `[S-DG-02][s-dg-02]` Code Emitter
+The requirements below bind [S-DG-04][s-dg-04] Generator CLI and [S-DG-02][s-dg-02] Code Emitter
 jointly unless otherwise noted.
 
-#### <a id="r-dg-042"></a>`[R-DG-042][r-dg-042]` — Standalone mode flag
+#### <a id="r-dg-042"></a>R-DG-042 — Standalone mode flag
 
 > *The Generator CLI SHALL accept a `--standalone` boolean flag. When
 > `--standalone` is set the generator operates in standalone mode as
 > defined by [R-DG-043][r-dg-043] through [R-DG-049][r-dg-049].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.Standalone`; `--standalone` flag)
 - **Rationale (A1):** Standalone mode lowers the adoption barrier for teams that want delta/diff semantics without pulling in the full eddt module graph.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-043"></a>`[R-DG-043][r-dg-043]` — Standalone mode: no runtime.Header requirement
+#### <a id="r-dg-043"></a>R-DG-043 — Standalone mode: no runtime.Header requirement
 
 > *In standalone mode, each target Snapshot struct SHALL NOT embed
 > `runtime.Header`. A Snapshot struct that embeds `runtime.Header` in
@@ -1376,30 +1376,30 @@ jointly unless otherwise noted.
 > accepted without error.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`parseSnapshot`, `ParseOpts.Standalone`)
 - **Rationale (A1):** Standalone mode targets Snapshot types that have no chain-lifecycle context; requiring `runtime.Header` would force a dependency on the runtime package, negating the purpose of the mode.
 - **V&V method (A2):** Test
-- **Allocation (A8):** `[S-DG-01][s-dg-01]` Snapshot Parser
+- **Allocation (A8):** [S-DG-01][s-dg-01] Snapshot Parser
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-044"></a>`[R-DG-044][r-dg-044]` — Standalone mode: no runtime import
+#### <a id="r-dg-044"></a>R-DG-044 — Standalone mode: no runtime import
 
 > *In standalone mode, the generated `*_delta.go` file SHALL NOT
 > contain any import of `go.resystems.io/eddt/runtime` or reference
 > any symbol from that package.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`buildImports`, `standalone bool` gate)
 - **Rationale (A1):** The primary motivation for standalone mode is to avoid the runtime dependency; any leakage of runtime symbols would defeat this goal.
 - **V&V method (A2):** Test (grep check in `TestStandalone_NoRuntimeImport`)
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P2
 - **Criticality (A33):** High
 
-#### <a id="r-dg-045"></a>`[R-DG-045][r-dg-045]` — Standalone mode: pure function signatures
+#### <a id="r-dg-045"></a>R-DG-045 — Standalone mode: pure function signatures
 
 > *In standalone mode, `Apply<T>`, `Diff<T>`, and `Coalesce<T>` ([R-DG-012][r-dg-012])
 > SHALL be pure functions with no error return:*
@@ -1414,15 +1414,15 @@ jointly unless otherwise noted.
 > delegate to the corresponding pure function and also carry no error return.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`applyFuncStandalone` template)
 - **Rationale (A1):** Without a `runtime.Header` there is no chain-integrity context to validate, so there is no error source. Returning a bare value simplifies call-sites and makes the pure, stateless nature explicit.
 - **V&V method (A2):** Test (`TestStandalone_ApplyDiffPureSignatures`)
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-046"></a>`[R-DG-046][r-dg-046]` — Standalone mode: companion local-types file
+#### <a id="r-dg-046"></a>R-DG-046 — Standalone mode: companion local-types file
 
 > *In standalone mode, the Code Emitter SHALL generate a companion
 > file (named by `--standalone-types`, defaulting to `delta_types.go`)
@@ -1441,15 +1441,15 @@ jointly unless otherwise noted.
 > rather than overwriting.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`emitStandaloneTypes`, `template_standalone.go`)
 - **Rationale (A1):** The companion file provides local equivalents of the runtime types so that the `*_delta.go` file has no external dependencies. Overwrite protection prevents accidental destruction of hand-written files.
 - **V&V method (A2):** Test (`TestStandalone_CompanionFileBlake2b`)
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
-#### <a id="r-dg-047"></a>`[R-DG-047][r-dg-047]` — Standalone mode: hash algorithm selection
+#### <a id="r-dg-047"></a>R-DG-047 — Standalone mode: hash algorithm selection
 
 > *The Generator CLI SHALL accept a `--standalone-hash` flag with
 > accepted values `blake2b` (default) and `sha256`.*
@@ -1462,30 +1462,30 @@ jointly unless otherwise noted.
 >   values differ from runtime-mode values.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.StandaloneHash`; `standaloneTypesSHA256Str`)
 - **Rationale (A1):** `blake2b` preserves EntityID compatibility with the runtime, easing future migration. `sha256` is provided for adopters who require zero non-stdlib dependencies and do not need cross-mode EntityID compatibility. (The runtime's choice of Blake2b-256 is explained in §8.2.)
 - **V&V method (A2):** Test (`TestStandalone_CompanionFileSHA256`)
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter; `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter; [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P3
 - **Criticality (A33):** Low
 
-#### <a id="r-dg-048"></a>`[R-DG-048][r-dg-048]` — Standalone mode: companion file naming
+#### <a id="r-dg-048"></a>R-DG-048 — Standalone mode: companion file naming
 
 > *The Generator CLI SHALL accept a `--standalone-types` flag naming
 > the companion file (default `delta_types.go`). The name is resolved
 > relative to the directory of the generated `*_delta.go` file.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.StandaloneTypesFile`)
 - **Rationale (A1):** Users may have an existing `delta_types.go` in the target package; the flag allows them to choose a non-conflicting name.
 - **V&V method (A2):** Test (`TestStandalone_customTypesFilename`)
-- **Allocation (A8):** `[S-DG-04][s-dg-04]` Generator CLI
+- **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
 - **Priority (A32):** P3
 - **Criticality (A33):** Low
 
-#### <a id="r-dg-049"></a>`[R-DG-049][r-dg-049]` — Standalone mode: EntityID function naming
+#### <a id="r-dg-049"></a>R-DG-049 — Standalone mode: EntityID function naming
 
 > *In standalone mode, the package-level EntityID function SHALL follow
 > the same struct-prefixed naming convention as [R-DG-012][r-dg-012], yielding
@@ -1496,11 +1496,11 @@ jointly unless otherwise noted.
 > sharing the same identifier.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** `[N-DG-001][n-dg-001]` Declarative Authoring
+- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`EntityIDFuncName = prefixEntityID + ps.Name`; `template_standalone.go`)
 - **Rationale (A1):** Without the struct prefix, `func EntityID(k K) EntityID` would conflict with `type EntityID [32]byte` in the same package, producing a compile error. The struct prefix, already mandated by [R-DG-012][r-dg-012], cleanly resolves the ambiguity.
 - **V&V method (A2):** Compile check; Test (`TestStandalone_EntityIDLocalType`)
-- **Allocation (A8):** `[S-DG-02][s-dg-02]` Code Emitter
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
 - **Priority (A32):** P2
 - **Criticality (A33):** High
 
@@ -1861,8 +1861,8 @@ should attempt.
 [n-eddt-007]: eddt-needs.md#n-eddt-007
 [n-eddt-008]: eddt-needs.md#n-eddt-008
 [n-eddt-010]: eddt-needs.md#n-eddt-010
-[r-cl-001]: delta-gen-spec.md#
-[r-cl-014]: delta-gen-spec.md#
+[r-cl-001]: chain-lifecycle-spec.md#r-cl-001
+[r-cl-014]: chain-lifecycle-spec.md#r-cl-014
 [r-dg-001]: #r-dg-001
 [r-dg-002]: #r-dg-002
 [r-dg-003]: #r-dg-003
