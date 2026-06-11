@@ -13,8 +13,10 @@ error):
   2. Bolded list entry    `* **X-nn: Title**` / `- **X-nn [Title]: ...**`
                           The script auto-inserts the anchor after the
                           bullet if absent.
-  3. Section header       `#### X-nn: Title`
-                          Slug-based; no anchor is inserted.
+  3. Section header       `#### X-nn: Title` / `#### X-nn — Title`
+                          Anchor-targeted; `<a id>` auto-inserted.
+                          Heading wins over same-file table (tier 4)
+                          for the same identifier.
   4. Table column         `| X-nn | ... |`     (first column of a row)
                           The script auto-inserts the anchor at the
                           start of the cell if absent.
@@ -84,13 +86,21 @@ TIER2_RE = re.compile(
     rf"({ID})\b"
 )
 
-# Tier 3 — section header.
+# Tier 3 — section header (colon or em-dash separator).
+# Matches:
+#   #### ID: Title
+#   #### ID — Title
+#   #### <a id="x-nn"></a>ID — Title    (anchor already present)
+#   #### <a id="x-nn"></a>`ID` — Title  (backtick-wrapped id, not-yet-cleaned)
+# Em-dash (U+2014) with or without surrounding spaces is accepted.
 TIER3_RE = re.compile(
     r"^#{1,6}\s+"
-    r"(?:\[)?"
+    r"(?:<a\s+id=\"[a-z0-9-]+\"></a>\s*)?"   # optional existing anchor
+    r"(?:`)?(?:\[)?"                           # optional backtick or [
     rf"({ID})"
-    r"(?:\])?(?:\[[a-z0-9-]+\])?"
-    r":\s+(.+)$"
+    r"(?:\])?(?:\[[a-z0-9-]+\])?(?:`)?"       # optional ], linkref, backtick
+    r"(?:\s*:\s+|\s*—\s*)"               # colon separator OR em-dash
+    r"(.+)$"                                   # title (not captured for logic, kept for completeness)
 )
 
 # Tier 4 — table cell, first column.
@@ -119,6 +129,11 @@ LINKDEF_RE = re.compile(rf"^\[{ID_LOWER}\]:\s")
 # rewriting an identifier inside the document title would inject markdown
 # link syntax into HTML <title> and PDF metadata extraction.
 H1_RE = re.compile(r"^#\s+\S")
+
+# Inline-code span. Matches double-backtick or single-backtick spans.
+# Used to split a line into code/non-code segments so identifiers inside
+# backtick spans are never rewritten or collected as references.
+INLINE_CODE_RE = re.compile(r"(``[^\n]*?``|`[^`\n]*?`)")
 
 
 # ---------- Generated-block markers -----------------------------------------
@@ -236,13 +251,13 @@ def find_definitions(text: str) -> tuple[dict[str, Definition], list[tuple[str, 
             found.setdefault(id_str, []).append(d)
             continue
 
-        # Tier 3 — section header.
+        # Tier 3 — section header (colon or em-dash).
+        # Anchor-targeted: the link-def points at the auto-inserted
+        # `<a id="x-nn"></a>` anchor, not a python-markdown slug.
         m = TIER3_RE.match(line)
         if m:
             id_str = m.group(1)
-            title = m.group(2)
-            slug = python_markdown_slug(f"{id_str}: {title}")
-            d = Definition(id_str, 3, slug, line_no, needs_anchor=False)
+            d = Definition(id_str, 3, lower_anchor(id_str), line_no, needs_anchor=True)
             found.setdefault(id_str, []).append(d)
             continue
 
@@ -257,8 +272,7 @@ def find_definitions(text: str) -> tuple[dict[str, Definition], list[tuple[str, 
         # Tier 5 — bare anchor not adjacent to a higher tier.
         for am in ANCHOR_RE.finditer(line):
             anchor = am.group(1)
-            id_upper = re.sub(r"-([a-z])", lambda x: f"-{x.group(1).upper()}",
-                              anchor[0].upper() + anchor[1:])
+            id_upper = anchor.upper()
             # Validate that the anchor's slug round-trips an ID exactly.
             if not re.fullmatch(ID, id_upper):
                 continue
@@ -283,6 +297,15 @@ def find_definitions(text: str) -> tuple[dict[str, Definition], list[tuple[str, 
     chosen: dict[str, Definition] = {}
     for id_str, defs in found.items():
         if len(defs) > 1:
+            # Heading wins: if exactly one tier-3 definition and all
+            # others are tier-4 (table first-column), the heading is the
+            # canonical definition and the table occurrences are treated
+            # as references — no duplicate error.
+            tier3 = [d for d in defs if d.tier == 3]
+            tier4 = [d for d in defs if d.tier == 4]
+            if len(tier3) == 1 and len(tier3) + len(tier4) == len(defs):
+                chosen[id_str] = tier3[0]
+                continue
             duplicates.append((id_str, defs))
             continue
         chosen[id_str] = defs[0]
@@ -336,6 +359,11 @@ INSERT_TIER2_RE = re.compile(
     r"(?P<rest>\*\*.+)$"
 )
 
+INSERT_TIER3_RE = re.compile(
+    r"^(?P<lead>#{1,6}\s+)"
+    r"(?P<rest>.+)$"
+)
+
 INSERT_TIER4_RE = re.compile(
     r"^(?P<lead>\s*\|\s*)"
     r"(?P<rest>.+)$"
@@ -358,6 +386,11 @@ def insert_anchor_in_line(line: str, tier: int, id_str: str) -> str:
         return m.group("lead") + anchor + m.group("rest")
     if tier == 2:
         m = INSERT_TIER2_RE.match(line)
+        if not m:
+            return line
+        return m.group("lead") + anchor + m.group("rest")
+    if tier == 3:
+        m = INSERT_TIER3_RE.match(line)
         if not m:
             return line
         return m.group("lead") + anchor + m.group("rest")
@@ -425,13 +458,21 @@ def linkify_text(text: str, definitions: dict[str, Definition]) -> str:
                 return id_str
             return f"[{id_str}][{lower_anchor(id_str)}]"
 
-        # Use a regex that does not match inside `[X][y]` already-
-        # linkified form, nor inside an anchor's id="…" attribute.
-        line = re.sub(
-            rf'(?<![\[\w])({ID})(?![\]\w])(?![^<>]*"></a>)',
-            replace,
-            line,
-        )
+        # Split on inline-code spans; only rewrite the non-code segments.
+        # Odd-indexed segments (captured groups) are backtick spans and
+        # are preserved verbatim; even-indexed segments are plain text.
+        segments = INLINE_CODE_RE.split(line)
+        rewritten = []
+        for seg_i, seg in enumerate(segments):
+            if seg_i % 2 == 1:  # captured backtick span — preserve verbatim
+                rewritten.append(seg)
+            else:
+                rewritten.append(re.sub(
+                    rf'(?<![\[\w])({ID})(?![\]\w])(?![^<>]*"></a>)',
+                    replace,
+                    seg,
+                ))
+        line = "".join(rewritten)
         out.append(line)
     return "".join(out)
 
@@ -476,8 +517,11 @@ def collect_used_identifiers(text: str) -> set[str]:
             continue
         if LINKDEF_RE.match(line):
             continue
-        for m in ID_RE.finditer(line):
-            used.add(m.group(1))
+        # Skip identifiers inside inline-code spans; only collect from
+        # plain-text segments (even-indexed after splitting on backticks).
+        for seg in INLINE_CODE_RE.split(line)[::2]:
+            for m in ID_RE.finditer(seg):
+                used.add(m.group(1))
     return used
 
 
