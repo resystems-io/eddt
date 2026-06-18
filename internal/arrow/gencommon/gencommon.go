@@ -360,17 +360,21 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 							continue
 						}
 
-						fieldName := field.Names[0].Name
-						if fieldName == "_" {
-							continue // blank-identifier fields are padding; skip
-						}
-						fieldInfo, err := fieldInfoFromExpr(pkg, allPkgs, fieldName, field.Type, &queue, processed)
-						if err != nil {
-							warnf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
-							continue
-						}
+						// A single declaration may bind several names to one type
+						// (e.g. `Start, End uint64`); emit a field for each name.
+						for _, nm := range field.Names {
+							fieldName := nm.Name
+							if fieldName == "_" {
+								continue // blank-identifier fields are padding; skip
+							}
+							fieldInfo, err := fieldInfoFromExpr(pkg, allPkgs, fieldName, field.Type, &queue, processed)
+							if err != nil {
+								warnf("Warning: Skipping field %s in %s: %v\n", fieldName, ts.Name.Name, err)
+								continue
+							}
 
-						info.Fields = append(info.Fields, fieldInfo)
+							info.Fields = append(info.Fields, fieldInfo)
+						}
 					}
 
 					results = append(results, info)
@@ -469,18 +473,22 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 			continue
 		}
 
-		embFieldName := embField.Names[0].Name
-		if embFieldName == "_" {
-			continue
-		}
+		// A single declaration may bind several names to one type
+		// (e.g. `Start, End uint64`); promote each name.
+		for _, nm := range embField.Names {
+			embFieldName := nm.Name
+			if embFieldName == "_" {
+				continue
+			}
 
-		fieldInfo, err := fieldInfoFromExpr(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
-		if err != nil {
-			warnf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
-			continue
-		}
+			fieldInfo, err := fieldInfoFromExpr(loadedPkg, allPkgs, embFieldName, embField.Type, queue, processed)
+			if err != nil {
+				warnf("Warning: Skipping promoted field %s from %s: %v\n", embFieldName, structName, err)
+				continue
+			}
 
-		fields = append(fields, fieldInfo)
+			fields = append(fields, fieldInfo)
+		}
 	}
 
 	return fields

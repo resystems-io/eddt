@@ -23,7 +23,7 @@ type ARMeta struct {
 // It covers only the delta-gen shapes currently compatible with arrow-gen.
 type ARSnapshot struct {
 	eddt.Header
-	Key   string  `eddt:"entity.key"`
+	Key   string `eddt:"entity.key"`
 	Name  string
 	Score float64
 	Meta  ARMeta

@@ -23,13 +23,13 @@ type Inner struct{ A, B int32 }
 //   - Commute  int32        — delta.commutative; emits as if untagged (§9.5)
 type AtomicAllSnapshot struct {
 	eddt.Header
-	Key     string           `eddt:"entity.key"`
+	Key     string `eddt:"entity.key"`
 	Scalar  int32
 	Pointer *string
 	Struct  Inner
 	Slice   []byte
 	Map     map[string]int32
-	Omitted string           `eddt:"delta.omit"`
-	Retired string           `eddt:"delta.retired,since=2026-05-20"`
-	Commute int32            `eddt:"delta.commutative"`
+	Omitted string `eddt:"delta.omit"`
+	Retired string `eddt:"delta.retired,since=2026-05-20"`
+	Commute int32  `eddt:"delta.commutative"`
 }

@@ -3629,6 +3629,79 @@ type Snapshot struct {
 	runCmd(t, tmpDir, "go", "build", ".")
 }
 
+// TestGroupedFieldDeclRoundTrip guards against the gencommon regression where a
+// grouped field declaration (e.g. `Start, End uint64`) emitted only its first
+// name — silently dropping the remaining fields from the Arrow schema and the
+// Parquet output. Because both writer-gen and reader-gen resolve fields through
+// gencommon.Parse, this writer→reader round-trip covers both generators.
+//
+// The fixture exercises a grouped declaration in four positions: directly on the
+// target struct (A, B), on a nested struct used as a value field (SeqRange) and
+// inside a list (the runtime.Provenance.Gaps shape, []SeqRange), and on an
+// embedded struct (Base — the promoted-field path). Before the fix, B / End / Hi
+// round-tripped as their zero value.
+func TestGroupedFieldDeclRoundTrip(t *testing.T) {
+	goCode := `package dummy
+
+type SeqRange struct {
+	Start, End uint64
+}
+
+type Base struct {
+	Lo, Hi int32
+}
+
+type Profile struct {
+	Base
+	A, B  uint64
+	Rng   SeqRange
+	Spans []SeqRange
+}
+`
+	tmpDir := setupIntegrationTest(t, goCode, []string{"Profile"})
+
+	testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestGroupedFieldDeclRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewProfileArrowWriter(pool)
+	defer writer.Release()
+
+	row := Profile{
+		Base:  Base{Lo: -1, Hi: 7},
+		A:     11,
+		B:     22,
+		Rng:   SeqRange{Start: 2, End: 4},
+		Spans: []SeqRange{{Start: 9, End: 9}, {Start: 100, End: 200}},
+	}
+	writer.Append(&row)
+
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewProfileArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewProfileArrowReader: %v", err)
+	}
+	var got Profile
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, row) {
+		t.Errorf("grouped-field round-trip mismatch:\n got  %+v\n want %+v", got, row)
+	}
+}
+`
+	runInnerTest(t, tmpDir, testCode, "")
+}
+
 // setupIntegrationTest creates a temp directory, writes the struct definition
 // and go.mod, fetches the Arrow dependency, then runs both writer-gen and
 // reader-gen generators. Returns the temp directory.

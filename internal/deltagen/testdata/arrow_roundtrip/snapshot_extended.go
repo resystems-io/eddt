@@ -7,7 +7,7 @@ import eddt "go.resystems.io/eddt/runtime"
 // and ShapeMap (map[string]string → *map[string]string).
 type ARExtended struct {
 	eddt.Header
-	Key     string            `eddt:"entity.key"`
+	Key     string `eddt:"entity.key"`
 	Pointer *int32
 	Tags    []string
 	Attrs   map[string]string
