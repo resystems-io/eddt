@@ -1,24 +1,25 @@
 package deltagen
 
-// integration_arrow_test.go implements R-DG-019: cross-generator integration
-// round-trip — delta-gen × arrow-writer-gen × arrow-reader-gen.
+// integration_arrow_test.go implements R-DG-052: the cross-generator Arrow
+// columnar round-trip — delta-gen × arrow-writer-gen × arrow-reader-gen.
 //
-// R-DG-019 verifies the cross-subsystem contract: the type shapes delta-gen emits
-// are compatible with the arrow generators' supported field-shape vocabulary,
-// end-to-end.  All three generators are invoked programmatically via their Go
-// APIs; no CLI subprocesses.  The replace directive in the temp module's go.mod
-// ensures the local in-tree arrow-gen code is used (not a remote version).
+// R-DG-052 binds the Code Emitter to emit Snapshot and Delta types whose field
+// shapes (R-DG-003) round-trip losslessly through the Arrow columnar projection;
+// this test verifies that contract end-to-end.  All three generators are invoked
+// programmatically via their Go APIs; no CLI subprocesses.  The replace directive
+// in the temp module's go.mod ensures the local in-tree arrow-gen code is used
+// (not a remote version).
 //
 // Fixture: testdata/arrow_roundtrip/snapshot.go — defines ARSnapshot and ARMeta,
 // covering ShapeScalar and ShapeStructValue delta fields.
 //
 // Test matrix:
 //
-//	TestIntegration_ArrowRoundTrip/ScalarAndStruct    PASS  (R-DG-019)
-//	TestIntegration_ArrowRoundTrip/ShapePointer       PASS  (R-DG-019)
-//	TestIntegration_ArrowRoundTrip/ShapeSliceAtomic   PASS  (R-DG-019)
-//	TestIntegration_ArrowRoundTrip/ShapeMapAtomic     PASS  (R-DG-019)
-//	TestIntegration_ArrowRoundTrip/NestedClearable    PASS  (R-DG-016, R-DG-019)
+//	TestIntegration_ArrowRoundTrip/ScalarAndStruct    PASS  (R-DG-052)
+//	TestIntegration_ArrowRoundTrip/ShapePointer       PASS  (R-DG-052)
+//	TestIntegration_ArrowRoundTrip/ShapeSliceAtomic   PASS  (R-DG-052)
+//	TestIntegration_ArrowRoundTrip/ShapeMapAtomic     PASS  (R-DG-052)
+//	TestIntegration_ArrowRoundTrip/NestedClearable    PASS  (R-DG-016, R-DG-052)
 
 import (
 	"fmt"
@@ -152,7 +153,7 @@ func runArrowPipeline(t *testing.T, opts arrowPipelineOpts) {
 	runBuildCmd(t, tmpDir, "go", "test", "-v", "-run", opts.runPattern, ".")
 }
 
-// arrowRoundTripCheck runs the R-DG-019 ARSnapshot pipeline: delta-gen + arrow gens
+// arrowRoundTripCheck runs the R-DG-052 ARSnapshot pipeline: delta-gen + arrow gens
 // + Arrow round-trip inner test.
 func arrowRoundTripCheck(t *testing.T) {
 	t.Helper()
@@ -229,7 +230,7 @@ func TestARSnapshotDeltaRoundTrip(t *testing.T) {
 }
 `
 
-// arrowExtendedRoundTripCheck runs the R-DG-019 ARExtended pipeline: delta-gen +
+// arrowExtendedRoundTripCheck runs the R-DG-052 ARExtended pipeline: delta-gen +
 // arrow gens + Arrow round-trip + DuckDB Parquet verification.
 func arrowExtendedRoundTripCheck(t *testing.T) {
 	t.Helper()
@@ -381,7 +382,7 @@ func TestARExtendedDeltaRoundTrip(t *testing.T) {
 }
 `
 
-// arrowClearableRoundTripCheck runs the R-DG-016, R-DG-019 ARClearable pipeline: delta-gen +
+// arrowClearableRoundTripCheck runs the R-DG-016, R-DG-052 ARClearable pipeline: delta-gen +
 // arrow gens + Arrow round-trip + DuckDB Parquet verification for all three
 // Op states across struct / map / slice clearable shapes.
 func arrowClearableRoundTripCheck(t *testing.T) {
