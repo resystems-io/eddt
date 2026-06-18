@@ -20,6 +20,7 @@ package deltagen
 //	TestIntegration_ArrowRoundTrip/ShapeSliceAtomic   PASS  (R-DG-052)
 //	TestIntegration_ArrowRoundTrip/ShapeMapAtomic     PASS  (R-DG-052)
 //	TestIntegration_ArrowRoundTrip/NestedClearable    PASS  (R-DG-016, R-DG-052)
+//	TestIntegration_ArrowRoundTrip/HeaderProvenance   PASS  (R-DG-052, R-CL-004)
 
 import (
 	"fmt"
@@ -54,6 +55,10 @@ func TestIntegration_ArrowRoundTrip(t *testing.T) {
 
 	t.Run("NestedClearable", func(t *testing.T) {
 		arrowClearableRoundTripCheck(t)
+	})
+
+	t.Run("HeaderProvenance", func(t *testing.T) {
+		arrowHeaderRoundTripCheck(t)
 	})
 }
 
