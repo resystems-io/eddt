@@ -1055,6 +1055,28 @@ defers to), unless otherwise noted.
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
+#### <a id="r-dg-052"></a>R-DG-052 — Arrow columnar round-trip
+
+> *The Code Emitter SHALL emit Snapshot and Delta types — including the
+> embedded `runtime.Header` envelope and its nested `Provenance` lineage —
+> whose field shapes are confined to the admissible payload shape vocabulary
+> of [R-DG-003][r-dg-003], such that every emitted value round-trips
+> losslessly through the Arrow columnar projection produced by the sibling
+> arrow-writer-gen and arrow-reader-gen generators. For any value `v`,
+> decoding the Arrow — and Parquet — encoding of `v` SHALL reproduce every
+> field of `v`, including all `Header` fields and every `Provenance` entry
+> with its `Metadata` map and `Gaps` ranges. The Code Emitter SHALL NOT emit
+> a field whose shape the Arrow columnar projection cannot represent.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** [N-DG-005][n-dg-005] Operational Performance
+- **Source (A5):** [N-DG-005][n-dg-005] validation criterion (round-trip through Arrow's columnar layout); sibling generators arrow-writer-gen / arrow-reader-gen; [R-DG-003][r-dg-003]
+- **Rationale (A1):** [N-DG-005][n-dg-005] requires the generated types to project into Arrow's columnar layout for analytical scan and durable Parquet storage, but no derived requirement bound the Code Emitter to that property — the cross-generator round-trip was previously verified only against the need. Because arrow-writer-gen silently skips field shapes it cannot represent (a warning, not an error), an unrepresentable shape would degrade to a dropped column rather than a build failure; confining emitted shapes to the admissible vocabulary ([R-DG-003][r-dg-003]) and asserting a lossless round-trip — envelope included — is what makes the data-at-rest (Parquet) and data-in-motion (Arrow IPC) projections trustworthy. The `Header` envelope, and `Provenance` in particular (a list of structs each carrying a map and a nested list of structs), is the deepest composite the projection must carry.
+- **V&V method (A2):** Test
+- **Allocation (A8):** [S-DG-02][s-dg-02] Code Emitter
+- **Priority (A32):** P1
+- **Criticality (A33):** High
+
 #### <a id="r-dg-026"></a>R-DG-026 — Clearable truth-table
 
 > *For a payload field `F` governed by `delta.nested` and
@@ -2260,6 +2282,7 @@ forward unchanged from `a` regardless of `b`.
 [r-dg-049]: #r-dg-049
 [r-dg-050]: #r-dg-050
 [r-dg-051]: #r-dg-051
+[r-dg-052]: #r-dg-052
 [s-dg-01]: #s-dg-01
 [s-dg-02]: #s-dg-02
 [s-dg-03]: #s-dg-03
