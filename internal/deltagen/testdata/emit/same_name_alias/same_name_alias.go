@@ -23,7 +23,7 @@ type SubStruct struct {
 // this package, so its qualified form in cross-package mode is "sna.SubStruct".
 type SameNameSnapshot struct {
 	eddt.Header
-	Key    string    `eddt:"entity.key"`
+	Key    string `eddt:"entity.key"`
 	Score  int32
 	Detail SubStruct
 }
