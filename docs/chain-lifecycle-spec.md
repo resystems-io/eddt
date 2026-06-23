@@ -63,7 +63,7 @@ in [delta-gen-spec.md](delta-gen-spec.md).
   - [5.3 Runtime Contract Functions](#53-runtime-contract-functions)
   - [5.4 Algebraic Invariants](#54-algebraic-invariants)
   - [5.5 Chain Lifecycle Events](#55-chain-lifecycle-events)
-  - [5.6 Snapshot Cadence](#56-snapshot-cadence)
+  - [5.6 Snapshot Cadence and Provenance Carriage](#56-snapshot-cadence-and-provenance-carriage)
   - [5.7 Chain Ownership](#57-chain-ownership)
   - [5.8 Consumer State Machine](#58-consumer-state-machine)
 - [6. Errata Register](#6-errata-register)
@@ -77,6 +77,8 @@ in [delta-gen-spec.md](delta-gen-spec.md).
   - [8.6 Disposal](#86-disposal)
   - [8.7 Division of responsibility with delta-gen](#87-division-of-responsibility-with-delta-gen)
   - [8.8 Subject transport](#88-subject-transport)
+  - [8.9 Provenance versus quality (two axes)](#89-provenance-versus-quality-two-axes)
+  - [8.10 Provenance elision and delta self-containment](#810-provenance-elision-and-delta-self-containment)
 
 <!-- /TOC -->
 
@@ -234,7 +236,7 @@ Identifiers in this specification follow flat namespaces with the domain prefix
 - **`E-CL-NNN`** — errata (this document, §6).
 
 Identifiers do not encode hierarchy; sub-section breaks are structural.
-Cross-references within this document appear inline as e.g. R-CL-014 and
+Cross-references within this document appear inline as e.g. [R-CL-014][r-cl-014] and
 resolve via explicit `<a id>` anchors in section headers; within-file
 navigation uses the generated TOC.
 
@@ -346,7 +348,7 @@ reconstructed state can be explained, audited, and traced back to its origins.*
   as an immutable audit trail; preserving every contributor's entry keeps the
   full derivation history intact. Provenance records *where data came from*, not
   *how complete it is* — data completeness is a distinct concern, tracked by
-  N-CL-002 and disclosed by N-CL-007. Rewriting or dropping lineage would destroy
+  [N-CL-002][n-cl-002] and disclosed by [N-CL-007][n-cl-007]. Rewriting or dropping lineage would destroy
   the basis for audit.
 - **Validation:** An Analytics Consumer can defensibly trace any stored state
   back through the components and sources that contributed to it.
@@ -419,10 +421,10 @@ be trust-weighted or excluded.*
 - **Stakeholder(s) (A18):** Analytics consumer, Platform operator
 - **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data Completeness &
   Fidelity); [Taint][taint] in the glossary
-- **Rationale (A1):** Gap-tolerant consumption (N-CL-002) tracks missing
+- **Rationale (A1):** Gap-tolerant consumption ([N-CL-002][n-cl-002]) tracks missing
   positions as consumer-side taint; disclosure makes that taint durable on the
   materialised state so downstream consumers can assess completeness. Disclosure
-  is a *data-quality* concern, orthogonal to provenance (N-CL-003): the
+  is a *data-quality* concern, orthogonal to provenance ([N-CL-003][n-cl-003]): the
   completeness of a reconstruction, not its origin. Own-chain completeness is
   disclosed on the notification's own quality axis; source completeness (when a
   producer aggregates upstream chains) is disclosed against the cited source.
@@ -434,6 +436,32 @@ be trust-weighted or excluded.*
 
 ---
 
+#### <a id="n-cl-008"></a>N-CL-008 — Bounded Provenance Growth
+
+*A Platform Operator needs the lineage carried on a chain to stay bounded as the
+chain grows, so that long-lived chains do not accumulate unbounded near-identical
+provenance in transport and storage while the auditability of stored and
+reconstructed state is preserved.*
+
+- **Stakeholder(s) (A18):** Platform operator, Producer
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
+  Traceability); engineering convention (bounded lineage carriage)
+- **Rationale (A1):** A single writer that re-attributes itself on every delta
+  appends an `Origin` differing only in timestamp, so `Provenance` grows O(n) with
+  the chain. That repetition is redundant: the contributor is unchanged and the
+  emission time is already on the envelope (`PublishedAt`, `Sequence`). The lineage
+  *information* — which components contributed, in what order — must be preserved
+  for audit ([N-EDDT-012][n-eddt-012]); its *representation* need not repeat an unchanged entry
+  on every notification.
+- **Validation:** A Platform Operator can defensibly assert that a long-lived
+  chain's carried provenance grows with the number of *distinct* contributors and
+  identity changes, not with the number of notifications, while any stored or
+  reconstructed state can still be attributed to its origins.
+- **Priority (A32):** Medium
+- **Criticality (A33):** Important
+
+---
+
 ## 4. Architecture
 
 ### 4.1 Subsystems
@@ -441,18 +469,18 @@ be trust-weighted or excluded.*
 The requirements in §5 are allocated to three subsystems. The split mirrors the
 three conformance audiences of this contract.
 
-| ID      | Name            | Counterparty              | Owns                                                                    |
-|:--------|:----------------|:--------------------------|:------------------------------------------------------------------------|
-| S-CL-01 | Runtime Library | Generated code; producers | Envelope types, constructors, contract functions, invariants            |
-| S-CL-02 | Producer        | Runtime; consumers        | Anchor minting, cadence, reset/close protocols, single-writer ownership |
-| S-CL-03 | Consumer        | Producers; analytics      | Frontier/taint state, receive protocol, late-arrival, recovery          |
+| ID                                     | Name            | Counterparty              | Owns                                                                    |
+|:---------------------------------------|:----------------|:--------------------------|:------------------------------------------------------------------------|
+| <a id="s-cl-01"></a>[S-CL-01][s-cl-01] | Runtime Library | Generated code; producers | Envelope types, constructors, contract functions, invariants            |
+| <a id="s-cl-02"></a>[S-CL-02][s-cl-02] | Producer        | Runtime; consumers        | Anchor minting, cadence, reset/close protocols, single-writer ownership |
+| <a id="s-cl-03"></a>[S-CL-03][s-cl-03] | Consumer        | Producers; analytics      | Frontier/taint state, receive protocol, late-arrival, recovery          |
 
 ### 4.2 Subsystem Interactions *(informative)*
 
-The Producer (S-CL-02) uses the Runtime Library's constructor primitives
-(S-CL-01, §5.2) to mint anchors and calls `delta-gen`-generated `Diff` (which
+The Producer ([S-CL-02][s-cl-02]) uses the Runtime Library's constructor primitives
+([S-CL-01][s-cl-01], §5.2) to mint anchors and calls `delta-gen`-generated `Diff` (which
 in turn calls the Runtime Library's `HeaderForDiff`, §5.3) to emit deltas. The
-Consumer (S-CL-03) folds those deltas via generated `Apply` (which calls
+Consumer ([S-CL-03][s-cl-03]) folds those deltas via generated `Apply` (which calls
 `HeaderAfterApply`, §5.3), maintaining the per-chain `(Frontier, Taint)` state
 of §5.8. The Runtime Library enforces the algebraic invariants of §5.4 inside
 the contract functions and constructors, so neither producer nor consumer can
@@ -464,7 +492,7 @@ advance a chain through an invalid transition.
 
 ### 5.1 Envelope Types
 
-The requirements in this section bind the Runtime Library (S-CL-01).
+The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 
 #### <a id="r-cl-001"></a>R-CL-001 — Header shape
 
@@ -481,8 +509,8 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 >     Sequence        uint64       // 0 = birth; strictly increasing thereafter
 >     EffectiveAt     time.Time    // domain time the state/change took effect
 >     PublishedAt     time.Time    // wall-clock emission instant
->     Provenance      Provenance   // accumulated lineage (provenance axis, R-CL-004)
->     Quality         Quality      // data quality / completeness (quality axis, R-CL-036)
+>     Provenance      Provenance   // accumulated lineage (provenance axis, [R-CL-004][r-cl-004])
+>     Quality         Quality      // data quality / completeness (quality axis, [R-CL-036][r-cl-036])
 > }
 > ```
 >
@@ -491,11 +519,11 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > equal across all notifications on a chain. `ChainID` SHALL be unique across
 > the deployment and stable for the chain's lifetime. `Quality` MAY be left at
 > its zero value on producer emissions; it is populated by a consumer at
-> materialisation (R-CL-036).*
+> materialisation ([R-CL-036][r-cl-036]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication; N-CL-004 Chain
-  Lifecycle Governance; N-CL-003 Provenance and Lineage; N-CL-007 Completeness
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-004][n-cl-004] Chain
+  Lifecycle Governance; [N-CL-003][n-cl-003] Provenance and Lineage; [N-CL-007][n-cl-007] Completeness
   Disclosure
 - **Source (A5):** Observed implementation (`runtime.Header`)
 - **Rationale (A1):** The Header is the chain envelope: identity (`EntityID`,
@@ -503,9 +531,9 @@ The requirements in this section bind the Runtime Library (S-CL-01).
   `PublishedAt`), and two orthogonal cross-tier axes — `Provenance` (where the
   data came from) and `Quality` (how complete it is). A uniform `EntityID`
   content-hash lets cross-chain entity equality be a plain comparison (see
-  delta-gen spec R-DG-034/R-DG-035).
+  delta-gen spec [R-DG-034][r-dg-034]/[R-DG-035][r-dg-035]).
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -522,14 +550,14 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > - *`Closed` — only on the terminator Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.Header`); engineering convention (anchor-only chain metadata)
 - **Rationale (A1):** The anchor-only fields are chain-protocol metadata that
   describe the chain's birth and death, not the entity. Confining them to the
   anchors keeps intermediate notifications unambiguous and lets consumers detect
   succession and termination by field presence alone.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-02 Producer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -544,7 +572,7 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > alternative scheme that meets these properties.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance; N-CL-006
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-006][n-cl-006]
   Single-Writer Integrity
 - **Source (A5):** [[RFC9562]](#7-references); engineering convention (coordination-free chain identity)
 - **Rationale (A1):** Coordination-free uniqueness lets any producer mint a
@@ -552,7 +580,7 @@ The requirements in this section bind the Runtime Library (S-CL-01).
   friendliness keeps per-chain deletion (§5.5) from correlating with PII.
   Time-ordered clustering aids analytical scan performance.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-02 Producer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
@@ -566,10 +594,10 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > entry while preserving upstream entries. Provenance SHALL be append-only: no
 > entry SHALL be rewritten, reordered, or removed. `Origin` records lineage only
 > and SHALL NOT carry data-quality (completeness) fields — completeness is the
-> quality axis (R-CL-036).*
+> quality axis ([R-CL-036][r-cl-036]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-003 Provenance and Lineage
+- **Parent need (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
 - **Source (A5):** Observed implementation (`runtime.Origin`, `runtime.Provenance`)
 - **Rationale (A1):** An append-only sequence of `Origin` entries is the audit
   substrate that makes reconstructed state explainable and reproducible.
@@ -577,7 +605,7 @@ The requirements in this section bind the Runtime Library (S-CL-01).
   history intact. Factoring identity into `Origin` lets the provenance axis grow
   without disturbing the envelope or the quality axis.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-02 Producer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -586,23 +614,23 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > *When a producer aggregates one or more upstream source chains, it MAY disclose
 > the completeness of each cited source as a snapshot-copy of its then-current
 > taint set for that source, attributed by source `ChainID` on the quality axis
-> (R-CL-036). Once emitted, a source-completeness annotation SHALL NOT be revised
+> ([R-CL-036][r-cl-036]). Once emitted, a source-completeness annotation SHALL NOT be revised
 > by subsequent late-arrival processing; already-emitted notifications retain
 > their original annotation even if upstream taint later lifts. The
 > source-completeness representation is realised when the aggregator is specified;
 > it is not part of the base envelope.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-007 Completeness Disclosure
+- **Parent need (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
 - **Source (A5):** [Taint][taint] in the glossary; engineering convention (immutable completeness annotation)
 - **Rationale (A1):** Source completeness is a data-quality fact about an upstream
   chain, attributed to the source the data was derived from — distinct from the
-  notification's own lineage (N-CL-003) and from its own-chain completeness
-  (R-CL-036). Freezing it preserves the historical trust signal; revising it
+  notification's own lineage ([N-CL-003][n-cl-003]) and from its own-chain completeness
+  ([R-CL-036][r-cl-036]). Freezing it preserves the historical trust signal; revising it
   retroactively would rewrite the audit record. It lives on the quality axis, not
   in `Provenance`, so lineage stays purely a where-from record.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P3
 - **Criticality (A33):** Moderate
 
@@ -613,19 +641,19 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > (0, leave the field unchanged — the zero value), `OpAssert` (1, set the field
 > to `Value`), and `OpRetract` (2, reset the field to its zero value). These are
 > the carrier and operations for `delta.clearable` fields; the per-field
-> application is generator-emitted (see §8.7 and delta-gen spec R-DG-016).*
+> application is generator-emitted (see §8.7 and delta-gen spec [R-DG-016][r-dg-016]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.FieldDelta`,
   `runtime.FieldDeltaOp`); reconciled per
-  E-CL-003
+  [E-CL-003][e-cl-003]
 - **Rationale (A1):** A single tri-state carrier expresses ignore / assert /
   retract for optional fields. Making `OpIgnore` the zero value means a
   zero-valued `FieldDelta` is an explicit no-op, which composes cleanly with the
   generated per-field switch.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -636,31 +664,31 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 > `delta.nested` companion type SHALL NOT embed `Header`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication
-- **Source (A5):** delta-gen spec R-DG-002,
-  R-DG-008
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
+- **Source (A5):** delta-gen spec [R-DG-002][r-dg-002],
+  [R-DG-008][r-dg-008]
 - **Rationale (A1):** The constructor primitives and contract functions operate
   on the embedded Header by type identity; a single, unambiguous envelope per
   Snapshot is what lets generic runtime code populate and validate it.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
 #### <a id="r-cl-036"></a>R-CL-036 — Quality shape and own-chain completeness disclosure
 
 > *The Runtime Library SHALL provide a `Quality` type, embedded in the `Header`
-> (R-CL-001), carrying the data-quality assessment of the notification on the
+> ([R-CL-001][r-cl-001]), carrying the data-quality assessment of the notification on the
 > quality axis. At minimum it SHALL carry `Gaps` (`[]SequenceRange`): the Sequence
 > positions of this chain that are missing from the materialised state. A consumer
-> SHALL populate `Header.Quality.Gaps` from its taint set (R-CL-019, R-CL-031)
+> SHALL populate `Header.Quality.Gaps` from its taint set ([R-CL-019][r-cl-019], [R-CL-031][r-cl-031])
 > when it materialises or persists a reconstructed Snapshot; the Apply algebra
-> SHALL NOT compute it (R-CL-016). `Quality` is extensible to further data-quality
+> SHALL NOT compute it ([R-CL-016][r-cl-016]). `Quality` is extensible to further data-quality
 > signals (e.g. confidence or fidelity scores) without altering the `Header` field
 > set.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-007 Completeness Disclosure
+- **Parent need (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
 - **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data Completeness & Fidelity); [Taint][taint] in the glossary
 - **Rationale (A1):** Own-chain completeness is a data-quality fact in *this*
   chain's Sequence space, needing no source attribution — so it belongs on the
@@ -670,14 +698,14 @@ The requirements in this section bind the Runtime Library (S-CL-01).
   A `Quality` container (rather than a bare `Gaps` field) lets the quality axis
   grow — fidelity, confidence — mirroring how `Origin` lets the provenance axis grow.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
 ### 5.2 Constructor Primitives
 
-The requirements in this section bind the Runtime Library (S-CL-01); producers
-(S-CL-02) consume them.
+The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); producers
+([S-CL-02][s-cl-02]) consume them.
 
 #### <a id="r-cl-008"></a>R-CL-008 — Birth Snapshot constructor
 
@@ -686,17 +714,17 @@ The requirements in this section bind the Runtime Library (S-CL-01); producers
 > `Closed = nil`, `NextChainID = nil`, the supplied `EntityID`, freshly-minted
 > `ChainID`, optional `PreviousChainID`, `EffectiveAt`, `PublishedAt`, and
 > `Provenance`. The supplied `ChainID` SHALL be a freshly-minted unique value
-> (R-CL-003) and the `Provenance` SHOULD name the producer.*
+> ([R-CL-003][r-cl-003]) and the `Provenance` SHOULD name the producer.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (event-sourcing chain anchor)
 - **Rationale (A1):** Minting birth Snapshots through a single primitive
-  guarantees the `Sequence == 0` / anchor-field discipline (R-CL-002) is applied
+  guarantees the `Sequence == 0` / anchor-field discipline ([R-CL-002][r-cl-002]) is applied
   consistently and that hand-rolled Header construction cannot drift from the
   contract.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -707,17 +735,17 @@ The requirements in this section bind the Runtime Library (S-CL-01); producers
 > carrying `EntityID` and `ChainID` from the prior Header, `Closed = nil`,
 > `NextChainID = nil`, the supplied `Sequence`, `EffectiveAt`, `PublishedAt`, and
 > `Provenance` accumulated as `prior.Provenance ⊕ provenance`. It SHALL enforce
-> the constructor preconditions of R-CL-011.*
+> the constructor preconditions of [R-CL-011][r-cl-011].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance; N-CL-005
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-005][n-cl-005]
   Bounded Recovery Latency
 - **Source (A5):** Engineering convention (periodic full-state re-anchoring)
 - **Rationale (A1):** Cadence Snapshots are the reusable anchors that bound
   recovery latency (§5.6, §5.8); minting them through a primitive enforces the
   monotonic-Sequence and provenance-accumulation invariants by construction.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -728,17 +756,17 @@ The requirements in this section bind the Runtime Library (S-CL-01); producers
 > optional `NextChainID`, `EntityID` and `ChainID` from the prior Header, the
 > supplied `Sequence`, `EffectiveAt`, `PublishedAt`, and accumulated
 > `Provenance`. After it returns, the runtime SHALL NOT permit further
-> notifications on that `ChainID` (R-CL-020). It SHALL enforce the preconditions
-> of R-CL-011.*
+> notifications on that `ChainID` ([R-CL-020][r-cl-020]). It SHALL enforce the preconditions
+> of [R-CL-011][r-cl-011].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (chain-termination anchor)
 - **Rationale (A1):** A single terminator primitive guarantees `Closed` is set,
   the Sequence advances past every prior position, and chain finiteness
-  (R-CL-020) takes effect atomically with the close.
+  ([R-CL-020][r-cl-020]) takes effect atomically with the close.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -747,24 +775,24 @@ The requirements in this section bind the Runtime Library (S-CL-01); producers
 > *Each constructor SHALL validate its preconditions and return an error on
 > violation; a conforming runtime MUST NOT silently emit a notification with a
 > known invariant violation. For the cadence and terminator constructors the
-> preconditions SHALL be: `sequence > prior.Sequence` (R-CL-015),
-> `effectiveAt >= prior.EffectiveAt` (R-CL-017), and the prior chain SHALL NOT
-> have been terminated (R-CL-020).*
+> preconditions SHALL be: `sequence > prior.Sequence` ([R-CL-015][r-cl-015]),
+> `effectiveAt >= prior.EffectiveAt` ([R-CL-017][r-cl-017]), and the prior chain SHALL NOT
+> have been terminated ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (fail-fast constructor validation)
 - **Rationale (A1):** Validating at mint time surfaces invariant violations
   before a malformed notification can enter the chain, where it would corrupt
   every downstream consumer's reconstruction.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** High
 
 ### 5.3 Runtime Contract Functions
 
-The requirements in this section bind the Runtime Library (S-CL-01); generated
+The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); generated
 code calls these functions.
 
 #### <a id="r-cl-012"></a>R-CL-012 — HeaderAfterApply
@@ -774,23 +802,23 @@ code calls these functions.
 > `ChainID` from `s`, `PreviousChainID = NextChainID = Closed = nil`, `Sequence`
 > / `EffectiveAt` / `PublishedAt` from `d`, and `Provenance = s.Provenance ⊕
 > d.Provenance`. It SHALL return a non-nil error, leaving state unchanged, when
-> any of the following holds: `s.ChainID != d.ChainID` (R-CL-014);
-> `s.EntityID != d.EntityID`; either `EntityID` is the zero value (E-CL-002);
-> `d.Sequence <= s.Sequence` (R-CL-015, R-CL-016); `d.EffectiveAt <
-> s.EffectiveAt` (R-CL-017); or `s.Closed != nil` (R-CL-020).*
+> any of the following holds: `s.ChainID != d.ChainID` ([R-CL-014][r-cl-014]);
+> `s.EntityID != d.EntityID`; either `EntityID` is the zero value ([E-CL-002][e-cl-002]);
+> `d.Sequence <= s.Sequence` ([R-CL-015][r-cl-015], [R-CL-016][r-cl-016]); `d.EffectiveAt <
+> s.EffectiveAt` (R-CL-017); or `s.Closed != nil` ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication; N-CL-003 Lineage
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-003][n-cl-003] Lineage
   and Provenance
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`);
-  reconciled per E-CL-001, E-CL-002
+  reconciled per [E-CL-001][e-cl-001], [E-CL-002][e-cl-002]
 - **Rationale (A1):** `Apply`'s result is a mid-chain notification, so it clears
   the anchor-only fields, advances the causal position from the delta, and
   concatenates provenance. The preconditions are the chain-integrity gate that
   keeps an invalid fold from corrupting state; they are shared with delta-gen
-  R-DG-029/R-DG-031 (see §8.7).
+  [R-DG-029][r-dg-029]/[R-DG-031][r-dg-031] (see §8.7).
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -801,25 +829,25 @@ code calls these functions.
 > `EntityID`/`ChainID`/`Sequence`/`EffectiveAt`/`PublishedAt` from `b`, cleared
 > anchor-only fields, and empty `Provenance` by default (callers supply lineage
 > after the call). It SHALL return a non-nil error, leaving state unchanged,
-> when `a.ChainID != b.ChainID` (R-CL-014), `a.EntityID != b.EntityID`, either
-> `EntityID` is zero (E-CL-002), `b.Sequence < a.Sequence` (R-CL-015), or
-> `b.EffectiveAt < a.EffectiveAt` (R-CL-017).*
+> when `a.ChainID != b.ChainID` ([R-CL-014][r-cl-014]), `a.EntityID != b.EntityID`, either
+> `EntityID` is zero ([E-CL-002][e-cl-002]), `b.Sequence < a.Sequence` ([R-CL-015][r-cl-015]), or
+> `b.EffectiveAt < a.EffectiveAt` ([R-CL-017][r-cl-017]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderForDiff`);
-  reconciled per E-CL-001, E-CL-002
+  reconciled per [E-CL-001][e-cl-001], [E-CL-002][e-cl-002]
 - **Rationale (A1):** `Diff` is a pure transformation that carries no lineage by
   default; coalescing aggregators and audit pipelines attach provenance at the
   call site rather than encoding a global policy in the function.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
 ### 5.4 Algebraic Invariants
 
-The requirements in this section bind the Runtime Library (S-CL-01), enforced
+The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]), enforced
 through the contract functions (§5.3) and constructors (§5.2). They are
 universal claims over the input space and therefore carry `A2 = Analysis`. The
 numbering is flat `R-CL`.
@@ -831,13 +859,13 @@ numbering is flat `R-CL`.
 > rejected with a non-nil error.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`, `runtime.HeaderForDiff`); delta-gen spec
-  R-DG-029, R-DG-030
+  [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** A chain is a single entity's history; folding a delta from
   another chain or entity is meaningless and would silently corrupt state.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -848,14 +876,14 @@ numbering is flat `R-CL`.
 > emission has a strictly greater `Sequence`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication; N-CL-006
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-006][n-cl-006]
   Single-Writer Integrity
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
-  R-DG-029, R-DG-030
+  [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** A strictly monotonic Sequence is the chain's causal order;
   it underpins idempotent delivery, gap detection, and subscription resume.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Critical
 
@@ -868,13 +896,13 @@ numbering is flat `R-CL`.
 > itself SHALL NOT reject the gap.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-002 Gap-Tolerant Consumption
+- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`)
 - **Rationale (A1):** Permitting application across gaps keeps the twin live
   under loss; separating "apply" from "completeness" lets taint carry the
   uncertainty rather than blocking progress.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P0
 - **Criticality (A33):** Essential
 
@@ -885,14 +913,14 @@ numbering is flat `R-CL`.
 > share an instant — but `EffectiveAt` SHALL NOT roll backwards within a chain.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
-  R-DG-029, R-DG-030
+  [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** Domain time must not regress within a single entity's
   history; allowing ties accommodates batched simultaneous changes without
   permitting causal inversion.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -903,14 +931,14 @@ numbering is flat `R-CL`.
 > rewritten.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-003 Provenance and Lineage
+- **Parent need (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
-  R-DG-032
+  [R-DG-032][r-dg-032]
 - **Rationale (A1):** Apply is the point at which lineage accumulates; making it
   pure concatenation guarantees the audit trail is complete and order-preserving.
   (`Provenance` is now `[]Origin`; concatenation is unchanged.)
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -923,13 +951,13 @@ numbering is flat `R-CL`.
 > (§5.8).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-002 Gap-Tolerant Consumption
+- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (gap-tolerant consumer bookkeeping); [Taint][taint] in the glossary
 - **Rationale (A1):** Taint is only meaningful if it is exactly computable; a
   well-defined taint set is what lets a consumer report completeness and trigger
   recovery deterministically.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -939,39 +967,39 @@ numbering is flat `R-CL`.
 > notification with Sequence `> N` is valid on that chain. A conforming runtime
 > SHALL reject any attempt to emit, accept, or apply such a notification. A chain
 > without an emitted terminator remains open in the strict sense even when its
-> producer is quiescent (silence-as-close, R-CL-025, is a fallback outside this
+> producer is quiescent (silence-as-close, [R-CL-025][r-cl-025], is a fallback outside this
 > invariant).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`)
 - **Rationale (A1):** A terminator is a hard upper bound on the Sequence space;
   enforcing it lets consumers free per-chain state and treat the chain as a
   closed, immutable historical record.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-01 Runtime Library
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
 ### 5.5 Chain Lifecycle Events
 
-The requirements in this section bind the Producer (S-CL-02).
+The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 
 #### <a id="r-cl-021"></a>R-CL-021 — Chain birth
 
 > *A producer SHALL begin each chain with exactly one birth Snapshot minted via
-> the birth constructor (R-CL-008): `Sequence == 0`, `Closed == nil`,
+> the birth constructor ([R-CL-008][r-cl-008]): `Sequence == 0`, `Closed == nil`,
 > `NextChainID == nil`, a freshly-minted `ChainID`, and a populated `Provenance`
 > naming the producer. `PreviousChainID` SHALL be set if and only if the chain
-> succeeds a predecessor (R-CL-022).*
+> succeeds a predecessor ([R-CL-022][r-cl-022]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (single-origin entity history)
 - **Rationale (A1):** Exactly one birth per chain gives every entity history a
   single, unambiguous origin from which reconstruction proceeds.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -983,16 +1011,16 @@ The requirements in this section bind the Producer (S-CL-02).
 > strictly greater than every prior Sequence; and a birth on the successor with
 > `Sequence == 0`, `PreviousChainID` set to the predecessor's `ChainID`, and a
 > freshly-minted distinct `ChainID`. After the reset, no notification with
-> `Sequence > terminator.Sequence` SHALL be emitted on the predecessor (R-CL-020).*
+> `Sequence > terminator.Sequence` SHALL be emitted on the predecessor ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (chain succession / handover)
 - **Rationale (A1):** Pairing terminator and birth at handover makes succession
   navigable in both directions (`NextChainID` / `PreviousChainID`) and keeps the
   predecessor a closed, addressable historical record.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
@@ -1005,12 +1033,12 @@ The requirements in this section bind the Producer (S-CL-02).
 > `ChainID`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (in-band chain termination)
 - **Rationale (A1):** A successor-less terminator is the clean end-of-life
   signal that lets consumers reclaim resources deterministically.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-02 Producer; S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer; [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
@@ -1023,13 +1051,13 @@ The requirements in this section bind the Producer (S-CL-02).
 > or `NextChainID`, and SHALL be opaque to consumers.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-006 Single-Writer Integrity
+- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer failover)
 - **Rationale (A1):** Rotation is a change of writer, not a change of chain;
   distinguishing it from chain close (no terminator, no linkage) lets a chain
   survive producer failure without consumers observing a discontinuity.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
@@ -1042,13 +1070,13 @@ The requirements in this section bind the Producer (S-CL-02).
 > is not specified here.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (quiescence fallback)
 - **Rationale (A1):** Producers can crash mid-life; a fallback close bounds the
   resources a consumer commits to a chain that will never be terminated in-band,
   without overriding an explicit terminator when one does arrive.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P3
 - **Criticality (A33):** Optional
 
@@ -1056,24 +1084,27 @@ The requirements in this section bind the Producer (S-CL-02).
 
 > *A conforming runtime SHALL support per-chain disposal by removing every
 > storage object keyed by `ChainID`. Field-level redaction SHALL be achievable
-> via an `OpRetract` `FieldDelta` (R-CL-006) on the sensitive fields. A runtime
+> via an `OpRetract` `FieldDelta` ([R-CL-006][r-cl-006]) on the sensitive fields. A runtime
 > MAY maintain a natural-key-to-chain index to support cross-chain disposal and
 > MAY complement logical retraction with out-of-band rewrites where physical
 > irrecoverability is legally required.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-004 Chain Lifecycle Governance
+- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** platform need
   [N-EDDT-011][n-eddt-011] (Data Retention & Lifecycle)
-- **Rationale (A1):** `ChainID` opacity (R-CL-003) makes per-chain deletion
+- **Rationale (A1):** `ChainID` opacity ([R-CL-003][r-cl-003]) makes per-chain deletion
   PII-safe; `OpRetract` gives in-band logical erasure for the common case while
   leaving physical rewrite available for regulatory erasure.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-02 Producer
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
 - **Criticality (A33):** Moderate
 
-### 5.6 Snapshot Cadence
+### 5.6 Snapshot Cadence and Provenance Carriage
+
+Cadence ([R-CL-027][r-cl-027]) bounds recovery latency; provenance carriage ([R-CL-037][r-cl-037] through
+[R-CL-039][r-cl-039]) bounds how lineage grows along the chain while keeping it auditable.
 
 #### <a id="r-cl-027"></a>R-CL-027 — Hybrid cadence
 
@@ -1085,19 +1116,88 @@ The requirements in this section bind the Producer (S-CL-02).
 > specified here.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-005 Bounded Recovery Latency
+- **Parent need (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
 - **Source (A5):** Engineering convention (hybrid time-floor + change-driven re-anchoring)
 - **Rationale (A1):** The time floor bounds recovery latency predictably; the
   change-driven trigger captures domain-relevant transitions regardless of
   clock. Each covers the other's blind spot.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
+- **Criticality (A33):** Important
+
+#### <a id="r-cl-037"></a>R-CL-037 — Origin elision
+
+> *A producer MAY omit the self-`Origin` it would otherwise append to a delta's
+> `Provenance` when that entry is equal — on `Solution`, `Component`, `Instance`,
+> and `Metadata` — to the trailing `Origin` of the prior notification's
+> `Provenance`; the timestamp fields (`PublishedAt`, `ValidUntil`) are excluded
+> from this comparison and SHALL NOT be used to defeat elision. Elision SHALL apply
+> only to the producer's own trailing entry; it SHALL NOT span a change in those
+> identity fields, and SHALL NOT drop, reorder, or rewrite any other entry.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
+  Traceability); engineering convention (redundant self-attribution elision)
+- **Rationale (A1):** Eliding an unchanged self-entry is "append nothing": it
+  leaves `HeaderAfterApply` and its concatenation invariant ([R-CL-018][r-cl-018]) untouched
+  and simply declines to grow `Provenance` with a duplicate. The contributor and
+  its latest emission time remain recoverable — the trailing `Origin` is carried
+  forward on the materialised state, and per-notification emission time is on the
+  envelope. Comparing on identity fields only (never timestamps) is what makes the
+  optimisation effective, and leaves `ValidUntil` its freshness-assertion meaning.
+- **V&V method (A2):** Test
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
+- **Priority (A32):** P3
+- **Criticality (A33):** Optional
+
+#### <a id="r-cl-038"></a>R-CL-038 — Cadence Snapshot provenance completeness
+
+> *A cadence or anchor Snapshot ([R-CL-027][r-cl-027]) SHALL carry the full accumulated
+> `Provenance` as of its `Sequence`; the elision permission of [R-CL-037][r-cl-037] SHALL NOT
+> apply to cadence or anchor Snapshots.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
+  Traceability)
+- **Rationale (A1):** Re-asserting the complete lineage on every anchor re-anchors
+  provenance the way the anchor re-anchors state, so a consumer that observes only
+  deltas ([R-CL-039][r-cl-039]) never looks back further than the most recent Snapshot to
+  attribute a notification. This bounds the delta self-containment cost of elision
+  to the cadence interval ([N-CL-005][n-cl-005], [R-CL-027][r-cl-027]).
+- **V&V method (A2):** Test
+- **Allocation (A8):** [S-CL-01][s-cl-01] Runtime Library; [S-CL-02][s-cl-02] Producer
+- **Priority (A32):** P2
+- **Criticality (A33):** Important
+
+#### <a id="r-cl-039"></a>R-CL-039 — Delta-only origin interpretation
+
+> *A consumer that observes individual deltas without folding them onto prior
+> state SHALL interpret an absent `Origin` on a delta as unchanged from the last
+> `Origin` observed on that chain, and SHALL NOT assume that each `Sequence`
+> position carries its own `Origin`.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth; [N-CL-003][n-cl-003] Provenance and
+  Lineage
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
+  Traceability)
+- **Rationale (A1):** Elision ([R-CL-037][r-cl-037]) makes a single delta's provenance
+  non-self-contained — consistent with deltas already being non-self-contained for
+  their payload. A delta-only observer therefore carries the last observed `Origin`
+  forward; combined with [R-CL-038][r-cl-038] its look-back is bounded by the snapshot cadence.
+  A folding (materialising) consumer is unaffected, since `Apply` carries the
+  trailing `Origin` onto the result.
+- **V&V method (A2):** Test
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
+- **Priority (A32):** P3
 - **Criticality (A33):** Important
 
 ### 5.7 Chain Ownership
 
-The requirements in this section bind the Producer (S-CL-02).
+The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 
 #### <a id="r-cl-028"></a>R-CL-028 — Single-writer invariant
 
@@ -1107,13 +1207,13 @@ The requirements in this section bind the Producer (S-CL-02).
 > merged downstream by an aggregator.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-006 Single-Writer Integrity
+- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer per chain); [Chain][chain] in the glossary
 - **Rationale (A1):** Single-writer ownership is what makes a monotonic Sequence
   achievable without consensus; modelling multiple sources as separate merged
   chains preserves it.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P1
 - **Criticality (A33):** Essential
 
@@ -1122,15 +1222,15 @@ The requirements in this section bind the Producer (S-CL-02).
 > *A conforming deployment SHALL select and document one chain-to-producer
 > mapping mechanism (static configuration, hash-based routing, or registry-based
 > assignment). The chosen mechanism SHALL preserve the single-writer invariant
-> (R-CL-028) and Sequence monotonicity (R-CL-015) across any producer rotation.*
+> ([R-CL-028][r-cl-028]) and Sequence monotonicity ([R-CL-015][r-cl-015]) across any producer rotation.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-006 Single-Writer Integrity
+- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (deployment-selected chain routing)
 - **Rationale (A1):** The mapping mechanism is a deployment choice, but whichever
   is chosen must not admit two writers or a Sequence regression during handover.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P3
 - **Criticality (A33):** Moderate
 
@@ -1139,23 +1239,23 @@ The requirements in this section bind the Producer (S-CL-02).
 > *A deployment's failover protocol SHALL determine the successor producer,
 > establish the predecessor's last emitted Sequence (anchor recovery, §5.8, is a
 > sufficient mechanism), and prevent split-brain via fencing tokens, leases, or
-> equivalent. Failover SHALL preserve chain identity (R-CL-024): no terminator is
+> equivalent. Failover SHALL preserve chain identity ([R-CL-024][r-cl-024]): no terminator is
 > emitted and no chain linkage is created.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-006 Single-Writer Integrity
+- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer failover fencing)
 - **Rationale (A1):** Continuity across writer failure requires answering who
   takes over, from which Sequence, and how concurrent writes are fenced; anchor
   recovery answers the second cheaply by reading the latest Snapshot.
 - **V&V method (A2):** Analysis
-- **Allocation (A8):** S-CL-02 Producer
+- **Allocation (A8):** [S-CL-02][s-cl-02] Producer
 - **Priority (A32):** P2
 - **Criticality (A33):** Important
 
 ### 5.8 Consumer State Machine
 
-The requirements in this section bind the Consumer (S-CL-03).
+The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 
 #### <a id="r-cl-031"></a>R-CL-031 — Per-chain state
 
@@ -1163,15 +1263,15 @@ The requirements in this section bind the Consumer (S-CL-03).
 > (the highest applied `Sequence`, initially `0` after the birth Snapshot) and a
 > taint set `T` (the Sequences strictly between `0` and `F` not yet applied). A
 > Sequence enters `T` on a forward gap and leaves `T` when the late-arriving
-> notification is applied under the active late-arrival policy (R-CL-033).*
+> notification is applied under the active late-arrival policy ([R-CL-033][r-cl-033]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-002 Gap-Tolerant Consumption
+- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** [Frontier][frontier] and [Taint][taint] in the glossary; engineering convention (per-chain consumer bookkeeping)
 - **Rationale (A1):** Frontier and taint are the complete per-chain bookkeeping
   needed for idempotent delivery, gap detection, and subscription resume.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** Essential
 
@@ -1184,16 +1284,16 @@ The requirements in this section bind the Consumer (S-CL-03).
 > | Condition                            | Action                                                              |
 > |:-------------------------------------|:--------------------------------------------------------------------|
 > | `k <= F` and `k ∉ T`                 | Already-applied duplicate. Discard.                                 |
-> | `k ∈ T`                              | Late arrival. Apply per the active late-arrival policy (R-CL-033).  |
+> | `k ∈ T`                              | Late arrival. Apply per the active late-arrival policy ([R-CL-033][r-cl-033]).  |
 > | `k == F + 1`                         | In-order. Apply; set `F := k`.                                      |
-> | `k > F + 1`                          | Forward gap. Apply (R-CL-016); add `{F+1 … k-1}` to `T`; set `F := k`. |
+> | `k > F + 1`                          | Forward gap. Apply ([R-CL-016][r-cl-016]); add `{F+1 … k-1}` to `T`; set `F := k`. |
 > | Snapshot with `Closed != nil`        | Terminator. Apply; chain closed; MAY free per-chain state.          |
 >
 > *A consumer SHALL NOT conflate the three concerns of duplicate handling, gap
 > handling, and accumulated-loss (taint) tracking.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-001 Convergent Replication; N-CL-002
+- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-002][n-cl-002]
   Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (exactly-once apply over at-least-once transport)
 - **Rationale (A1):** The frontier dispatches duplicates trivially, the
@@ -1201,7 +1301,7 @@ The requirements in this section bind the Consumer (S-CL-03).
   and the terminator frees state — three orthogonal concerns handled by one
   deterministic protocol.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P0
 - **Criticality (A33):** Essential
 
@@ -1209,7 +1309,7 @@ The requirements in this section bind the Consumer (S-CL-03).
 
 > *A conforming consumer SHALL implement strong rejection as the default
 > late-arrival policy: a notification whose Sequence is in `T` is discarded and
-> the Sequence remains tainted until cleared by anchor recovery (R-CL-035). A
+> the Sequence remains tainted until cleared by anchor recovery ([R-CL-035][r-cl-035]). A
 > consumer MAY additionally implement jitter-buffered apply (holding
 > notifications a bounded window to reorder slightly-out-of-order arrivals
 > contiguously). For `delta.commutative` fields a future iteration MAY honour
@@ -1217,14 +1317,14 @@ The requirements in this section bind the Consumer (S-CL-03).
 > to strong rejection.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-002 Gap-Tolerant Consumption
+- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (late-arrival policy); [CRDT][crdt] in the glossary
 - **Rationale (A1):** Strong rejection is the simplest correct policy and the
   required floor; jitter-buffering and CRDT lift are opt-in optimisations that
   trade latency or complexity for fewer recovery events. See [CRDT][crdt],
   [LWW-Register][last-writer-wins-register-lww-register], and [ORSet][orset].
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -1239,19 +1339,19 @@ The requirements in this section bind the Consumer (S-CL-03).
 > recovery, and discovery of an already-closed chain SHALL be the same operation.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-005 Bounded Recovery Latency
+- **Parent need (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
 - **Source (A5):** Engineering convention (snapshot anchor recovery)
 - **Rationale (A1):** Any Snapshot — birth, cadence, or terminator — is a chain
   anchor at its Sequence, so a single recovery path re-seeds the consumer from
   the freshest anchor and bounds catch-up cost by the cadence interval.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
 #### <a id="r-cl-035"></a>R-CL-035 — Recovery triggers and observability
 
-> *A conforming consumer SHALL trigger anchor recovery (R-CL-034) when a selected
+> *A conforming consumer SHALL trigger anchor recovery ([R-CL-034][r-cl-034]) when a selected
 > threshold is exceeded (candidate families: absolute taint size, taint density,
 > taint age, field-level taint impact, or a consumer SLO) and SHALL expose, at
 > minimum, per-chain frontier and taint metrics (size, age, density),
@@ -1259,7 +1359,7 @@ The requirements in this section bind the Consumer (S-CL-03).
 > Concrete thresholds and metric backends are deployment selections.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-002 Gap-Tolerant Consumption; N-CL-005 Bounded
+- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption; [N-CL-005][n-cl-005] Bounded
   Recovery Latency
 - **Source (A5):** platform need
   [N-EDDT-009][n-eddt-009] (Platform Operational Health)
@@ -1267,7 +1367,7 @@ The requirements in this section bind the Consumer (S-CL-03).
   becomes unacceptable; exposing taint metrics and propagating taint signatures
   lets operators and downstream analytics act on partiality deliberately.
 - **V&V method (A2):** Test
-- **Allocation (A8):** S-CL-03 Consumer
+- **Allocation (A8):** [S-CL-03][s-cl-03] Consumer
 - **Priority (A32):** P2
 - **Criticality (A33):** Important
 
@@ -1282,13 +1382,13 @@ The entries below record where this specification was reconciled to the shipped 
 implementation (`runtime/header.go`, `runtime/types.go`) and to the delta-gen
 specification.
 
-| ID       | Affected                                         | Description                                                                                                                                                                                                                                                        | Resolution                                                                                                                                                                                                                                                                                                                                  | Date       |
-|:---------|:-------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------|
-| E-CL-001 | R-CL-001, R-CL-012, R-CL-013                     | An earlier `Header` formulation carried a typed entity-key field; this specification uses the uniform `EntityID [32]byte` content-hash the shipped runtime carries (the entity key is embedded in the Snapshot and hashed by generated code).                      | Reconciled: `Header.EntityID` replaces `Header.Entity`; contract-function identity checks compare `EntityID`.                                                                                                                                                                                                                               | 2026-06-03 |
-| E-CL-002 | R-CL-012, R-CL-013                               | An earlier formulation did not reject a zero-valued entity identity. The shipped runtime rejects a zero `EntityID` (parity with delta-gen R-DG-031).                                                                                                               | Reconciled: zero-`EntityID` rejection added to both preconditions.                                                                                                                                                                                                                                                                          | 2026-06-03 |
-| E-CL-003 | R-CL-006                                         | An earlier formulation specified a runtime `ApplyFieldDelta[T]` helper called inline by generated `Apply`. The implementation instead emits the tri-state switch in generated code (delta-gen R-DG-007/R-DG-016); the runtime exports the `FieldDelta` types only. | Reconciled: the runtime requirement provides the carrier and constants; per-field application is generator-emitted (see §8.7).                                                                                                                                                                                                              | 2026-06-03 |
-| E-CL-004 | R-CL-014, R-CL-015, R-CL-017, R-CL-018           | The chain-integrity, sequence, EffectiveAt, and provenance invariants overlap delta-gen R-DG-029…R-DG-032.                                                                                                                                                         | Reconciled by reference: the runtime enforces them in the contract functions; generated code calls those functions (see §8.7). No restatement that could contradict delta-gen.                                                                                                                                                              | 2026-06-03 |
-| E-CL-005 | N-CL-003, R-CL-001, R-CL-004, R-CL-005, R-CL-018 | Earlier needs/requirements conflated *provenance* (where-from / lineage) with *data completeness* (gaps): the `Provenance` entry carried a `Gaps` field and N-CL-003 fused lineage with "known source gaps".                                                       | De-conflated. Provenance is owned by platform need N-EDDT-012; N-CL-003 narrowed to lineage; `Provenance` is now `[]Origin` with no `Gaps`. Completeness moved to the quality axis — own-chain `Header.Quality.Gaps` (new N-CL-007 / R-CL-036) and source completeness attributed by source ChainID (R-CL-005, deferred to the aggregator). | 2026-06-23 |
+| ID                                        | Affected                                                                                                     | Description                                                                                                                                                                                                                                                                                | Resolution                                                                                                                                                                                                                                                                                                                                                                                                | Date       |
+|:------------------------------------------|:-------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------|
+| <a id="e-cl-001"></a>[E-CL-001][e-cl-001] | [R-CL-001][r-cl-001], [R-CL-012][r-cl-012], [R-CL-013][r-cl-013]                                             | An earlier `Header` formulation carried a typed entity-key field; this specification uses the uniform `EntityID [32]byte` content-hash the shipped runtime carries (the entity key is embedded in the Snapshot and hashed by generated code).                                              | Reconciled: `Header.EntityID` replaces `Header.Entity`; contract-function identity checks compare `EntityID`.                                                                                                                                                                                                                                                                                             | 2026-06-03 |
+| <a id="e-cl-002"></a>[E-CL-002][e-cl-002] | [R-CL-012][r-cl-012], [R-CL-013][r-cl-013]                                                                   | An earlier formulation did not reject a zero-valued entity identity. The shipped runtime rejects a zero `EntityID` (parity with delta-gen [R-DG-031][r-dg-031]).                                                                                                                           | Reconciled: zero-`EntityID` rejection added to both preconditions.                                                                                                                                                                                                                                                                                                                                        | 2026-06-03 |
+| <a id="e-cl-003"></a>[E-CL-003][e-cl-003] | [R-CL-006][r-cl-006]                                                                                         | An earlier formulation specified a runtime `ApplyFieldDelta[T]` helper called inline by generated `Apply`. The implementation instead emits the tri-state switch in generated code (delta-gen [R-DG-007][r-dg-007]/[R-DG-016][r-dg-016]); the runtime exports the `FieldDelta` types only. | Reconciled: the runtime requirement provides the carrier and constants; per-field application is generator-emitted (see §8.7).                                                                                                                                                                                                                                                                            | 2026-06-03 |
+| <a id="e-cl-004"></a>[E-CL-004][e-cl-004] | [R-CL-014][r-cl-014], [R-CL-015][r-cl-015], [R-CL-017][r-cl-017], [R-CL-018][r-cl-018]                       | The chain-integrity, sequence, EffectiveAt, and provenance invariants overlap delta-gen [R-DG-029][r-dg-029]…[R-DG-032][r-dg-032].                                                                                                                                                         | Reconciled by reference: the runtime enforces them in the contract functions; generated code calls those functions (see §8.7). No restatement that could contradict delta-gen.                                                                                                                                                                                                                            | 2026-06-03 |
+| <a id="e-cl-005"></a>[E-CL-005][e-cl-005] | [N-CL-003][n-cl-003], [R-CL-001][r-cl-001], [R-CL-004][r-cl-004], [R-CL-005][r-cl-005], [R-CL-018][r-cl-018] | Earlier needs/requirements conflated *provenance* (where-from / lineage) with *data completeness* (gaps): the `Provenance` entry carried a `Gaps` field and [N-CL-003][n-cl-003] fused lineage with "known source gaps".                                                                   | De-conflated. Provenance is owned by platform need [N-EDDT-012][n-eddt-012]; [N-CL-003][n-cl-003] narrowed to lineage; `Provenance` is now `[]Origin` with no `Gaps`. Completeness moved to the quality axis — own-chain `Header.Quality.Gaps` (new [N-CL-007][n-cl-007] / [R-CL-036][r-cl-036]) and source completeness attributed by source ChainID ([R-CL-005][r-cl-005], deferred to the aggregator). | 2026-06-23 |
 
 ---
 
@@ -1335,11 +1435,11 @@ Transport:
 ### 8.1 Chain lifecycle narrative
 
 A chain is a single entity's history as a single-writer, ordered log. It begins
-with a birth Snapshot at `Sequence == 0` (R-CL-021), advances through deltas and
+with a birth Snapshot at `Sequence == 0` ([R-CL-021][r-cl-021]), advances through deltas and
 periodic cadence Snapshots, and ends — if it ends — with a terminator
-(R-CL-023). When an entity is re-identified, a symmetric reset (R-CL-022) closes
+([R-CL-023][r-cl-023]). When an entity is re-identified, a symmetric reset ([R-CL-022][r-cl-022]) closes
 the predecessor and opens a successor, linked by `NextChainID` / `PreviousChainID`
-so the graph is navigable in both directions. Producer rotation (R-CL-024) is
+so the graph is navigable in both directions. Producer rotation ([R-CL-024][r-cl-024]) is
 deliberately *not* a lifecycle event: it changes the writer, not the chain, and
 is invisible to consumers. The illustrative reset triggers for a domain entity —
 for a pump, say, decommissioning and replacement, a sensor swap that re-bases
@@ -1349,7 +1449,7 @@ catalogue policy, not part of this contract.
 ### 8.2 Consumer state machine rationale
 
 The consumer keeps two pieces of per-chain state: a frontier (high-water mark)
-and a taint set (the gaps behind it). The receive protocol (R-CL-032) is
+and a taint set (the gaps behind it). The receive protocol ([R-CL-032][r-cl-032]) is
 deliberately small because it separates three concerns that are easy to
 conflate: duplicates (dispatched by the frontier), gaps (applied across, with
 taint recorded), and accumulated loss (carried as taint until recovered). This
@@ -1358,7 +1458,7 @@ reordering buffer in the base case.
 
 ### 8.3 Late-arrival policies
 
-Strong rejection (R-CL-033) is the required floor: simple, correct, and it makes
+Strong rejection ([R-CL-033][r-cl-033]) is the required floor: simple, correct, and it makes
 every gap eventually demand a recovery. Jitter-buffered apply is a consumer-side
 optimisation that heals briefly-out-of-order arrivals within a bounded window
 with no producer or protocol change; it is opt-in because latency-sensitive
@@ -1367,7 +1467,7 @@ strong handling for `delta.commutative` fields is reserved.
 
 ### 8.4 Snapshot cadence rationale
 
-Cadence Snapshots (R-CL-027) are full-state re-anchors. The time-based floor
+Cadence Snapshots ([R-CL-027][r-cl-027]) are full-state re-anchors. The time-based floor
 bounds recovery latency predictably; the change-driven trigger fires on
 domain-significant transitions regardless of clock. Each component covers the
 other's blind spot, which is why the production default is hybrid rather than
@@ -1375,17 +1475,17 @@ either alone.
 
 ### 8.5 Chain ownership and failover
 
-Single-writer ownership (R-CL-028) is the property that makes a monotonic
+Single-writer ownership ([R-CL-028][r-cl-028]) is the property that makes a monotonic
 Sequence achievable without consensus and lets chains shard across producers.
-The mapping mechanism (R-CL-029) is a deployment choice; whatever is chosen must
-preserve single-writer and monotonicity across rotation. Failover (R-CL-030)
+The mapping mechanism ([R-CL-029][r-cl-029]) is a deployment choice; whatever is chosen must
+preserve single-writer and monotonicity across rotation. Failover ([R-CL-030][r-cl-030])
 must answer who takes over, from which Sequence (anchor recovery answers this by
 reading the latest Snapshot), and how split-brain is fenced.
 
 ### 8.6 Disposal
 
-Per-chain disposal (R-CL-026) is deletion of everything keyed by an opaque
-`ChainID`, which is PII-safe by construction (R-CL-003). Field-level logical
+Per-chain disposal ([R-CL-026][r-cl-026]) is deletion of everything keyed by an opaque
+`ChainID`, which is PII-safe by construction ([R-CL-003][r-cl-003]). Field-level logical
 erasure uses an `OpRetract` `FieldDelta`; regulatory physical erasure may add an
 out-of-band rewrite of historical partitions. Cross-chain disposal needs an
 external natural-key-to-chain index, whose shape this contract leaves to the
@@ -1394,12 +1494,12 @@ deployment.
 ### 8.7 Division of responsibility with delta-gen
 
 The runtime enforces the chain-integrity, sequence, EffectiveAt, and provenance
-invariants (R-CL-014…R-CL-018) *inside* `HeaderAfterApply` / `HeaderForDiff`;
+invariants ([R-CL-014][r-cl-014]…[R-CL-018][r-cl-018]) *inside* `HeaderAfterApply` / `HeaderForDiff`;
 `delta-gen`-generated `Apply` / `Diff` *call* those functions and propagate the
-error (delta-gen spec R-DG-029…R-DG-032). The tri-state `FieldDelta` carrier
-(R-CL-006) is a runtime type, but the per-field application is generated as an
-inline switch rather than a runtime `ApplyFieldDelta` helper (E-CL-003;
-delta-gen spec R-DG-016). This keeps the algebra in generated code and the
+error (delta-gen spec [R-DG-029][r-dg-029]…[R-DG-032][r-dg-032]). The tri-state `FieldDelta` carrier
+([R-CL-006][r-cl-006]) is a runtime type, but the per-field application is generated as an
+inline switch rather than a runtime `ApplyFieldDelta` helper ([E-CL-003][e-cl-003];
+delta-gen spec [R-DG-016][r-dg-016]). This keeps the algebra in generated code and the
 envelope contract in the runtime, with no duplicated enforcement.
 
 ### 8.8 Subject transport
@@ -1413,22 +1513,41 @@ subject-naming standard is followed; it defines no subject grammar of its own.
 ### 8.9 Provenance versus quality (two axes)
 
 The Header carries two orthogonal cross-tier axes that earlier drafts conflated.
-**Provenance** (`Header.Provenance`, R-CL-004; need N-CL-003 → platform N-EDDT-012)
+**Provenance** (`Header.Provenance`, [R-CL-004][r-cl-004]; need [N-CL-003][n-cl-003] → platform [N-EDDT-012][n-eddt-012])
 records *where the data came from* — the append-only lineage of `Origin` entries.
-**Quality** (`Header.Quality`, R-CL-036; needs N-CL-002 / N-CL-007 → platform
-N-EDDT-008) records *how complete / good* the data is. `Provenance` never carries
+**Quality** (`Header.Quality`, [R-CL-036][r-cl-036]; needs [N-CL-002][n-cl-002] / [N-CL-007][n-cl-007] → platform
+[N-EDDT-008][n-eddt-008]) records *how complete / good* the data is. `Provenance` never carries
 gaps.
 
 Completeness itself has two forms, both on the quality axis. *Own-chain*
-completeness is the consumer's taint (R-CL-019, R-CL-031) for the chain it is
+completeness is the consumer's taint ([R-CL-019][r-cl-019], [R-CL-031][r-cl-031]) for the chain it is
 reconstructing, in that chain's own Sequence space; it needs no attribution and is
-disclosed in `Header.Quality.Gaps` (R-CL-036), stamped at materialisation. A
+disclosed in `Header.Quality.Gaps` ([R-CL-036][r-cl-036]), stamped at materialisation. A
 single-writer producer has no gaps in its own chain (it mints the Sequence), so
 producer emissions disclose none. *Source* completeness arises only when a producer
 aggregates upstream chains: it is a quality fact in a *different* chain's Sequence
-space, so it is attributed by source `ChainID` (R-CL-005) and deferred until the
+space, so it is attributed by source `ChainID` ([R-CL-005][r-cl-005]) and deferred until the
 aggregator is specified. Keeping both on the quality axis leaves `Provenance` a
 pure where-from record.
+
+### 8.10 Provenance elision and delta self-containment
+
+`Provenance` accumulates by concatenation in `Apply` ([R-CL-018][r-cl-018]), so a producer
+that names itself on every delta makes it grow O(n) with near-identical entries.
+[R-CL-037][r-cl-037] lets a producer *elide* an unchanged self-`Origin` — emit nothing rather
+than a duplicate — which leaves the algebra untouched and bounds growth to distinct
+contributors and identity changes ([N-CL-008][n-cl-008]).
+
+Elision costs per-delta self-containment, and the cost falls on exactly one
+consumption mode. A *materialising* consumer folds deltas via `Apply`, so the
+trailing `Origin` is always carried onto its state — it never has to infer. A
+*delta-only* observer, inspecting individual delta envelopes, sees an empty
+`Provenance` on an elided delta and must read the origin from the last observed
+`Origin` on the chain ([R-CL-039][r-cl-039]). [R-CL-038][r-cl-038] bounds that look-back: every cadence or
+anchor Snapshot re-carries the full accumulated lineage, so a delta-only observer
+never looks back further than the most recent Snapshot. Because the cost is opt-in,
+a producer whose consumers need per-delta self-contained provenance simply does not
+elide.
 
 <!-- Glossary term links (hand-maintained; outside the refs-linkify block). -->
 
@@ -1445,6 +1564,19 @@ pure where-from record.
 
 <!-- Reference links generated by scripts/refs-linkify.py -->
 
+[e-cl-001]: #e-cl-001
+[e-cl-002]: #e-cl-002
+[e-cl-003]: #e-cl-003
+[e-cl-004]: #e-cl-004
+[e-cl-005]: #e-cl-005
+[n-cl-001]: #n-cl-001
+[n-cl-002]: #n-cl-002
+[n-cl-003]: #n-cl-003
+[n-cl-004]: #n-cl-004
+[n-cl-005]: #n-cl-005
+[n-cl-006]: #n-cl-006
+[n-cl-007]: #n-cl-007
+[n-cl-008]: #n-cl-008
 [n-eddt-002]: eddt-needs.md#n-eddt-002
 [n-eddt-005]: eddt-needs.md#n-eddt-005
 [n-eddt-007]: eddt-needs.md#n-eddt-007
@@ -1452,5 +1584,58 @@ pure where-from record.
 [n-eddt-009]: eddt-needs.md#n-eddt-009
 [n-eddt-010]: eddt-needs.md#n-eddt-010
 [n-eddt-011]: eddt-needs.md#n-eddt-011
+[n-eddt-012]: eddt-needs.md#n-eddt-012
+[r-cl-001]: #r-cl-001
+[r-cl-002]: #r-cl-002
+[r-cl-003]: #r-cl-003
+[r-cl-004]: #r-cl-004
+[r-cl-005]: #r-cl-005
+[r-cl-006]: #r-cl-006
+[r-cl-007]: #r-cl-007
+[r-cl-008]: #r-cl-008
+[r-cl-009]: #r-cl-009
+[r-cl-010]: #r-cl-010
+[r-cl-011]: #r-cl-011
+[r-cl-012]: #r-cl-012
+[r-cl-013]: #r-cl-013
+[r-cl-014]: #r-cl-014
+[r-cl-015]: #r-cl-015
+[r-cl-016]: #r-cl-016
+[r-cl-017]: #r-cl-017
+[r-cl-018]: #r-cl-018
+[r-cl-019]: #r-cl-019
+[r-cl-020]: #r-cl-020
+[r-cl-021]: #r-cl-021
+[r-cl-022]: #r-cl-022
+[r-cl-023]: #r-cl-023
+[r-cl-024]: #r-cl-024
+[r-cl-025]: #r-cl-025
+[r-cl-026]: #r-cl-026
+[r-cl-027]: #r-cl-027
+[r-cl-028]: #r-cl-028
+[r-cl-029]: #r-cl-029
+[r-cl-030]: #r-cl-030
+[r-cl-031]: #r-cl-031
+[r-cl-032]: #r-cl-032
+[r-cl-033]: #r-cl-033
+[r-cl-034]: #r-cl-034
+[r-cl-035]: #r-cl-035
+[r-cl-036]: #r-cl-036
+[r-cl-037]: #r-cl-037
+[r-cl-038]: #r-cl-038
+[r-cl-039]: #r-cl-039
+[r-dg-002]: delta-gen-spec.md#r-dg-002
+[r-dg-007]: delta-gen-spec.md#r-dg-007
+[r-dg-008]: delta-gen-spec.md#r-dg-008
+[r-dg-016]: delta-gen-spec.md#r-dg-016
+[r-dg-029]: delta-gen-spec.md#r-dg-029
+[r-dg-030]: delta-gen-spec.md#r-dg-030
+[r-dg-031]: delta-gen-spec.md#r-dg-031
+[r-dg-032]: delta-gen-spec.md#r-dg-032
+[r-dg-034]: delta-gen-spec.md#r-dg-034
+[r-dg-035]: delta-gen-spec.md#r-dg-035
+[s-cl-01]: #s-cl-01
+[s-cl-02]: #s-cl-02
+[s-cl-03]: #s-cl-03
 
 <!-- /Reference links -->

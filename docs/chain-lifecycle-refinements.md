@@ -20,7 +20,13 @@ text and is excluded from `refs-linkify`.
   - [1.3 Requirements touched](#13-requirements-touched)
   - [1.4 Implementation checklist](#14-implementation-checklist)
   - [1.5 Errata raised](#15-errata-raised)
-- [2. Change Log](#2-change-log)
+- [2. Producer-driven Origin elision (bounded provenance growth)](#2-producer-driven-origin-elision-bounded-provenance-growth)
+  - [2.1 Context](#21-context)
+  - [2.2 Change](#22-change)
+  - [2.3 Consequence — delta self-containment](#23-consequence-delta-self-containment)
+  - [2.4 Requirements touched](#24-requirements-touched)
+  - [2.5 Implementation checklist](#25-implementation-checklist)
+- [3. Change Log](#3-change-log)
 
 <!-- /TOC -->
 
@@ -103,8 +109,57 @@ from a `Provenance` entry to `Header.Quality`; source-attributed gaps removed
 from `Provenance` (quality axis, deferred to the aggregator); `Provenance` is now
 `[]Origin`.
 
-## 2. Change Log
+## 2. Producer-driven Origin elision (bounded provenance growth)
 
-| Date       | Items                                    | Change                                                                                                                                                                                                                                          |
-|:-----------|:-----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-06-23 | N-EDDT-012, N-CL-007, R-CL-036, E-CL-005 | De-conflated provenance (lineage) from data quality (completeness): introduced the provenance and quality axes across the needs, the chain spec, the delta-gen re-trace, and the `runtime` Header (`Provenance []Origin` + `Quality { Gaps }`). |
+### 2.1 Context
+
+`Header.Provenance` accumulates by concatenation in `HeaderAfterApply` (R-CL-018).
+A single writer that names itself on every delta therefore grows provenance O(n)
+with the chain, in entries that differ only by timestamp. The lineage *information*
+must be preserved for audit (N-EDDT-012), but its *representation* need not repeat
+an unchanged contributor on every notification.
+
+### 2.2 Change
+
+A producer-driven, opt-in elision: a producer MAY omit the self-`Origin` it would
+append when it is unchanged — on identity fields (`Solution`, `Component`,
+`Instance`, `Metadata`), excluding timestamps — from the trailing entry, emitting
+empty `d.Provenance`. This is "append nothing", so `HeaderAfterApply` and R-CL-018
+are unchanged and growth is reduced entirely by producer policy. `ValidUntil` is
+not overloaded and no entry is mutated.
+
+### 2.3 Consequence — delta self-containment
+
+Elision makes a single delta's provenance non-self-contained. A *materialising*
+consumer is unaffected (the trailing `Origin` is carried onto its state by `Apply`).
+A *delta-only* observer must infer a delta's origin from the last observed `Origin`
+on the chain; the look-back is bounded by the snapshot cadence, since every cadence
+or anchor Snapshot re-carries the full accumulated `Provenance`.
+
+### 2.4 Requirements touched
+
+| ID       | Kind | Change                                                                                            |
+|:---------|:-----|:--------------------------------------------------------------------------------------------------|
+| N-CL-008 | need | Added: Bounded Provenance Growth (parent N-EDDT-012).                                             |
+| R-CL-037 | req  | Added: producer MAY elide an unchanged self-`Origin` (identity-field comparison; own entry only). |
+| R-CL-038 | req  | Added: cadence/anchor Snapshots SHALL carry the full accumulated `Provenance` (elision excluded). |
+| R-CL-039 | req  | Added: delta-only observers SHALL infer origin from the last observed `Origin`.                   |
+
+### 2.5 Implementation checklist
+
+- [x] **Spec** — N-CL-008; R-CL-037 / R-CL-038 / R-CL-039 in §5.6 (renamed
+      "Snapshot Cadence and Provenance Carriage"); §8.10 design note. *(2026-06-23)*
+- [x] **No code** — `HeaderAfterApply` and R-CL-018 unchanged; the existing
+      `TestHeaderAfterApply_Provenance_OneNil` already exercises the carry-forward
+      elision relies on. *(2026-06-23)*
+- [x] **Verification** — TOC, tables, and refs-linkify regenerated; `go build`
+      green. *(2026-06-23)*
+
+No errata — purely additive.
+
+## 3. Change Log
+
+| Date       | Items                                    | Change                                                                                                                                                                                                                                                                                      |
+|:-----------|:-----------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-06-23 | N-EDDT-012, N-CL-007, R-CL-036, E-CL-005 | De-conflated provenance (lineage) from data quality (completeness): introduced the provenance and quality axes across the needs, the chain spec, the delta-gen re-trace, and the `runtime` Header (`Provenance []Origin` + `Quality { Gaps }`).                                             |
+| 2026-06-23 | N-CL-008, R-CL-037, R-CL-038, R-CL-039   | Producer-driven Origin elision (opt-in `MAY`): a producer may omit an unchanged self-`Origin`, bounding provenance growth without changing the Apply algebra (R-CL-018); cadence/anchor Snapshots re-carry full lineage and delta-only observers infer origin from the last observed entry. |
