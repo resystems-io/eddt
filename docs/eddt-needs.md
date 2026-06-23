@@ -43,9 +43,8 @@ phases (Observe–Orient–Decide–Act).
   structured into a coherent, queryable model of reality through the
   EDDT and its tiered data lake. Given the asynchronous nature of
   observation ([N-EDDT-001][n-eddt-001]), the model accepts eventual consistency across
-  representations and tiers, and must maintain traceable provenance to
-  the originating data sources, sufficient to support historical
-  reconstruction for verification, audit, debugging, and recovery.
+  representations and tiers. (Traceability of the model back to its
+  originating sources is a distinct concern, owned by [N-EDDT-012][n-eddt-012].)
 * <a id="n-eddt-003"></a>**[N-EDDT-003][n-eddt-003] [Decision & Intelligence]:** The system must support the
   continuous maturation of analytical capability — from exploratory analysis
   through formalised algorithmics, calibration, and real-time signal
@@ -77,10 +76,16 @@ under what bounds.
 * <a id="n-eddt-008"></a>**[N-EDDT-008][n-eddt-008] [Data Completeness & Fidelity]:** The system must provide
   measurable guarantees about completeness, freshness, and confidence in
   the data captured and preserved through each tier — supporting gap
-  detection, staleness reporting, and quantitative trust assessment by
-  downstream consumers. Measurability requires data provenance metadata —
-  source instrument, ingestion timestamp, and data lineage — to be
-  preserved alongside the data at each tier.
+  detection, staleness reporting, and quantitative trust assessment
+  (quality scoring) by downstream consumers. Such measurement draws on
+  the data provenance preserved under [N-EDDT-012][n-eddt-012].
+* <a id="n-eddt-012"></a>**[N-EDDT-012][n-eddt-012] [Data Provenance & Traceability]:** The system must
+  preserve, alongside the data at each tier, the provenance of every data
+  item — its originating source(s) and the lineage of components and
+  transformations that produced it — so that any stored or reconstructed
+  state can be explained, audited, and traced back to its origins,
+  supporting historical reconstruction for verification, debugging, and
+  recovery.
 
 ### Operational Lifecycle
 
@@ -229,5 +234,6 @@ processes to the needs that anchor them.
 [n-eddt-009]: #n-eddt-009
 [n-eddt-010]: #n-eddt-010
 [n-eddt-011]: #n-eddt-011
+[n-eddt-012]: #n-eddt-012
 
 <!-- /Reference links -->

@@ -333,23 +333,23 @@ corrupt it.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
-#### <a id="n-cl-003"></a>N-CL-003 — Lineage and Provenance
+#### <a id="n-cl-003"></a>N-CL-003 — Provenance and Lineage
 
 *An Analytics Consumer needs every notification to carry append-only lineage
-and a record of known source gaps, so that any reconstructed state can be
-explained, audited, and trust-weighted from its inputs.*
+naming the components and sources that contributed to it, so that any
+reconstructed state can be explained, audited, and traced back to its origins.*
 
 - **Stakeholder(s) (A18):** Analytics consumer, Platform operator
-- **Source (A5):** Platform needs [N-EDDT-008][n-eddt-008] (Data Completeness &
-  Fidelity), [N-EDDT-002][n-eddt-002] (Orientation & Modelling); [Data
-  Provenance][data-provenance] in the glossary
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
+  Traceability); [Data Provenance][data-provenance] in the glossary
 - **Rationale (A1):** Provenance accumulates across tiers and Apply operations
-  as an immutable audit trail; embedded source-taint annotations let downstream
-  consumers weight or exclude data of known-partial lineage. Rewriting or
-  dropping lineage would destroy the basis for trust assessment.
+  as an immutable audit trail; preserving every contributor's entry keeps the
+  full derivation history intact. Provenance records *where data came from*, not
+  *how complete it is* — data completeness is a distinct concern, tracked by
+  N-CL-002 and disclosed by N-CL-007. Rewriting or dropping lineage would destroy
+  the basis for audit.
 - **Validation:** An Analytics Consumer can defensibly trace any stored state
-  back through the components that contributed to it and identify which source
-  positions were known-missing at emission time.
+  back through the components and sources that contributed to it.
 - **Priority (A32):** High
 - **Criticality (A33):** Important
 
@@ -410,6 +410,28 @@ distributed coordination.*
 - **Priority (A32):** High
 - **Criticality (A33):** Essential
 
+#### <a id="n-cl-007"></a>N-CL-007 — Completeness Disclosure
+
+*An Analytics Consumer needs reconstructed and persisted state to disclose which
+Sequence positions are missing, so that results derived from partial state can
+be trust-weighted or excluded.*
+
+- **Stakeholder(s) (A18):** Analytics consumer, Platform operator
+- **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data Completeness &
+  Fidelity); [Taint][taint] in the glossary
+- **Rationale (A1):** Gap-tolerant consumption (N-CL-002) tracks missing
+  positions as consumer-side taint; disclosure makes that taint durable on the
+  materialised state so downstream consumers can assess completeness. Disclosure
+  is a *data-quality* concern, orthogonal to provenance (N-CL-003): the
+  completeness of a reconstruction, not its origin. Own-chain completeness is
+  disclosed on the notification's own quality axis; source completeness (when a
+  producer aggregates upstream chains) is disclosed against the cited source.
+- **Validation:** An Analytics Consumer can defensibly determine, from a
+  persisted Snapshot alone, which positions of its chain were missing at
+  materialisation and weight or exclude results accordingly.
+- **Priority (A32):** High
+- **Criticality (A33):** Important
+
 ---
 
 ## 4. Architecture
@@ -419,8 +441,8 @@ distributed coordination.*
 The requirements in §5 are allocated to three subsystems. The split mirrors the
 three conformance audiences of this contract.
 
-| ID        | Name            | Counterparty              | Owns                                                                    |
-|:----------|:----------------|:--------------------------|:------------------------------------------------------------------------|
+| ID      | Name            | Counterparty              | Owns                                                                    |
+|:--------|:----------------|:--------------------------|:------------------------------------------------------------------------|
 | S-CL-01 | Runtime Library | Generated code; producers | Envelope types, constructors, contract functions, invariants            |
 | S-CL-02 | Producer        | Runtime; consumers        | Anchor minting, cadence, reset/close protocols, single-writer ownership |
 | S-CL-03 | Consumer        | Producers; analytics      | Frontier/taint state, receive protocol, late-arrival, recovery          |
@@ -459,24 +481,29 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 >     Sequence        uint64       // 0 = birth; strictly increasing thereafter
 >     EffectiveAt     time.Time    // domain time the state/change took effect
 >     PublishedAt     time.Time    // wall-clock emission instant
->     Provenance      []Provenance // accumulated lineage across tiers
+>     Provenance      Provenance   // accumulated lineage (provenance axis, R-CL-004)
+>     Quality         Quality      // data quality / completeness (quality axis, R-CL-036)
 > }
 > ```
 >
 > *`EntityID`, `ChainID`, `Sequence`, `EffectiveAt`, `PublishedAt`, and
 > `Provenance` SHALL be populated on every notification. `EntityID` SHALL be
 > equal across all notifications on a chain. `ChainID` SHALL be unique across
-> the deployment and stable for the chain's lifetime.*
+> the deployment and stable for the chain's lifetime. `Quality` MAY be left at
+> its zero value on producer emissions; it is populated by a consumer at
+> materialisation (R-CL-036).*
 
 - **Type (A38):** Functional
 - **Parent need (A4):** N-CL-001 Convergent Replication; N-CL-004 Chain
-  Lifecycle Governance
+  Lifecycle Governance; N-CL-003 Provenance and Lineage; N-CL-007 Completeness
+  Disclosure
 - **Source (A5):** Observed implementation (`runtime.Header`)
 - **Rationale (A1):** The Header is the chain envelope: identity (`EntityID`,
   `ChainID`), causal position (`Sequence`), bitemporal anchoring (`EffectiveAt`,
-  `PublishedAt`), and lineage (`Provenance`). A uniform `EntityID` content-hash
-  lets cross-chain entity equality be a plain comparison (see delta-gen spec
-  R-DG-034/R-DG-035).
+  `PublishedAt`), and two orthogonal cross-tier axes — `Provenance` (where the
+  data came from) and `Quality` (how complete it is). A uniform `EntityID`
+  content-hash lets cross-chain entity equality be a plain comparison (see
+  delta-gen spec R-DG-034/R-DG-035).
 - **V&V method (A2):** Test
 - **Allocation (A8):** S-CL-01 Runtime Library
 - **Priority (A32):** P0
@@ -531,42 +558,52 @@ The requirements in this section bind the Runtime Library (S-CL-01).
 
 #### <a id="r-cl-004"></a>R-CL-004 — Provenance shape and accumulation
 
-> *The Runtime Library SHALL provide a `Provenance` type carrying `PublishedAt`,
-> optional `ValidUntil`, `Solution`, `Component`, `Instance`, optional
-> `Metadata`, and optional `Gaps` (`[]SequenceRange`). A producer SHALL append a
-> `Provenance` entry naming itself on every notification it emits; an aggregator
-> SHALL append its own entry while preserving upstream entries. Provenance SHALL
-> be append-only: no entry SHALL be rewritten, reordered, or removed.*
+> *The Runtime Library SHALL provide an `Origin` type carrying `PublishedAt`,
+> optional `ValidUntil`, `Solution`, `Component`, `Instance`, and optional
+> `Metadata`; and a `Provenance` type defined as an ordered, append-only sequence
+> of `Origin` entries (`[]Origin`). A producer SHALL append an `Origin` entry
+> naming itself on every notification it emits; an aggregator SHALL append its own
+> entry while preserving upstream entries. Provenance SHALL be append-only: no
+> entry SHALL be rewritten, reordered, or removed. `Origin` records lineage only
+> and SHALL NOT carry data-quality (completeness) fields — completeness is the
+> quality axis (R-CL-036).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-003 Lineage and Provenance
-- **Source (A5):** Observed implementation (`runtime.Provenance`,
-  `runtime.SequenceRange`)
-- **Rationale (A1):** An append-only lineage chain is the audit substrate that
-  makes reconstructed state explainable and reproducible. Preserving upstream
-  entries through aggregation keeps the full contributing history intact.
+- **Parent need (A4):** N-CL-003 Provenance and Lineage
+- **Source (A5):** Observed implementation (`runtime.Origin`, `runtime.Provenance`)
+- **Rationale (A1):** An append-only sequence of `Origin` entries is the audit
+  substrate that makes reconstructed state explainable and reproducible.
+  Preserving upstream entries through aggregation keeps the full contributing
+  history intact. Factoring identity into `Origin` lets the provenance axis grow
+  without disturbing the envelope or the quality axis.
 - **V&V method (A2):** Test
 - **Allocation (A8):** S-CL-01 Runtime Library; S-CL-02 Producer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
-#### <a id="r-cl-005"></a>R-CL-005 — Source-taint annotation immutability
+#### <a id="r-cl-005"></a>R-CL-005 — Source-completeness annotation immutability
 
-> *When a producer cites an upstream source chain, it MAY populate the `Gaps`
-> field of the corresponding `Provenance` entry with a snapshot-copy of its
-> then-current taint set for that source. Once emitted, `Gaps` SHALL NOT be
-> revised by subsequent late-arrival processing; already-emitted notifications
-> retain their original `Gaps` even if upstream taint later lifts.*
+> *When a producer aggregates one or more upstream source chains, it MAY disclose
+> the completeness of each cited source as a snapshot-copy of its then-current
+> taint set for that source, attributed by source `ChainID` on the quality axis
+> (R-CL-036). Once emitted, a source-completeness annotation SHALL NOT be revised
+> by subsequent late-arrival processing; already-emitted notifications retain
+> their original annotation even if upstream taint later lifts. The
+> source-completeness representation is realised when the aggregator is specified;
+> it is not part of the base envelope.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-003 Lineage and Provenance
-- **Source (A5):** Observed implementation (`runtime.Provenance.Gaps`); [Data Provenance][data-provenance] in the glossary
-- **Rationale (A1):** `Gaps` is an immutable lineage annotation describing what
-  was known-missing at emission time. Freezing it preserves the historical
-  trust signal; revising it retroactively would rewrite the audit record.
+- **Parent need (A4):** N-CL-007 Completeness Disclosure
+- **Source (A5):** [Taint][taint] in the glossary; engineering convention (immutable completeness annotation)
+- **Rationale (A1):** Source completeness is a data-quality fact about an upstream
+  chain, attributed to the source the data was derived from — distinct from the
+  notification's own lineage (N-CL-003) and from its own-chain completeness
+  (R-CL-036). Freezing it preserves the historical trust signal; revising it
+  retroactively would rewrite the audit record. It lives on the quality axis, not
+  in `Provenance`, so lineage stays purely a where-from record.
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** S-CL-02 Producer
-- **Priority (A32):** P2
+- **Priority (A32):** P3
 - **Criticality (A33):** Moderate
 
 #### <a id="r-cl-006"></a>R-CL-006 — FieldDelta tri-state
@@ -607,6 +644,33 @@ The requirements in this section bind the Runtime Library (S-CL-01).
   Snapshot is what lets generic runtime code populate and validate it.
 - **V&V method (A2):** Test
 - **Allocation (A8):** S-CL-01 Runtime Library
+- **Priority (A32):** P1
+- **Criticality (A33):** High
+
+#### <a id="r-cl-036"></a>R-CL-036 — Quality shape and own-chain completeness disclosure
+
+> *The Runtime Library SHALL provide a `Quality` type, embedded in the `Header`
+> (R-CL-001), carrying the data-quality assessment of the notification on the
+> quality axis. At minimum it SHALL carry `Gaps` (`[]SequenceRange`): the Sequence
+> positions of this chain that are missing from the materialised state. A consumer
+> SHALL populate `Header.Quality.Gaps` from its taint set (R-CL-019, R-CL-031)
+> when it materialises or persists a reconstructed Snapshot; the Apply algebra
+> SHALL NOT compute it (R-CL-016). `Quality` is extensible to further data-quality
+> signals (e.g. confidence or fidelity scores) without altering the `Header` field
+> set.*
+
+- **Type (A38):** Functional
+- **Parent need (A4):** N-CL-007 Completeness Disclosure
+- **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data Completeness & Fidelity); [Taint][taint] in the glossary
+- **Rationale (A1):** Own-chain completeness is a data-quality fact in *this*
+  chain's Sequence space, needing no source attribution — so it belongs on the
+  Header's quality axis, not in `Provenance` (lineage). Stamping it at
+  materialisation (rather than in `Apply`) keeps the algebra pure and lets a
+  persisted Snapshot disclose its own completeness for downstream trust-weighting.
+  A `Quality` container (rather than a bare `Gaps` field) lets the quality axis
+  grow — fidelity, confidence — mirroring how `Origin` lets the provenance axis grow.
+- **V&V method (A2):** Test
+- **Allocation (A8):** S-CL-01 Runtime Library; S-CL-03 Consumer
 - **Priority (A32):** P1
 - **Criticality (A33):** High
 
@@ -839,11 +903,12 @@ numbering is flat `R-CL`.
 > rewritten.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** N-CL-003 Lineage and Provenance
+- **Parent need (A4):** N-CL-003 Provenance and Lineage
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
   R-DG-032
 - **Rationale (A1):** Apply is the point at which lineage accumulates; making it
   pure concatenation guarantees the audit trail is complete and order-preserving.
+  (`Provenance` is now `[]Origin`; concatenation is unchanged.)
 - **V&V method (A2):** Analysis
 - **Allocation (A8):** S-CL-01 Runtime Library
 - **Priority (A32):** P1
@@ -1217,12 +1282,13 @@ The entries below record where this specification was reconciled to the shipped 
 implementation (`runtime/header.go`, `runtime/types.go`) and to the delta-gen
 specification.
 
-| ID         | Affected                               | Description                                                                                                                                                                                                                                                        | Resolution                                                                                                                                                                     | Date       |
-|:-----------|:---------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------|
-| E-CL-001 | R-CL-001, R-CL-012, R-CL-013           | An earlier `Header` formulation carried a typed entity-key field; this specification uses the uniform `EntityID [32]byte` content-hash the shipped runtime carries (the entity key is embedded in the Snapshot and hashed by generated code).                      | Reconciled: `Header.EntityID` replaces `Header.Entity`; contract-function identity checks compare `EntityID`.                                                                  | 2026-06-03 |
-| E-CL-002 | R-CL-012, R-CL-013                     | An earlier formulation did not reject a zero-valued entity identity. The shipped runtime rejects a zero `EntityID` (parity with delta-gen R-DG-031).                                                                                                               | Reconciled: zero-`EntityID` rejection added to both preconditions.                                                                                                             | 2026-06-03 |
-| E-CL-003 | R-CL-006                               | An earlier formulation specified a runtime `ApplyFieldDelta[T]` helper called inline by generated `Apply`. The implementation instead emits the tri-state switch in generated code (delta-gen R-DG-007/R-DG-016); the runtime exports the `FieldDelta` types only. | Reconciled: the runtime requirement provides the carrier and constants; per-field application is generator-emitted (see §8.7).                                                 | 2026-06-03 |
-| E-CL-004 | R-CL-014, R-CL-015, R-CL-017, R-CL-018 | The chain-integrity, sequence, EffectiveAt, and provenance invariants overlap delta-gen R-DG-029…R-DG-032.                                                                                                                                                         | Reconciled by reference: the runtime enforces them in the contract functions; generated code calls those functions (see §8.7). No restatement that could contradict delta-gen. | 2026-06-03 |
+| ID       | Affected                                         | Description                                                                                                                                                                                                                                                        | Resolution                                                                                                                                                                                                                                                                                                                                  | Date       |
+|:---------|:-------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------|
+| E-CL-001 | R-CL-001, R-CL-012, R-CL-013                     | An earlier `Header` formulation carried a typed entity-key field; this specification uses the uniform `EntityID [32]byte` content-hash the shipped runtime carries (the entity key is embedded in the Snapshot and hashed by generated code).                      | Reconciled: `Header.EntityID` replaces `Header.Entity`; contract-function identity checks compare `EntityID`.                                                                                                                                                                                                                               | 2026-06-03 |
+| E-CL-002 | R-CL-012, R-CL-013                               | An earlier formulation did not reject a zero-valued entity identity. The shipped runtime rejects a zero `EntityID` (parity with delta-gen R-DG-031).                                                                                                               | Reconciled: zero-`EntityID` rejection added to both preconditions.                                                                                                                                                                                                                                                                          | 2026-06-03 |
+| E-CL-003 | R-CL-006                                         | An earlier formulation specified a runtime `ApplyFieldDelta[T]` helper called inline by generated `Apply`. The implementation instead emits the tri-state switch in generated code (delta-gen R-DG-007/R-DG-016); the runtime exports the `FieldDelta` types only. | Reconciled: the runtime requirement provides the carrier and constants; per-field application is generator-emitted (see §8.7).                                                                                                                                                                                                              | 2026-06-03 |
+| E-CL-004 | R-CL-014, R-CL-015, R-CL-017, R-CL-018           | The chain-integrity, sequence, EffectiveAt, and provenance invariants overlap delta-gen R-DG-029…R-DG-032.                                                                                                                                                         | Reconciled by reference: the runtime enforces them in the contract functions; generated code calls those functions (see §8.7). No restatement that could contradict delta-gen.                                                                                                                                                              | 2026-06-03 |
+| E-CL-005 | N-CL-003, R-CL-001, R-CL-004, R-CL-005, R-CL-018 | Earlier needs/requirements conflated *provenance* (where-from / lineage) with *data completeness* (gaps): the `Provenance` entry carried a `Gaps` field and N-CL-003 fused lineage with "known source gaps".                                                       | De-conflated. Provenance is owned by platform need N-EDDT-012; N-CL-003 narrowed to lineage; `Provenance` is now `[]Origin` with no `Gaps`. Completeness moved to the quality axis — own-chain `Header.Quality.Gaps` (new N-CL-007 / R-CL-036) and source completeness attributed by source ChainID (R-CL-005, deferred to the aggregator). | 2026-06-23 |
 
 ---
 
@@ -1343,6 +1409,26 @@ deployment's subject-naming standard — per-tier addressability, chain-anchor
 recovery request/response, and subject-filter subscription all live in that
 standard. This specification is agnostic to it and assumes a sufficient
 subject-naming standard is followed; it defines no subject grammar of its own.
+
+### 8.9 Provenance versus quality (two axes)
+
+The Header carries two orthogonal cross-tier axes that earlier drafts conflated.
+**Provenance** (`Header.Provenance`, R-CL-004; need N-CL-003 → platform N-EDDT-012)
+records *where the data came from* — the append-only lineage of `Origin` entries.
+**Quality** (`Header.Quality`, R-CL-036; needs N-CL-002 / N-CL-007 → platform
+N-EDDT-008) records *how complete / good* the data is. `Provenance` never carries
+gaps.
+
+Completeness itself has two forms, both on the quality axis. *Own-chain*
+completeness is the consumer's taint (R-CL-019, R-CL-031) for the chain it is
+reconstructing, in that chain's own Sequence space; it needs no attribution and is
+disclosed in `Header.Quality.Gaps` (R-CL-036), stamped at materialisation. A
+single-writer producer has no gaps in its own chain (it mints the Sequence), so
+producer emissions disclose none. *Source* completeness arises only when a producer
+aggregates upstream chains: it is a quality fact in a *different* chain's Sequence
+space, so it is attributed by source `ChainID` (R-CL-005) and deferred until the
+aggregator is specified. Keeping both on the quality axis leaves `Provenance` a
+pure where-from record.
 
 <!-- Glossary term links (hand-maintained; outside the refs-linkify block). -->
 

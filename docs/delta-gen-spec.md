@@ -348,8 +348,8 @@ can be explained from its inputs and reproduced from its source.*
 
 - **Stakeholder(s) (A18):** Twin maintainer, Tool integrator,
   Analytics consumer
-- **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data
-  Completeness & Fidelity); platform need [N-ECOL-007][n-ecol-007]
+- **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data
+  Provenance & Traceability); platform need [N-ECOL-007][n-ecol-007]
   (Configuration & Baseline Management);
   [chain-lifecycle spec R-CL-001](chain-lifecycle-spec.md#r-cl-001)
   (`Header` carriage)
@@ -2226,8 +2226,8 @@ forward unchanged from `a` regardless of `b`.
 [n-eddt-002]: eddt-needs.md#n-eddt-002
 [n-eddt-005]: eddt-needs.md#n-eddt-005
 [n-eddt-007]: eddt-needs.md#n-eddt-007
-[n-eddt-008]: eddt-needs.md#n-eddt-008
 [n-eddt-010]: eddt-needs.md#n-eddt-010
+[n-eddt-012]: eddt-needs.md#n-eddt-012
 [r-cl-001]: chain-lifecycle-spec.md#r-cl-001
 [r-cl-006]: chain-lifecycle-spec.md#r-cl-006
 [r-cl-012]: chain-lifecycle-spec.md#r-cl-012
