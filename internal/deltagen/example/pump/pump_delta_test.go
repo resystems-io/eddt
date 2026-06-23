@@ -33,7 +33,7 @@ func advanceHeader(prior runtime.Header, seq uint64) runtime.Header {
 		Sequence:    seq,
 		EffectiveAt: epoch.Add(time.Duration(seq) * time.Hour),
 		PublishedAt: epoch.Add(time.Duration(seq) * time.Hour),
-		Provenance: append(prior.Provenance, runtime.Provenance{
+		Provenance: append(prior.Provenance, runtime.Origin{
 			PublishedAt: epoch,
 			Solution:    "plant-control",
 			Component:   "pressure-monitor",

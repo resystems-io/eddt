@@ -3637,7 +3637,7 @@ type Snapshot struct {
 //
 // The fixture exercises a grouped declaration in four positions: directly on the
 // target struct (A, B), on a nested struct used as a value field (SeqRange) and
-// inside a list (the runtime.Provenance.Gaps shape, []SeqRange), and on an
+// inside a list (the runtime.Quality.Gaps shape, []SeqRange), and on an
 // embedded struct (Base — the promoted-field path). Before the fix, B / End / Hi
 // round-tripped as their zero value.
 func TestGroupedFieldDeclRoundTrip(t *testing.T) {
