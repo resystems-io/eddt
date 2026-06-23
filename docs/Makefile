@@ -22,6 +22,8 @@ SOURCES = arrow-reader-gen.md \
           arrow-writer-gen-multipkg.md \
           arrow-writer-gen-nesting.md \
           arrow-writer-gen-refinements.md \
+          chain-lifecycle-refinements.md \
+          chain-lifecycle-spec.md \
           delta-gen.md \
           delta-gen-refinements.md \
           delta-gen-spec.md \
@@ -58,12 +60,16 @@ INDEXES = eddt-needs.md \
 # (rather than waiting for a missing-link to bite at PDF render time
 # or in a downstream PR review).
 #
-# delta-gen-refinements.md is excluded from LINKIFY_SOURCES: it is a
-# historical record retained in its original R-NN identifier form and
-# should not have its cross-reference block rewritten.
+# delta-gen-refinements.md and chain-lifecycle-refinements.md are excluded
+# from LINKIFY_SOURCES: they are refinement records that reference identifiers
+# as plain text and must not have a cross-reference block rewritten into them.
+# chain-lifecycle-refinements.md uses R-CL / N-CL IDs that refs-linkify would
+# otherwise resolve; delta-gen-refinements.md is retained in its original R-NN
+# form. (chain-lifecycle-spec.md is both an index and a linkify source — like
+# eddt-needs.md and delta-gen-spec.md — and is linkified normally.)
 REFS_LINKIFY    = $(SCRIPTS)/refs-linkify.py
 INDEX_FLAGS     = $(foreach idx,$(INDEXES),--index $(idx))
-LINKIFY_SOURCES = $(filter-out delta-gen-refinements.md,$(SOURCES))
+LINKIFY_SOURCES = $(filter-out delta-gen-refinements.md chain-lifecycle-refinements.md,$(SOURCES))
 
 # markdown-toc.py regenerates the <!-- TOC ... --> block at the top of
 # each source. Idempotent — when the committed TOC already matches the
