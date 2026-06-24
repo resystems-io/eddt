@@ -21,7 +21,9 @@ func (e EntityID) IsZero() bool { return e == EntityID{} }
 
 // Header is the envelope carried by every Snapshot and Delta on a chain.
 // It encodes chain identity, sequence position, bitemporal timestamps, anchor
-// fields (for chain birth/termination linking), and accumulated lineage.
+// fields (for chain birth/termination linking), and two orthogonal cross-tier
+// axes: accumulated lineage (Provenance — where the data came from) and
+// data-quality signals (Quality — how complete it is).
 //
 // Per R-DG-034, R-DG-035, Header carries EntityID [32]byte rather than a typed entity
 // key — the domain-specific key struct is embedded directly in the Snapshot and
@@ -59,16 +61,31 @@ type Header struct {
 	// Independent of EffectiveAt.
 	PublishedAt time.Time
 
-	// Provenance accumulates lineage across tier translations. Append-only;
-	// downstream producers must not rewrite, reorder, or remove upstream entries.
-	Provenance []Provenance
+	// Provenance accumulates lineage (the provenance axis) across tier
+	// translations. Append-only; downstream producers must not rewrite, reorder,
+	// or remove upstream entries (chain-lifecycle R-CL-004, R-CL-018).
+	Provenance Provenance
+
+	// Quality carries data-quality signals (the quality axis) for this
+	// notification — at minimum own-chain completeness (Gaps). It is stamped by a
+	// consumer at materialisation, not by the Apply algebra (chain-lifecycle
+	// R-CL-036, R-CL-016); it is the zero value on producer emissions.
+	Quality Quality
 }
 
-// Provenance records a single component's contribution to a notification's
-// lineage. A conforming producer appends one entry naming itself on every
-// notification it emits; a conforming aggregator appends its own entry while
-// preserving upstream entries (chain-lifecycle R-CL-004).
-type Provenance struct {
+// Provenance is the append-only lineage of a notification — the ordered
+// sequence of Origin entries naming the components and sources that contributed
+// to it (chain-lifecycle R-CL-004). It is the provenance axis: a *where-from*
+// record, carrying no data-quality information. Apply accumulates it by
+// concatenation (R-CL-018). The provenance axis grows by extending Origin.
+type Provenance []Origin
+
+// Origin records a single component's contribution to a notification's lineage.
+// A conforming producer appends one entry naming itself on every notification it
+// emits; a conforming aggregator appends its own entry while preserving upstream
+// entries (chain-lifecycle R-CL-004). Origin records lineage only — completeness
+// lives on the quality axis (Quality).
+type Origin struct {
 	// PublishedAt is the wall-clock instant this component emitted its output.
 	PublishedAt time.Time
 
@@ -88,15 +105,22 @@ type Provenance struct {
 	// Metadata carries optional component-specific key-value pairs, opaque to
 	// the runtime.
 	Metadata map[string]string
+}
 
-	// Gaps is a snapshot-copy of this component's taint set for its contributing
-	// source chain at emission time. Immutable once emitted; not revised by
-	// subsequent late-arrival processing.
+// Quality carries the data-quality assessment of a notification — the quality
+// axis (chain-lifecycle R-CL-036; platform need N-EDDT-008). At minimum it
+// carries own-chain completeness via Gaps. It is extensible to further quality
+// signals (e.g. confidence or fidelity scores) without altering the Header.
+type Quality struct {
+	// Gaps are the Sequence positions of this chain that are missing from the
+	// materialised state — own-chain completeness, in this chain's own Sequence
+	// space. A consumer stamps this from its taint set at materialisation
+	// (R-CL-019, R-CL-031); the Apply algebra never computes it (R-CL-016).
 	Gaps []SequenceRange
 }
 
-// SequenceRange is a closed interval [Start, End] of Sequence numbers,
-// used in Provenance.Gaps to record skipped positions in a source chain.
+// SequenceRange is a closed interval [Start, End] of Sequence numbers, used in
+// Quality.Gaps to record missing positions in a chain.
 type SequenceRange struct {
 	Start, End uint64 // inclusive
 }

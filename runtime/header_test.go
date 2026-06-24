@@ -28,8 +28,8 @@ func ts(hoursOffset int) time.Time {
 
 // isZeroHeader reports whether h is a zero-value Header. Defined as a helper
 // rather than using reflect.DeepEqual so the package avoids an import of
-// reflect in tests. The Provenance field is a slice so == cannot be used
-// directly on Header.
+// reflect in tests. The Provenance and Quality.Gaps fields are slices so ==
+// cannot be used directly on Header.
 func isZeroHeader(h Header) bool {
 	return h.EntityID.IsZero() &&
 		h.ChainID == "" &&
@@ -39,7 +39,8 @@ func isZeroHeader(h Header) bool {
 		h.Sequence == 0 &&
 		h.EffectiveAt.IsZero() &&
 		h.PublishedAt.IsZero() &&
-		h.Provenance == nil
+		h.Provenance == nil &&
+		h.Quality.Gaps == nil
 }
 
 // ── HeaderAfterApply ──────────────────────────────────────────────────────────
@@ -51,8 +52,8 @@ func TestHeaderAfterApply_HappyPath(t *testing.T) {
 	chainID := "chain-abc"
 	entity := eid(0x01)
 
-	provS := []Provenance{{Solution: "src", Component: "c1", Instance: "i1", PublishedAt: ts(0)}}
-	provD := []Provenance{{Solution: "tier2", Component: "c2", Instance: "i2", PublishedAt: ts(1)}}
+	provS := Provenance{{Solution: "src", Component: "c1", Instance: "i1", PublishedAt: ts(0)}}
+	provD := Provenance{{Solution: "tier2", Component: "c2", Instance: "i2", PublishedAt: ts(1)}}
 
 	s := Header{
 		EntityID:    entity,
@@ -295,7 +296,7 @@ func TestHeaderAfterApply_Provenance_NilInputs(t *testing.T) {
 func TestHeaderAfterApply_Provenance_OneNil(t *testing.T) {
 	// Covers: R-DG-029, R-DG-031 (Provenance concatenation, one-nil case)
 	entity := eid(0x01)
-	prov := []Provenance{{Solution: "only", Component: "c", Instance: "i", PublishedAt: ts(0)}}
+	prov := Provenance{{Solution: "only", Component: "c", Instance: "i", PublishedAt: ts(0)}}
 
 	// s has Provenance, d does not.
 	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0), Provenance: prov}
@@ -329,8 +330,8 @@ func TestHeaderAfterApply_Provenance_OneNil(t *testing.T) {
 func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
 	// Covers: R-DG-029, R-DG-031 (Provenance slice aliasing safety)
 	entity := eid(0x01)
-	provS := []Provenance{{Solution: "s-entry", Component: "c", Instance: "i", PublishedAt: ts(0)}}
-	provD := []Provenance{{Solution: "d-entry", Component: "c", Instance: "i", PublishedAt: ts(1)}}
+	provS := Provenance{{Solution: "s-entry", Component: "c", Instance: "i", PublishedAt: ts(0)}}
+	provD := Provenance{{Solution: "d-entry", Component: "c", Instance: "i", PublishedAt: ts(1)}}
 
 	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0), Provenance: provS}
 	d := Header{EntityID: entity, ChainID: "c", Sequence: 2, EffectiveAt: ts(1), PublishedAt: ts(1), Provenance: provD}
@@ -343,12 +344,33 @@ func TestHeaderAfterApply_Provenance_NoAlias(t *testing.T) {
 	// Mutate the input slices by appending a new entry after the call.
 	// If result.Provenance shared their backing array, len(result.Provenance)
 	// might increase beyond the 2 entries that were present at call time.
-	s.Provenance = append(s.Provenance, Provenance{Solution: "s-extra"})
-	d.Provenance = append(d.Provenance, Provenance{Solution: "d-extra"})
+	s.Provenance = append(s.Provenance, Origin{Solution: "s-extra"})
+	d.Provenance = append(d.Provenance, Origin{Solution: "d-extra"})
 
 	if len(result.Provenance) != 2 {
 		t.Errorf("appending to input Provenance slices changed result length: got %d, want 2",
 			len(result.Provenance))
+	}
+}
+
+// TestHeaderAfterApply_Quality_NotPropagated verifies that HeaderAfterApply does
+// not carry any Quality (completeness) signal from its inputs into the result:
+// the Apply algebra never computes or propagates gaps (chain-lifecycle R-CL-016,
+// R-CL-036). Completeness is the consumer's concern, stamped at materialise time.
+func TestHeaderAfterApply_Quality_NotPropagated(t *testing.T) {
+	// Covers: R-CL-016, R-CL-036
+	entity := eid(0x01)
+	s := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0),
+		Quality: Quality{Gaps: []SequenceRange{{Start: 2, End: 4}}}}
+	d := Header{EntityID: entity, ChainID: "c", Sequence: 2, EffectiveAt: ts(1), PublishedAt: ts(1),
+		Quality: Quality{Gaps: []SequenceRange{{Start: 7, End: 7}}}}
+
+	result, err := HeaderAfterApply(s, d)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Quality.Gaps != nil {
+		t.Errorf("Apply must not propagate Quality.Gaps; got %v", result.Quality.Gaps)
 	}
 }
 
@@ -412,7 +434,7 @@ func TestHeaderForDiff_HappyPath(t *testing.T) {
 func TestHeaderForDiff_ProvenanceAlwaysNil(t *testing.T) {
 	// Covers: R-DG-030
 	entity := eid(0x01)
-	prov := []Provenance{{Solution: "s", Component: "c", Instance: "i", PublishedAt: ts(0)}}
+	prov := Provenance{{Solution: "s", Component: "c", Instance: "i", PublishedAt: ts(0)}}
 
 	a := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0), Provenance: prov}
 	b := Header{EntityID: entity, ChainID: "c", Sequence: 2, EffectiveAt: ts(1), PublishedAt: ts(1), Provenance: prov}
@@ -423,6 +445,27 @@ func TestHeaderForDiff_ProvenanceAlwaysNil(t *testing.T) {
 	}
 	if result.Provenance != nil {
 		t.Errorf("Provenance must be nil regardless of inputs, got %v", result.Provenance)
+	}
+}
+
+// TestHeaderForDiff_Quality_AlwaysZero verifies that even when a and b carry a
+// non-zero Quality (completeness gaps), the synthetic Delta's Quality is the
+// zero value: Diff is a pure transformation and carries no quality signal
+// (chain-lifecycle R-CL-036). Completeness is disclosed by a consumer at
+// materialise time, not by the diff algebra.
+func TestHeaderForDiff_Quality_AlwaysZero(t *testing.T) {
+	// Covers: R-CL-036
+	entity := eid(0x01)
+	q := Quality{Gaps: []SequenceRange{{Start: 2, End: 4}}}
+	a := Header{EntityID: entity, ChainID: "c", Sequence: 1, EffectiveAt: ts(0), PublishedAt: ts(0), Quality: q}
+	b := Header{EntityID: entity, ChainID: "c", Sequence: 2, EffectiveAt: ts(1), PublishedAt: ts(1), Quality: q}
+
+	result, err := HeaderForDiff(a, b)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Quality.Gaps != nil {
+		t.Errorf("Quality.Gaps must be nil regardless of inputs, got %v", result.Quality.Gaps)
 	}
 }
 

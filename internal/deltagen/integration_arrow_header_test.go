@@ -5,23 +5,29 @@ package deltagen
 // the shape-organised subtests in integration_arrow_test.go leave unexercised
 // (they populate only Header.ChainID and Header.Sequence).
 //
-// In particular it proves the Provenance shape (R-CL-004) and its append-only
-// accumulation (R-DG-032, R-CL-018) survive the projection: Provenance is a list
-// of structs each carrying a map (Metadata) and a nested list of structs (Gaps),
-// the deepest composite the projection must carry. A schema-presence guard runs
-// before the value assertions so that arrow-writer-gen's silent-skip path (a
-// dropped column → a warning, not an error) fails loudly rather than passing on
-// an absent column.
+// In particular it proves the Header's two orthogonal envelope axes survive the
+// projection:
+//   - Provenance (R-CL-004, R-CL-018): an append-only list of Origin lineage
+//     structs, each carrying a map (Metadata) — a list-of-struct-with-map. The
+//     provenance axis is gaps-free.
+//   - Quality (R-CL-036): a struct carrying a nested list of SequenceRange
+//     structs (Gaps) — own-chain completeness, a struct-with-nested-list-of-struct.
+//
+// Between them they exercise the deepest composites the projection must carry. A
+// schema-presence guard runs before the value assertions so that
+// arrow-writer-gen's silent-skip path (a dropped column → a warning, not an
+// error) fails loudly rather than passing on an absent column; it also asserts
+// the de-conflation in the schema — Gaps live on Quality, never on Provenance.
 //
 // Test matrix:
 //
-//	TestIntegration_ArrowRoundTrip/HeaderProvenance   (R-DG-052, R-CL-004)
+//	TestIntegration_ArrowRoundTrip/HeaderProvenance   (R-DG-052, R-CL-004, R-CL-036)
 
 import "testing"
 
 // arrowHeaderRoundTripCheck runs the R-DG-052 ARHeader pipeline: delta-gen +
 // arrow gens + Arrow round-trip + DuckDB Parquet verification of the full Header
-// envelope (EntityID, anchor pointers, bitemporal times, Provenance).
+// envelope (EntityID, anchor pointers, bitemporal times, Provenance, Quality).
 func arrowHeaderRoundTripCheck(t *testing.T) {
 	t.Helper()
 	runArrowPipeline(t, arrowPipelineOpts{
@@ -72,8 +78,12 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 		eid[i] = byte(i + 1)
 	}
 
-	// Row 0: rich Header — PreviousChainID set; two Provenance entries, each with
-	// a non-empty Metadata map and a non-empty Gaps slice.
+	// Row 0: rich Header exercising both envelope axes —
+	//   - Provenance (lineage): two Origin entries, each with a non-empty
+	//     Metadata map. The provenance axis carries no completeness data.
+	//   - Quality (completeness): a Gaps list with two SequenceRange entries —
+	//     this chain's own missing positions, stamped at materialise time.
+	// PreviousChainID is set (birth-with-predecessor).
 	row0 := ARHeaderDelta{
 		Header: eddt.Header{
 			EntityID:        eid,
@@ -82,7 +92,7 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 			Sequence:        0,
 			EffectiveAt:     eff0,
 			PublishedAt:     pub0,
-			Provenance: []eddt.Provenance{
+			Provenance: []eddt.Origin{
 				{
 					PublishedAt: pub0,
 					ValidUntil:  timeptr(valid0),
@@ -90,7 +100,6 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 					Component:   "comp-1",
 					Instance:    "inst-1",
 					Metadata:    map[string]string{"k1": "v1", "k2": "v2"},
-					Gaps:        []eddt.SequenceRange{{Start: 2, End: 4}, {Start: 9, End: 9}},
 				},
 				{
 					PublishedAt: pub0,
@@ -98,14 +107,17 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 					Component:   "comp-2",
 					Instance:    "inst-2",
 					Metadata:    map[string]string{"x": "y"},
-					Gaps:        []eddt.SequenceRange{{Start: 100, End: 200}},
 				},
+			},
+			Quality: eddt.Quality{
+				Gaps: []eddt.SequenceRange{{Start: 2, End: 4}, {Start: 9, End: 9}},
 			},
 		},
 		SetLabel: strptr("label-0"),
 	}
 
-	// Row 1: terminator-ish — NextChainID + Closed set, empty Provenance.
+	// Row 1: terminator-ish — NextChainID + Closed set, empty Provenance, and a
+	// zero-value Quality (no gaps: a complete materialised state).
 	row1 := ARHeaderDelta{
 		Header: eddt.Header{
 			EntityID:    eid,
@@ -134,13 +146,14 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	schema := rec.Schema()
 	for _, name := range []string{
 		"EntityID", "ChainID", "PreviousChainID", "NextChainID", "Closed",
-		"Sequence", "EffectiveAt", "PublishedAt", "Provenance",
+		"Sequence", "EffectiveAt", "PublishedAt", "Provenance", "Quality",
 	} {
 		if len(schema.FieldIndices(name)) == 0 {
 			t.Fatalf("schema missing envelope column %q (arrow-writer-gen may have skipped it)", name)
 		}
 	}
-	// Provenance must be List<Struct{ ... Metadata: Map, Gaps: List<Struct> }>.
+	// Provenance (lineage axis) must be List<Struct{ ... Metadata: Map }> and must
+	// NOT carry Gaps — completeness moved to the Quality axis (R-CL-004, R-CL-036).
 	provField := schema.Field(schema.FieldIndices("Provenance")[0])
 	provList, ok := provField.Type.(*arrow.ListType)
 	if !ok {
@@ -157,12 +170,22 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	if _, ok := mdf.Type.(*arrow.MapType); !ok {
 		t.Fatalf("Provenance.Metadata: expected MapType, got %T", mdf.Type)
 	}
-	gapsf, ok := provStruct.FieldByName("Gaps")
-	if !ok {
-		t.Fatalf("Provenance struct missing Gaps field")
+	if _, ok := provStruct.FieldByName("Gaps"); ok {
+		t.Fatalf("Provenance struct must not carry Gaps (completeness lives on Quality)")
 	}
-	if _, ok := gapsf.Type.(*arrow.ListType); !ok {
-		t.Fatalf("Provenance.Gaps: expected ListType, got %T", gapsf.Type)
+
+	// Quality (completeness axis) must be Struct{ Gaps: List<Struct{Start,End}> }.
+	qField := schema.Field(schema.FieldIndices("Quality")[0])
+	qStruct, ok := qField.Type.(*arrow.StructType)
+	if !ok {
+		t.Fatalf("Quality: expected StructType, got %T", qField.Type)
+	}
+	qGapsf, ok := qStruct.FieldByName("Gaps")
+	if !ok {
+		t.Fatalf("Quality struct missing Gaps field")
+	}
+	if _, ok := qGapsf.Type.(*arrow.ListType); !ok {
+		t.Fatalf("Quality.Gaps: expected ListType, got %T", qGapsf.Type)
 	}
 
 	// --- Arrow reader round-trip ---
@@ -192,6 +215,8 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	if got0.Closed != nil {
 		t.Errorf("row0 Closed: want nil, got %v", *got0.Closed)
 	}
+
+	// Provenance (lineage axis): two Origin entries, gaps-free.
 	if len(got0.Provenance) != 2 {
 		t.Fatalf("row0 Provenance len: got %d want 2", len(got0.Provenance))
 	}
@@ -205,9 +230,6 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	if len(p0.Metadata) != 2 || p0.Metadata["k1"] != "v1" || p0.Metadata["k2"] != "v2" {
 		t.Errorf("row0 prov[0] Metadata: %v", p0.Metadata)
 	}
-	if len(p0.Gaps) != 2 || p0.Gaps[0] != (eddt.SequenceRange{Start: 2, End: 4}) || p0.Gaps[1] != (eddt.SequenceRange{Start: 9, End: 9}) {
-		t.Errorf("row0 prov[0] Gaps: %v", p0.Gaps)
-	}
 	p1 := got0.Provenance[1]
 	if p1.ValidUntil != nil {
 		t.Errorf("row0 prov[1] ValidUntil: want nil, got %v", *p1.ValidUntil)
@@ -215,8 +237,12 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	if len(p1.Metadata) != 1 || p1.Metadata["x"] != "y" {
 		t.Errorf("row0 prov[1] Metadata: %v", p1.Metadata)
 	}
-	if len(p1.Gaps) != 1 || p1.Gaps[0] != (eddt.SequenceRange{Start: 100, End: 200}) {
-		t.Errorf("row0 prov[1] Gaps: %v", p1.Gaps)
+
+	// Quality (completeness axis): own-chain Gaps round-trip.
+	if len(got0.Quality.Gaps) != 2 ||
+		got0.Quality.Gaps[0] != (eddt.SequenceRange{Start: 2, End: 4}) ||
+		got0.Quality.Gaps[1] != (eddt.SequenceRange{Start: 9, End: 9}) {
+		t.Errorf("row0 Quality.Gaps: %v", got0.Quality.Gaps)
 	}
 
 	if got1.PreviousChainID != nil {
@@ -230,6 +256,9 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	}
 	if len(got1.Provenance) != 0 {
 		t.Errorf("row1 Provenance: want empty, got %v", got1.Provenance)
+	}
+	if len(got1.Quality.Gaps) != 0 {
+		t.Errorf("row1 Quality.Gaps: want empty, got %v", got1.Quality.Gaps)
 	}
 
 	// --- DuckDB Parquet verification ---
@@ -276,16 +305,14 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 		t.Errorf("duckdb row1 Provenance: want null/empty")
 	}
 
-	// row0 Provenance[1] nested fields (DuckDB lists are 1-indexed): Solution,
-	// Metadata['k1'], Metadata cardinality, Gaps length and Gaps[1].Start/End.
+	// row0 Provenance[1] nested lineage fields (DuckDB lists are 1-indexed):
+	// Solution, Metadata['k1'], Metadata cardinality. No Gaps on the lineage axis.
 	var sol, md1 string
-	var mdCard, gapsLen int64
-	var gapStart, gapEnd uint64
+	var mdCard int64
 	if err := db.QueryRow(fmt.Sprintf(
-		"SELECT Provenance[1].Solution, Provenance[1].Metadata['k1'], cardinality(Provenance[1].Metadata), "+
-			"len(Provenance[1].Gaps), Provenance[1].Gaps[1].Start, Provenance[1].Gaps[1].End "+
+		"SELECT Provenance[1].Solution, Provenance[1].Metadata['k1'], cardinality(Provenance[1].Metadata) "+
 			"FROM read_parquet('%s') WHERE Sequence = 0", parquetPath,
-	)).Scan(&sol, &md1, &mdCard, &gapsLen, &gapStart, &gapEnd); err != nil {
+	)).Scan(&sol, &md1, &mdCard); err != nil {
 		t.Fatalf("duckdb row0 nested Provenance: %v", err)
 	}
 	if sol != "sol-1" {
@@ -297,11 +324,32 @@ func TestARHeaderDeltaRoundTrip(t *testing.T) {
 	if mdCard != 2 {
 		t.Errorf("duckdb row0 prov[1].Metadata cardinality: got %d want 2", mdCard)
 	}
-	if gapsLen != 2 {
-		t.Errorf("duckdb row0 prov[1].Gaps len: got %d want 2", gapsLen)
+
+	// row0 Quality.Gaps nested completeness fields (DuckDB lists are 1-indexed):
+	// the own-chain Gaps list and its first SequenceRange.
+	var qGapsLen int64
+	var qGapStart, qGapEnd uint64
+	if err := db.QueryRow(fmt.Sprintf(
+		"SELECT len(Quality.Gaps), Quality.Gaps[1].Start, Quality.Gaps[1].End "+
+			"FROM read_parquet('%s') WHERE Sequence = 0", parquetPath,
+	)).Scan(&qGapsLen, &qGapStart, &qGapEnd); err != nil {
+		t.Fatalf("duckdb row0 Quality.Gaps: %v", err)
 	}
-	if gapStart != 2 || gapEnd != 4 {
-		t.Errorf("duckdb row0 prov[1].Gaps[1]: got {%d,%d} want {2,4}", gapStart, gapEnd)
+	if qGapsLen != 2 {
+		t.Errorf("duckdb row0 len(Quality.Gaps): got %d want 2", qGapsLen)
+	}
+	if qGapStart != 2 || qGapEnd != 4 {
+		t.Errorf("duckdb row0 Quality.Gaps[1]: got {%d,%d} want {2,4}", qGapStart, qGapEnd)
+	}
+	// row1 Quality has no gaps (complete state).
+	var q1GapsEmpty bool
+	if err := db.QueryRow(fmt.Sprintf(
+		"SELECT Quality.Gaps IS NULL OR len(Quality.Gaps) = 0 FROM read_parquet('%s') WHERE Sequence = 1", parquetPath,
+	)).Scan(&q1GapsEmpty); err != nil {
+		t.Fatalf("duckdb row1 Quality.Gaps: %v", err)
+	}
+	if !q1GapsEmpty {
+		t.Errorf("duckdb row1 Quality.Gaps: want null/empty")
 	}
 
 	// Anchor-pointer nullability per row.

@@ -17,6 +17,9 @@ import (
 //   - PreviousChainID, NextChainID, Closed all nil (result is mid-chain, not an anchor).
 //   - Sequence, EffectiveAt, PublishedAt taken from d.
 //   - Provenance = s.Provenance ⊕ d.Provenance (append-only concatenation).
+//   - Quality = the zero value; the Apply algebra never computes completeness
+//     or any quality signal (chain-lifecycle R-CL-016, R-CL-036). A consumer
+//     stamps Quality at materialise time, downstream of Apply.
 //
 // On any validation failure HeaderAfterApply returns a zero Header and a
 // non-nil error describing the violated invariant. The caller's Apply method
@@ -101,11 +104,17 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 	}
 
 	// Provenance = s.Provenance ⊕ d.Provenance (chain-lifecycle R-CL-018).
-	// We always allocate a fresh slice so that subsequent appends to s.Provenance
-	// or d.Provenance cannot silently mutate result.Provenance (or vice versa).
+	// Provenance is now an ordered []Origin; the concatenation is unchanged. We
+	// always allocate a fresh slice so that subsequent appends to s.Provenance or
+	// d.Provenance cannot silently mutate result.Provenance (or vice versa).
 	// When both inputs are nil the double-append produces nil, preserving the
 	// zero-value convention for "no lineage recorded yet".
-	result.Provenance = append(append([]Provenance(nil), s.Provenance...), d.Provenance...)
+	result.Provenance = append(append(Provenance(nil), s.Provenance...), d.Provenance...)
+
+	// Quality (the completeness / quality axis) is left at its zero value: the
+	// Apply algebra does not compute gaps or any quality signal (chain-lifecycle
+	// R-CL-016, R-CL-036). Completeness is disclosed by a consumer at materialise
+	// time from its taint set, downstream of this function.
 
 	return result, nil
 }
@@ -123,6 +132,7 @@ func HeaderAfterApply(s, d Header) (Header, error) {
 //   - Provenance = nil (the default; call sites that need non-empty Provenance
 //     — coalescing aggregators, audit pipelines — append their entries after
 //     HeaderForDiff returns, rather than encoding a policy in this function).
+//   - Quality = the zero value (Diff carries no completeness or quality signal).
 //
 // Unlike HeaderAfterApply, HeaderForDiff allows b.Sequence == a.Sequence. This
 // supports the identity-diff case Diff(a, a), where both Snapshots have the same

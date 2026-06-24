@@ -64,23 +64,47 @@ func TestHeaderZeroValue(t *testing.T) {
 	if h.Provenance != nil {
 		t.Error("Provenance should be nil (not empty slice) on zero Header")
 	}
+	if h.Quality.Gaps != nil {
+		t.Error("Quality.Gaps should be nil (not empty slice) on zero Header")
+	}
 	if !h.EntityID.IsZero() {
 		t.Error("EntityID should be zero on zero Header")
 	}
 }
 
-// TestProvenanceZeroValue confirms the zero value of Provenance is well-formed.
+// TestProvenanceZeroValue confirms the zero value of the Provenance slice is a
+// nil, gaps-free lineage (the provenance axis carries no completeness data).
 func TestProvenanceZeroValue(t *testing.T) {
-	// Covers: R-DG-032
+	// Covers: R-CL-004
 	var p Provenance
-	if p.ValidUntil != nil {
-		t.Error("ValidUntil should be nil on zero Provenance")
+	if p != nil {
+		t.Error("zero Provenance should be a nil slice")
 	}
-	if p.Metadata != nil {
-		t.Error("Metadata should be nil on zero Provenance")
+	if len(p) != 0 {
+		t.Error("zero Provenance should have no Origin entries")
 	}
-	if p.Gaps != nil {
-		t.Error("Gaps should be nil on zero Provenance")
+}
+
+// TestOriginZeroValue confirms the zero value of an Origin lineage entry is
+// well-formed and carries no quality fields (completeness lives on Quality).
+func TestOriginZeroValue(t *testing.T) {
+	// Covers: R-CL-004
+	var o Origin
+	if o.ValidUntil != nil {
+		t.Error("ValidUntil should be nil on zero Origin")
+	}
+	if o.Metadata != nil {
+		t.Error("Metadata should be nil on zero Origin")
+	}
+}
+
+// TestQualityZeroValue confirms the zero value of Quality discloses no gaps —
+// the quality axis is empty until a consumer stamps completeness at materialise.
+func TestQualityZeroValue(t *testing.T) {
+	// Covers: R-CL-036
+	var q Quality
+	if q.Gaps != nil {
+		t.Error("Gaps should be nil on zero Quality")
 	}
 }
 
@@ -159,10 +183,10 @@ func TestFieldDeltaEquality(t *testing.T) {
 func TestHeaderProvenanceAccumulation(t *testing.T) {
 	// Covers: R-DG-029, R-DG-030, R-DG-032
 	now := time.Now()
-	p1 := Provenance{PublishedAt: now, Solution: "sol-a", Component: "c1", Instance: "i1"}
-	p2 := Provenance{PublishedAt: now, Solution: "sol-b", Component: "c2", Instance: "i2"}
+	p1 := Origin{PublishedAt: now, Solution: "sol-a", Component: "c1", Instance: "i1"}
+	p2 := Origin{PublishedAt: now, Solution: "sol-b", Component: "c2", Instance: "i2"}
 
-	h := Header{Provenance: []Provenance{p1}}
+	h := Header{Provenance: Provenance{p1}}
 	h.Provenance = append(h.Provenance, p2)
 
 	if len(h.Provenance) != 2 {
