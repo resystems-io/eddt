@@ -2,7 +2,7 @@
 """Generate or regenerate a table of contents in a markdown document.
 
 Usage:
-    ./scripts/markdown-toc.py docs/analysis-eddt-context.md
+    ./scripts/markdown-toc.py docs/eddt-context.md
 
 The TOC is inserted (or replaced) just before the first ## heading in the
 document — after any opening material (title, preamble, cross-reference
@@ -30,6 +30,12 @@ TOC_END = "<!-- /TOC -->"
 HEADING_RE = re.compile(r"^(#{2,3})\s+(.+)$")
 FENCE_RE = re.compile(r"^```")
 
+# Matches the empty anchor tags injected by refs-linkify.py into identifier
+# heading lines (tier-3 definitions), e.g. `<a id="n-lake-001"></a>`.
+# Stripped before the heading text is used for TOC link text and slug
+# generation so the TOC entry is clean and the anchor is GitHub-compatible.
+ANCHOR_HTML_RE = re.compile(r'<a\s+id="[^"]*"\s*></a>\s*')
+
 
 def heading_to_anchor(heading: str) -> str:
     """Convert a markdown heading to a GitHub-compatible anchor."""
@@ -55,7 +61,10 @@ def extract_headings(lines: list[str]) -> list[tuple[int, str]]:
         m = HEADING_RE.match(line)
         if m:
             level = len(m.group(1))  # 2 for ##, 3 for ###
-            headings.append((level, m.group(2)))
+            # Strip any refs-linkify-injected empty anchor tag so the TOC
+            # link text and slug are clean (e.g. `<a id="r-nn"></a>` removed).
+            text = ANCHOR_HTML_RE.sub("", m.group(2))
+            headings.append((level, text))
     return headings
 
 
