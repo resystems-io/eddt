@@ -522,7 +522,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > materialisation ([R-CL-036][r-cl-036]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-004][n-cl-004] Chain
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-004][n-cl-004] Chain
   Lifecycle Governance; [N-CL-003][n-cl-003] Provenance and Lineage; [N-CL-007][n-cl-007] Completeness
   Disclosure
 - **Source (A5):** Observed implementation (`runtime.Header`)
@@ -550,7 +550,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > - *`Closed` — only on the terminator Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.Header`); engineering convention (anchor-only chain metadata)
 - **Rationale (A1):** The anchor-only fields are chain-protocol metadata that
   describe the chain's birth and death, not the entity. Confining them to the
@@ -572,7 +572,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > alternative scheme that meets these properties.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-006][n-cl-006]
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-006][n-cl-006]
   Single-Writer Integrity
 - **Source (A5):** [[RFC9562]](#7-references); engineering convention (coordination-free chain identity)
 - **Rationale (A1):** Coordination-free uniqueness lets any producer mint a
@@ -597,7 +597,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > quality axis ([R-CL-036][r-cl-036]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
+- **Trace to Parent (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
 - **Source (A5):** Observed implementation (`runtime.Origin`, `runtime.Provenance`)
 - **Rationale (A1):** An append-only sequence of `Origin` entries is the audit
   substrate that makes reconstructed state explainable and reproducible.
@@ -621,7 +621,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > it is not part of the base envelope.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
+- **Trace to Parent (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
 - **Source (A5):** [Taint][taint] in the glossary; engineering convention (immutable completeness annotation)
 - **Rationale (A1):** Source completeness is a data-quality fact about an upstream
   chain, attributed to the source the data was derived from — distinct from the
@@ -644,7 +644,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > application is generator-emitted (see §8.7 and delta-gen spec [R-DG-016][r-dg-016]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.FieldDelta`,
   `runtime.FieldDeltaOp`); reconciled per
   [E-CL-003][e-cl-003]
@@ -664,7 +664,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > `delta.nested` companion type SHALL NOT embed `Header`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** delta-gen spec [R-DG-002][r-dg-002],
   [R-DG-008][r-dg-008]
 - **Rationale (A1):** The constructor primitives and contract functions operate
@@ -688,7 +688,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]).
 > set.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
+- **Trace to Parent (A4):** [N-CL-007][n-cl-007] Completeness Disclosure
 - **Source (A5):** Platform need [N-EDDT-008][n-eddt-008] (Data Completeness & Fidelity); [Taint][taint] in the glossary
 - **Rationale (A1):** Own-chain completeness is a data-quality fact in *this*
   chain's Sequence space, needing no source attribution — so it belongs on the
@@ -717,7 +717,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); 
 > ([R-CL-003][r-cl-003]) and the `Provenance` SHOULD name the producer.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (event-sourcing chain anchor)
 - **Rationale (A1):** Minting birth Snapshots through a single primitive
   guarantees the `Sequence == 0` / anchor-field discipline ([R-CL-002][r-cl-002]) is applied
@@ -738,7 +738,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); 
 > the constructor preconditions of [R-CL-011][r-cl-011].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-005][n-cl-005]
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance; [N-CL-005][n-cl-005]
   Bounded Recovery Latency
 - **Source (A5):** Engineering convention (periodic full-state re-anchoring)
 - **Rationale (A1):** Cadence Snapshots are the reusable anchors that bound
@@ -760,7 +760,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); 
 > of [R-CL-011][r-cl-011].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (chain-termination anchor)
 - **Rationale (A1):** A single terminator primitive guarantees `Closed` is set,
   the Sequence advances past every prior position, and chain finiteness
@@ -780,7 +780,7 @@ The requirements in this section bind the Runtime Library ([S-CL-01][s-cl-01]); 
 > have been terminated ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (fail-fast constructor validation)
 - **Rationale (A1):** Validating at mint time surfaces invariant violations
   before a malformed notification can enter the chain, where it would corrupt
@@ -808,7 +808,7 @@ code calls these functions.
 > s.EffectiveAt` (R-CL-017); or `s.Closed != nil` ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-003][n-cl-003] Lineage
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-003][n-cl-003] Lineage
   and Provenance
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`);
   reconciled per [E-CL-001][e-cl-001], [E-CL-002][e-cl-002]
@@ -834,7 +834,7 @@ code calls these functions.
 > `b.EffectiveAt < a.EffectiveAt` ([R-CL-017][r-cl-017]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderForDiff`);
   reconciled per [E-CL-001][e-cl-001], [E-CL-002][e-cl-002]
 - **Rationale (A1):** `Diff` is a pure transformation that carries no lineage by
@@ -859,7 +859,7 @@ numbering is flat `R-CL`.
 > rejected with a non-nil error.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`, `runtime.HeaderForDiff`); delta-gen spec
   [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** A chain is a single entity's history; folding a delta from
@@ -876,7 +876,7 @@ numbering is flat `R-CL`.
 > emission has a strictly greater `Sequence`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-006][n-cl-006]
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-006][n-cl-006]
   Single-Writer Integrity
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
   [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
@@ -896,7 +896,7 @@ numbering is flat `R-CL`.
 > itself SHALL NOT reject the gap.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
+- **Trace to Parent (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`)
 - **Rationale (A1):** Permitting application across gaps keeps the twin live
   under loss; separating "apply" from "completeness" lets taint carry the
@@ -913,7 +913,7 @@ numbering is flat `R-CL`.
 > share an instant — but `EffectiveAt` SHALL NOT roll backwards within a chain.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
   [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** Domain time must not regress within a single entity's
@@ -931,7 +931,7 @@ numbering is flat `R-CL`.
 > rewritten.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
+- **Trace to Parent (A4):** [N-CL-003][n-cl-003] Provenance and Lineage
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`); delta-gen spec
   [R-DG-032][r-dg-032]
 - **Rationale (A1):** Apply is the point at which lineage accumulates; making it
@@ -951,7 +951,7 @@ numbering is flat `R-CL`.
 > (§5.8).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
+- **Trace to Parent (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (gap-tolerant consumer bookkeeping); [Taint][taint] in the glossary
 - **Rationale (A1):** Taint is only meaningful if it is exactly computable; a
   well-defined taint set is what lets a consumer report completeness and trigger
@@ -971,7 +971,7 @@ numbering is flat `R-CL`.
 > invariant).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Observed implementation (`runtime.HeaderAfterApply`)
 - **Rationale (A1):** A terminator is a hard upper bound on the Sequence space;
   enforcing it lets consumers free per-chain state and treat the chain as a
@@ -994,7 +994,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > succeeds a predecessor ([R-CL-022][r-cl-022]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (single-origin entity history)
 - **Rationale (A1):** Exactly one birth per chain gives every entity history a
   single, unambiguous origin from which reconstruction proceeds.
@@ -1014,7 +1014,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > `Sequence > terminator.Sequence` SHALL be emitted on the predecessor ([R-CL-020][r-cl-020]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (chain succession / handover)
 - **Rationale (A1):** Pairing terminator and birth at handover makes succession
   navigable in both directions (`NextChainID` / `PreviousChainID`) and keeps the
@@ -1033,7 +1033,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > `ChainID`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (in-band chain termination)
 - **Rationale (A1):** A successor-less terminator is the clean end-of-life
   signal that lets consumers reclaim resources deterministically.
@@ -1051,7 +1051,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > or `NextChainID`, and SHALL be opaque to consumers.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
+- **Trace to Parent (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer failover)
 - **Rationale (A1):** Rotation is a change of writer, not a change of chain;
   distinguishing it from chain close (no terminator, no linkage) lets a chain
@@ -1070,7 +1070,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > is not specified here.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** Engineering convention (quiescence fallback)
 - **Rationale (A1):** Producers can crash mid-life; a fallback close bounds the
   resources a consumer commits to a chain that will never be terminated in-band,
@@ -1090,7 +1090,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > irrecoverability is legally required.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
+- **Trace to Parent (A4):** [N-CL-004][n-cl-004] Chain Lifecycle Governance
 - **Source (A5):** platform need
   [N-EDDT-011][n-eddt-011] (Data Retention & Lifecycle)
 - **Rationale (A1):** `ChainID` opacity ([R-CL-003][r-cl-003]) makes per-chain deletion
@@ -1116,7 +1116,7 @@ Cadence ([R-CL-027][r-cl-027]) bounds recovery latency; provenance carriage ([R-
 > specified here.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
+- **Trace to Parent (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
 - **Source (A5):** Engineering convention (hybrid time-floor + change-driven re-anchoring)
 - **Rationale (A1):** The time floor bounds recovery latency predictably; the
   change-driven trigger captures domain-relevant transitions regardless of
@@ -1137,7 +1137,7 @@ Cadence ([R-CL-027][r-cl-027]) bounds recovery latency; provenance carriage ([R-
 > identity fields, and SHALL NOT drop, reorder, or rewrite any other entry.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
+- **Trace to Parent (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
 - **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
   Traceability); engineering convention (redundant self-attribution elision)
 - **Rationale (A1):** Eliding an unchanged self-entry is "append nothing": it
@@ -1159,7 +1159,7 @@ Cadence ([R-CL-027][r-cl-027]) bounds recovery latency; provenance carriage ([R-
 > apply to cadence or anchor Snapshots.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
+- **Trace to Parent (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth
 - **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
   Traceability)
 - **Rationale (A1):** Re-asserting the complete lineage on every anchor re-anchors
@@ -1180,7 +1180,7 @@ Cadence ([R-CL-027][r-cl-027]) bounds recovery latency; provenance carriage ([R-
 > position carries its own `Origin`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth; [N-CL-003][n-cl-003] Provenance and
+- **Trace to Parent (A4):** [N-CL-008][n-cl-008] Bounded Provenance Growth; [N-CL-003][n-cl-003] Provenance and
   Lineage
 - **Source (A5):** Platform need [N-EDDT-012][n-eddt-012] (Data Provenance &
   Traceability)
@@ -1207,7 +1207,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > merged downstream by an aggregator.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
+- **Trace to Parent (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer per chain); [Chain][chain] in the glossary
 - **Rationale (A1):** Single-writer ownership is what makes a monotonic Sequence
   achievable without consensus; modelling multiple sources as separate merged
@@ -1225,7 +1225,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > ([R-CL-028][r-cl-028]) and Sequence monotonicity ([R-CL-015][r-cl-015]) across any producer rotation.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
+- **Trace to Parent (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (deployment-selected chain routing)
 - **Rationale (A1):** The mapping mechanism is a deployment choice, but whichever
   is chosen must not admit two writers or a Sequence regression during handover.
@@ -1243,7 +1243,7 @@ The requirements in this section bind the Producer ([S-CL-02][s-cl-02]).
 > emitted and no chain linkage is created.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
+- **Trace to Parent (A4):** [N-CL-006][n-cl-006] Single-Writer Integrity
 - **Source (A5):** Engineering convention (single-writer failover fencing)
 - **Rationale (A1):** Continuity across writer failure requires answering who
   takes over, from which Sequence, and how concurrent writes are fenced; anchor
@@ -1266,7 +1266,7 @@ The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 > notification is applied under the active late-arrival policy ([R-CL-033][r-cl-033]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
+- **Trace to Parent (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** [Frontier][frontier] and [Taint][taint] in the glossary; engineering convention (per-chain consumer bookkeeping)
 - **Rationale (A1):** Frontier and taint are the complete per-chain bookkeeping
   needed for idempotent delivery, gap detection, and subscription resume.
@@ -1293,7 +1293,7 @@ The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 > handling, and accumulated-loss (taint) tracking.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-002][n-cl-002]
+- **Trace to Parent (A4):** [N-CL-001][n-cl-001] Convergent Replication; [N-CL-002][n-cl-002]
   Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (exactly-once apply over at-least-once transport)
 - **Rationale (A1):** The frontier dispatches duplicates trivially, the
@@ -1317,7 +1317,7 @@ The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 > to strong rejection.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
+- **Trace to Parent (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption
 - **Source (A5):** Engineering convention (late-arrival policy); [CRDT][crdt] in the glossary
 - **Rationale (A1):** Strong rejection is the simplest correct policy and the
   required floor; jitter-buffering and CRDT lift are opt-in optimisations that
@@ -1339,7 +1339,7 @@ The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 > recovery, and discovery of an already-closed chain SHALL be the same operation.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
+- **Trace to Parent (A4):** [N-CL-005][n-cl-005] Bounded Recovery Latency
 - **Source (A5):** Engineering convention (snapshot anchor recovery)
 - **Rationale (A1):** Any Snapshot — birth, cadence, or terminator — is a chain
   anchor at its Sequence, so a single recovery path re-seeds the consumer from
@@ -1359,7 +1359,7 @@ The requirements in this section bind the Consumer ([S-CL-03][s-cl-03]).
 > Concrete thresholds and metric backends are deployment selections.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption; [N-CL-005][n-cl-005] Bounded
+- **Trace to Parent (A4):** [N-CL-002][n-cl-002] Gap-Tolerant Consumption; [N-CL-005][n-cl-005] Bounded
   Recovery Latency
 - **Source (A5):** platform need
   [N-EDDT-009][n-eddt-009] (Platform Operational Health)

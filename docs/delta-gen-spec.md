@@ -555,7 +555,7 @@ offending Snapshot type.
 > with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation; upstream spec §4.1
 - **Rationale (A1):** A generator that silently accepts the wrong syntactic form produces output that either fails to compile or does not correspond to the intended entity type; rejecting non-struct types at parse time surfaces authoring errors before any code is written.
 - **V&V method (A2):** Test
@@ -572,7 +572,7 @@ offending Snapshot type.
 > with a diagnostic naming the offending Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.2
 - **Rationale (A1):** Every Snapshot must carry exactly one chain envelope; zero leaves the generated `Apply` and `Diff` with no chain context to validate against, and more than one makes the choice of which `Header` to use ambiguous, silently corrupting provenance accumulation.
 - **V&V method (A2):** Test
@@ -591,7 +591,7 @@ offending Snapshot type.
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.3; observed implementation (`classifyShape`)
 - **Rationale (A1):** Function, channel, and interface-typed fields carry no serialisable value representation; permitting them would require the generator to emit meaningless or non-compilable Delta field declarations.
 - **V&V method (A2):** Test
@@ -608,7 +608,7 @@ offending Snapshot type.
 > reject unrecognised `eddt:` tokens with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.4; observed implementation (`tagKindFor`); Design note §8.9 (`delta.retired` and `delta.omit` semantics); Design note §8.10 (`delta.commutative` reserved semantics)
 - **Rationale (A1):** A closed vocabulary prevents authoring errors from silently producing incorrect Delta semantics; an unrecognised tag would be ignored rather than rejected, hiding mistakes.
 - **V&V method (A2):** Test
@@ -626,7 +626,7 @@ offending Snapshot type.
 > conflicting primary tags with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.4; observed implementation (`parseTag`); [R-DG-051][r-dg-051] (`since=` option)
 - **Rationale (A1):** Multiple primary tags on one field produce an ambiguous field classification; the generator cannot simultaneously treat a field as, for example, both `delta.nested` and `delta.omit`. The `key=value` option syntax allows tags to carry documentary modifiers (e.g. `since=2026-04-01` on `delta.retired`) without additional vocabulary entries.
 - **V&V method (A2):** Test
@@ -643,7 +643,7 @@ offending Snapshot type.
 > and it SHALL NOT affect generated output.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** [R-DG-005][r-dg-005]; analysis §7.6; observed implementation (`parseTag` — unknown `key=value` options preserved without effect); Design note §8.9
 - **Rationale (A1):** The `since` modifier records the date a field was retired directly in the source artefact, making the schema's evolution history self-describing without any runtime or generated-code effect. Preserving it allows tools and auditors to surface the retirement date from source tags alone.
 - **V&V method (A2):** Test
@@ -659,7 +659,7 @@ offending Snapshot type.
 > with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §4.5; observed implementation (`validateTagShape`)
 - **Rationale (A1):** Scalar and pointer fields carry a well-defined atomic-update semantic (Set-pointer presence); applying nested-composite semantics to them would produce a nonsensical Delta field shape.
 - **V&V method (A2):** Test
@@ -675,7 +675,7 @@ offending Snapshot type.
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §5.4; observed implementation (`validateTagCombination`)
 - **Rationale (A1):** `delta.clearable` modifies the nested-composite emission to add an explicit retract capability; without `delta.nested`, there is no composite emission to modify.
 - **V&V method (A2):** Test
@@ -691,7 +691,7 @@ offending Snapshot type.
 > `runtime.Header`-embedding type with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.5; observed implementation (`containsHeaderEmbed`)
 - **Rationale (A1):** A nested struct that embeds `runtime.Header` would introduce a second, ambiguous chain envelope inside the payload, corrupting chain-lifecycle semantics for the outer Snapshot.
 - **V&V method (A2):** Test
@@ -706,7 +706,7 @@ offending Snapshot type.
 > nested type graph contains a cycle with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`validateNestedAcyclic`)
 - **Rationale (A1):** A cyclic nested type graph requires infinite companion Delta types, which cannot be represented in a finite generated source file.
 - **V&V method (A2):** Test
@@ -725,7 +725,7 @@ offending Snapshot type.
 > entity-key candidate with a diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §4.6; observed implementation (`parseKeyField`)
 - **Rationale (A1):** `EntityID` hashing requires a single, unambiguous source of entity identity; a missing key leaves entity routing undefined, and multiple keys make the hash input ambiguous across generator invocations.
 - **V&V method (A2):** Test
@@ -751,7 +751,7 @@ properties of the artefacts that downstream code binds to.
 > hash), or the string `(devel)` when VCS information is unavailable.*
 
 - **Type (A38):** Compliance
-- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability
+- **Trace to Parent (A4):** [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** Go toolchain convention (`go generate`); observed implementation (`vcsRevision`)
 - **Rationale (A1):** The banner satisfies the Go toolchain's convention for distinguishing generated from hand-authored source, and embeds the generator version for audit purposes.
 - **V&V method (A2):** Test
@@ -780,7 +780,7 @@ properties of the artefacts that downstream code binds to.
 > by [R-DG-016][r-dg-016] (`ApplyFoo`, `DiffFoo` for nested types).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** Upstream spec §6; observed implementation (sub-templates)
 - **Rationale (A1):** The struct-prefixed function signatures are the primary contract surface that downstream code — twin maintainers, delta publishers, sibling generators — depends on. The prefix prevents Go namespace collisions when bundling multiple snapshot types into one output package (observed failure mode: `redeclared in this block` for flat `Apply`). Same-package callers use the ergonomic method wrappers ([R-DG-013][r-dg-013]) and are unaffected by the prefix.
 - **V&V method (A2):** Compile check
@@ -807,7 +807,7 @@ properties of the artefacts that downstream code binds to.
 > multiple snapshot types share the package.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Upstream spec §6.1; [R-DG-020][r-dg-020], [R-DG-038][r-dg-038]
 - **Rationale (A1):** Method syntax on the Snapshot type allows callers to write `snap.Apply(d)` rather than `pkg.Apply<T>(snap, d)`, which improves readability at call sites that already hold a `snap` variable.
 - **V&V method (A2):** Compile check
@@ -830,7 +830,7 @@ properties of the artefacts that downstream code binds to.
 > which key type names have already received a wrapper.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-034][r-dg-034]; observed implementation (`EmitEntityIDMethod`, `seenKeyTypes`)
 - **Rationale (A1):** Go does not permit methods on unnamed types; emitting an `EntityID` method on a Snapshot with an unnamed key type produces a compile error. Deduplication is required because multiple snapshot types may share a single key type (e.g. all event types in a domain package keyed by the same identifier type).
 - **V&V method (A2):** Compile check
@@ -847,7 +847,7 @@ properties of the artefacts that downstream code binds to.
 > payload fields appear in `T`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** Upstream spec §5; observed implementation (`fieldDeclsRange`)
 - **Rationale (A1):** Downstream consumers — sibling generators, persisted columnar layouts, analytics tooling — depend on a stable field ordering that reflects the source struct; an unspecified ordering would make the generated type non-deterministic across runs and break structural alignment.
 - **V&V method (A2):** Compile check
@@ -886,7 +886,7 @@ appending `SliceDelta` or `MapDelta` to the payload field name `<F>`
 respectively.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation; [N-DG-003][n-dg-003] System Traceability; [N-DG-005][n-dg-005] Operational Performance
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation; [N-DG-003][n-dg-003] System Traceability; [N-DG-005][n-dg-005] Operational Performance
 - **Source (A5):** Upstream spec §5; [R-DG-029][r-dg-029], [R-DG-030][r-dg-030], [R-DG-032][r-dg-032], [R-DG-028][r-dg-028], [R-DG-026][r-dg-026], [R-DG-050][r-dg-050]; observed implementation (emission table); Design note §8.9 (rationale for omit/retired suppression)
 - **Rationale (A1):** The field representation is the core output contract for downstream consumers; any deviation from Table 1 is a breaking change for code that reads or writes the generated Delta type. Suppressing `delta.omit` and `delta.retired` fields from `TDelta` preserves the additive-only schema discipline: producers can no longer write retired values via the generated surface, while `Apply` carries prior values forward ([R-DG-050][r-dg-050]), keeping historical snapshots intact.
 - **V&V method (A2):** Compile check
@@ -905,7 +905,7 @@ respectively.*
 > intent and the optional `since` modifier ([R-DG-051][r-dg-051]).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-016][r-dg-016], [R-DG-023][r-dg-023]; analysis §7.6; observed implementation (`fieldView.Suppressed`, `applyField` template); Design note §8.9
 - **Rationale (A1):** Without an explicit carry-through rule, a conforming implementation could leave a suppressed field at its zero value in the Apply result, silently corrupting any Snapshot that carried a non-zero retired-field value. The carry-through is the mechanism that makes retirement non-destructive: prior values survive across every Apply regardless of whether the retired field is populated in new deltas.
 - **V&V method (A2):** Test
@@ -921,7 +921,7 @@ respectively.*
 > emitted into a separate file whose path is derived per [R-DG-020][r-dg-020].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation
 - **Rationale (A1):** Different projects have different preferences for whether generated code is consolidated (easier to manage) or per-type (easier to diff and review); both modes are needed for broad adoption.
 - **V&V method (A2):** Test
@@ -940,7 +940,7 @@ respectively.*
 > `HTTPHandler` → `http_handler_delta.go`).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation (`deriveOutPath`)
 - **Rationale (A1):** Consistent, predictable output file names allow `//go:generate` directives and CI scripts to refer to generated files without coupling to the exact struct name casing.
 - **V&V method (A2):** Test
@@ -955,7 +955,7 @@ respectively.*
 > including correct resolution of all imported package identifiers.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`executeEmit`)
 - **Rationale (A1):** Generated code that does not compile is indistinguishable from a generator bug; the Output Contract requires that the generated artefact is immediately usable after generation.
 - **V&V method (A2):** Compile check
@@ -974,7 +974,7 @@ respectively.*
 > source packages and flags.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability
+- **Trace to Parent (A4):** [N-DG-003][n-dg-003] System Traceability
 - **Source (A5):** Upstream spec §8.4; [R-DG-024][r-dg-024]; observed implementation
 - **Rationale (A1):** Byte-identical regeneration is required for generated source to be manageable under version control and verifiable in CI; a non-deterministic generator forces re-committing generated files on every run, obscuring genuine changes.
 - **V&V method (A2):** Analysis
@@ -1012,7 +1012,7 @@ defers to), unless otherwise noted.
 > `Apply(a, Diff(a, b)) == b` in the payload component.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.1; [R-DG-050][r-dg-050] (suppressed-field carry-through)
 - **Rationale (A1):** Round-trip is the central law justifying that `Diff` is a faithful encoding of the change from `a` to `b`; without it, downstream coalescing, replay, and audit reconstruction lose ground truth. The law jointly constrains `Diff` (must not drop or fabricate field changes) and `Apply` (must not touch fields the delta did not address). For suppressed fields (`delta.omit`, `delta.retired`, `entity.key`) this obligation is satisfied by [R-DG-050][r-dg-050]: `Apply` copies the source field value unchanged so the round-trip identity holds across all payload fields.
 - **V&V method (A2):** Analysis
@@ -1029,7 +1029,7 @@ defers to), unless otherwise noted.
 > `Apply(a, Diff(a, aprime))` SHALL equal `aprime`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety; [N-DG-005][n-dg-005] Operational Performance
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety; [N-DG-005][n-dg-005] Operational Performance
 - **Source (A5):** Upstream spec §8.2
 - **Rationale (A1):** A `Diff` that emits spurious field updates for equal payloads wastes wire bandwidth, triggers needless downstream processing, and violates the minimality invariant on which delta compaction (Coalesce) relies.
 - **V&V method (A2):** Analysis
@@ -1047,7 +1047,7 @@ defers to), unless otherwise noted.
 > equal `Coalesce(s, [d_1, …, d_n])`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.3; [R-DG-012][r-dg-012], [R-DG-013][r-dg-013]
 - **Rationale (A1):** Fold-equivalence means `Coalesce` can replace a sequence of `Apply` calls without referencing intermediate snapshots. Partition-independence (a corollary of fold-equivalence) means a backlog consumer can chunk the delta list at any boundary and resume from the intermediate result, enabling incremental catch-up without centralised coordination.
 - **V&V method (A2):** Analysis
@@ -1069,7 +1069,7 @@ defers to), unless otherwise noted.
 > a field whose shape the Arrow columnar projection cannot represent.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-005][n-dg-005] Operational Performance
+- **Trace to Parent (A4):** [N-DG-005][n-dg-005] Operational Performance
 - **Source (A5):** [N-DG-005][n-dg-005] validation criterion (round-trip through Arrow's columnar layout); sibling generators arrow-writer-gen / arrow-reader-gen; [R-DG-003][r-dg-003]
 - **Rationale (A1):** [N-DG-005][n-dg-005] requires the generated types to project into Arrow's columnar layout for analytical scan and durable Parquet storage, but no derived requirement bound the Code Emitter to that property — the cross-generator round-trip was previously verified only against the need. Because arrow-writer-gen silently skips field shapes it cannot represent (a warning, not an error), an unrepresentable shape would degrade to a dropped column rather than a build failure; confining emitted shapes to the admissible vocabulary ([R-DG-003][r-dg-003]) and asserting a lossless round-trip — envelope included — is what makes the data-at-rest (Parquet) and data-in-motion (Arrow IPC) projections trustworthy. The `Header` envelope, and `Provenance` in particular (a list of structs each carrying a map and a nested list of structs), is the deepest composite the projection must carry.
 - **V&V method (A2):** Test
@@ -1098,7 +1098,7 @@ defers to), unless otherwise noted.
 struct fields, `nil` for map and slice fields).*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §5.4
 - **Rationale (A1):** The clearable semantics provide an explicit retract mechanism that nil-pointer presence cannot express for composite fields; the five-row truth-table defines the complete semantics that both `Diff` and `Apply` must honour consistently.
 - **V&V method (A2):** Test
@@ -1115,7 +1115,7 @@ struct fields, `nil` for map and slice fields).*
 > one empty.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-007][r-dg-007], [R-DG-006][r-dg-006], [R-DG-016][r-dg-016], [R-DG-028][r-dg-028]
 - **Rationale (A1):** Go's zero value for a slice or map is `nil`, but an initialised empty slice or map is semantically equivalent; treating them as different would produce spurious `Added`/`Removed` payload for initialisation artefacts.
 - **V&V method (A2):** Test
@@ -1135,7 +1135,7 @@ struct fields, `nil` for map and slice fields).*
 > specified.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §5.3; [R-DG-006][r-dg-006], [R-DG-016][r-dg-016]
 - **Rationale (A1):** Slice fields used to model membership sets (e.g. group membership lists) cannot guarantee order across producers; the set-membership invariant ensures correct convergence regardless of the order in which additions and removals arrive.
 - **V&V method (A2):** Analysis
@@ -1157,7 +1157,7 @@ struct fields, `nil` for map and slice fields).*
 > before `s.Header.EffectiveAt`; `s.Header.Closed` is non-nil.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §6.1; [R-DG-030][r-dg-030], [R-DG-031][r-dg-031], [R-DG-036][r-dg-036], [R-DG-037][r-dg-037], [R-DG-038][r-dg-038]
 - **Rationale (A1):** Each precondition guards a distinct chain-safety invariant: EntityID equality prevents cross-entity corruption, ChainID equality prevents cross-chain application, Sequence strict-monotonicity prevents duplicate or backwards application, EffectiveAt non-decrease enforces domain-time ordering, and Closed rejection prevents extension of a terminated chain.
 - **V&V method (A2):** Test
@@ -1176,7 +1176,7 @@ struct fields, `nil` for map and slice fields).*
 > support the identity-diff case `Diff(a, a)`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §6.2; [R-DG-029][r-dg-029], [R-DG-031][r-dg-031]
 - **Rationale (A1):** Computing a diff between snapshots on different chains or with non-monotonic Sequence would produce a semantically meaningless delta whose `Apply` would violate the round-trip invariant ([R-DG-023][r-dg-023]).
 - **V&V method (A2):** Test
@@ -1192,7 +1192,7 @@ struct fields, `nil` for map and slice fields).*
 > a valid runtime value.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-034][r-dg-034], [R-DG-035][r-dg-035]; [R-DG-029][r-dg-029], [R-DG-030][r-dg-030]
 - **Rationale (A1):** A zero `EntityID` arises when a caller populates the `Header` without hashing the entity key; silently applying a delta against a zero-identity snapshot would corrupt EntityID-keyed routing and subscription state throughout the system.
 - **V&V method (A2):** Test
@@ -1208,7 +1208,7 @@ struct fields, `nil` for map and slice fields).*
 > replace the `Provenance` sequence accumulated in any Snapshot.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Chain-lifecycle spec §3.2.1; [R-DG-016][r-dg-016]
 - **Rationale (A1):** `Provenance` is the audit trail of lineage entries for a Snapshot; append-only accumulation ensures that any past contributor to a Snapshot's state can be identified from the current Snapshot alone, without replaying the full delta chain.
 - **V&V method (A2):** Analysis
@@ -1229,7 +1229,7 @@ struct fields, `nil` for map and slice fields).*
 > arguments.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** Upstream spec §8.4; [chain-lifecycle spec R-CL-014](chain-lifecycle-spec.md#r-cl-014)
 - **Rationale (A1):** Purity is a prerequisite for idempotent re-delivery, deterministic catch-up, and safe concurrent use; any side effect would make the operations non-replayable and would couple generated code to environmental state.
 - **V&V method (A2):** Analysis
@@ -1246,7 +1246,7 @@ struct fields, `nil` for map and slice fields).*
 > declaration order in the source struct.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-003][n-dg-003] System Traceability; [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-035][r-dg-035]
 - **Rationale (A1):** `EntityID` is the global routing key for all delta-based operations; content-determination from a stable field order ensures that two independent producers for the same real-world entity compute the same `EntityID` without coordination.
 - **V&V method (A2):** Analysis
@@ -1262,7 +1262,7 @@ struct fields, `nil` for map and slice fields).*
 > never produce a zero `EntityID`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-004][n-dg-004] Chain Safety
+- **Trace to Parent (A4):** [N-DG-004][n-dg-004] Chain Safety
 - **Source (A5):** [R-DG-034][r-dg-034]; observed implementation (`runtime.EntityID`)
 - **Rationale (A1):** A fixed-width representation with a defined sentinel allows consumers to test validity with a single equality check without importing type-specific logic; the constraint that valid hashes are non-zero is enforced jointly by [R-DG-031][r-dg-031].
 - **V&V method (A2):** Compile check
@@ -1286,7 +1286,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > struct names are provided.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-020][r-dg-020]; observed implementation (`RunE`)
 - **Rationale (A1):** Supporting both positional arguments and the `--type` flag allows `//go:generate` directives to use whichever form is most readable; requiring a non-empty union prevents silent no-op invocations.
 - **V&V method (A2):** Test
@@ -1303,7 +1303,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > types.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** [R-DG-038][r-dg-038]; observed implementation (`inputPkgs`)
 - **Rationale (A1):** Supporting both filesystem paths and import paths allows the generator to be used from both `//go:generate` directives (typically relative paths) and standalone tooling (typically import paths).
 - **V&V method (A2):** Test
@@ -1319,7 +1319,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > [R-DG-019][r-dg-019], writing each target to the path derived by [R-DG-020][r-dg-020].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Rationale (A1):** The output mode flag is the only user-visible control over where generated source lands; an absent flag that silently picks a mode could overwrite unexpected paths, so the default (multi-file) is stated explicitly.
 - **V&V method (A2):** Test
 - **Allocation (A8):** [S-DG-04][s-dg-04] Generator CLI
@@ -1336,7 +1336,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > for the generated import block.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring; [N-DG-002][n-dg-002] Cross-Layer Schema Harmonisation
 - **Source (A5):** [R-DG-019][r-dg-019] (cross-package); observed implementation (`parsePkgAliases`)
 - **Rationale (A1):** Cross-package generation is required when the Delta type must live in a different package from the Snapshot (e.g. a public API package); import aliases resolve ambiguous package names in the generated import block.
 - **V&V method (A2):** Test
@@ -1353,7 +1353,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > diagnostic.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`parseKeyFields`)
 - **Rationale (A1):** Some Snapshots have their entity key embedded in a struct field that cannot be annotated with `entity.key` (e.g. a shared embedded type); the override provides an escape hatch that keeps the Snapshot struct free of generator-specific tags.
 - **V&V method (A2):** Test
@@ -1369,7 +1369,7 @@ The requirements in this section bind the Generator CLI ([S-DG-04][s-dg-04]).
 > name. All diagnostic output SHALL be written to `stderr`.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`RunE`, `main`)
 - **Rationale (A1):** Build systems and `//go:generate` scripts detect generator failures only through exit status; writing diagnostics to `stderr` keeps the generated source channel clean for use in pipes.
 - **V&V method (A2):** Test
@@ -1391,7 +1391,7 @@ jointly unless otherwise noted.
 > defined by [R-DG-043][r-dg-043] through [R-DG-049][r-dg-049].*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.Standalone`; `--standalone` flag)
 - **Rationale (A1):** Standalone mode lowers the adoption barrier for teams that want delta/diff semantics without pulling in the full eddt module graph.
 - **V&V method (A2):** Test
@@ -1408,7 +1408,7 @@ jointly unless otherwise noted.
 > accepted without error.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`parseSnapshot`, `ParseOpts.Standalone`)
 - **Rationale (A1):** Standalone mode targets Snapshot types that have no chain-lifecycle context; requiring `runtime.Header` would force a dependency on the runtime package, negating the purpose of the mode.
 - **V&V method (A2):** Test
@@ -1423,7 +1423,7 @@ jointly unless otherwise noted.
 > any symbol from that package.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`buildImports`, `standalone bool` gate)
 - **Rationale (A1):** The primary motivation for standalone mode is to avoid the runtime dependency; any leakage of runtime symbols would defeat this goal.
 - **V&V method (A2):** Test (grep check in `TestStandalone_NoRuntimeImport`)
@@ -1446,7 +1446,7 @@ jointly unless otherwise noted.
 > delegate to the corresponding pure function and also carry no error return.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`applyFuncStandalone` template)
 - **Rationale (A1):** Without a `runtime.Header` there is no chain-integrity context to validate, so there is no error source. Returning a bare value simplifies call-sites and makes the pure, stateless nature explicit.
 - **V&V method (A2):** Test (`TestStandalone_ApplyDiffPureSignatures`)
@@ -1473,7 +1473,7 @@ jointly unless otherwise noted.
 > rather than overwriting.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`emitStandaloneTypes`, `template_standalone.go`)
 - **Rationale (A1):** The companion file provides local equivalents of the runtime types so that the `*_delta.go` file has no external dependencies. Overwrite protection prevents accidental destruction of hand-written files.
 - **V&V method (A2):** Test (`TestStandalone_CompanionFileBlake2b`)
@@ -1494,7 +1494,7 @@ jointly unless otherwise noted.
 >   values differ from runtime-mode values.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.StandaloneHash`; `standaloneTypesSHA256Str`)
 - **Rationale (A1):** `blake2b` preserves EntityID compatibility with the runtime, easing future migration. `sha256` is provided for adopters who require zero non-stdlib dependencies and do not need cross-mode EntityID compatibility. (The runtime's choice of Blake2b-256 is explained in §8.2.)
 - **V&V method (A2):** Test (`TestStandalone_CompanionFileSHA256`)
@@ -1509,7 +1509,7 @@ jointly unless otherwise noted.
 > relative to the directory of the generated `*_delta.go` file.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`Config.StandaloneTypesFile`)
 - **Rationale (A1):** Users may have an existing `delta_types.go` in the target package; the flag allows them to choose a non-conflicting name.
 - **V&V method (A2):** Test (`TestStandalone_customTypesFilename`)
@@ -1528,7 +1528,7 @@ jointly unless otherwise noted.
 > sharing the same identifier.*
 
 - **Type (A38):** Functional
-- **Parent need (A4):** [N-DG-001][n-dg-001] Declarative Authoring
+- **Trace to Parent (A4):** [N-DG-001][n-dg-001] Declarative Authoring
 - **Source (A5):** Observed implementation (`EntityIDFuncName = prefixEntityID + ps.Name`; `template_standalone.go`)
 - **Rationale (A1):** Without the struct prefix, `func EntityID(k K) EntityID` would conflict with `type EntityID [32]byte` in the same package, producing a compile error. The struct prefix, already mandated by [R-DG-012][r-dg-012], cleanly resolves the ambiguity.
 - **V&V method (A2):** Compile check; Test (`TestStandalone_EntityIDLocalType`)
