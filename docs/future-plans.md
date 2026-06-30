@@ -14,6 +14,7 @@ contribution to the EDDT project 😉.
 - [Relationships](#relationships)
 - [Analytics](#analytics)
 - [Storage](#storage)
+- [Schema and Serialisation](#schema-and-serialisation)
 - [Transformations](#transformations)
 - [Modelling](#modelling)
 - [Consumption](#consumption)
@@ -56,7 +57,21 @@ For pre-processing prior to writing to analytics formats, it is useful to
 persist event notifications in a format that is easy to process.
 
 We aim to support:
-- writes into event storage like Avro
+- writes into event storage like Arrow IPC.
+
+## Schema and Serialisation
+
+The Arrow code generators (`arrow-writer-gen`, `arrow-reader-gen`) and the
+`delta-gen` companion turn annotated Go models into reflection-free columnar
+serialisation. We expect to deepen the schema layer they emit.
+
+We aim to support:
+- opt-in Arrow dictionary encoding for marked fields, so low-cardinality string
+  columns are stored compactly while the reader continues to resolve values
+  transparently.
+- a stable, generated schema fingerprint, derived from the Arrow data-type
+  fingerprints of the emitted schema, so producers and consumers can detect
+  schema drift and verify compatibility before reading.
 
 ## Transformations
 

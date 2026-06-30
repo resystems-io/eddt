@@ -259,3 +259,7 @@ We highly encourage you to utilize it as a standard step in your data
 engineering or CQRS pipeline implementations. If you discover additional complex
 structural corner cases or performance opportunities, patches and improvements
 are always enthusiastically welcomed!
+
+Planned enhancements to the columnar schema layer — opt-in dictionary-encoded
+columns and a stable schema fingerprint — are described in
+[EDDT Future Plans](future-plans.md).

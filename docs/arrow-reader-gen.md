@@ -267,3 +267,7 @@ throughput far exceeding traditional reflection.
 Combined with `arrow-writer-gen`, these paired capabilities provide a complete
 CQRS or data-engineering pipeline natively typed for the modern Go stack.
 Submissions with improvements and enhancements are welcome.
+
+Planned enhancements to the columnar schema layer — opt-in dictionary-encoded
+columns and a stable schema fingerprint — are described in
+[EDDT Future Plans](future-plans.md).

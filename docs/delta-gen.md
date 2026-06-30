@@ -677,4 +677,6 @@ companion:
 A complete, tested example — source Snapshot, generated Delta, and API usage
 tests — is at [`internal/deltagen/example/pump`][pump-example].
 
+The project's planned direction is tracked in [EDDT Future Plans](future-plans.md).
+
 [pump-example]: ../internal/deltagen/example/pump/doc.go "EDDT delta-gen example"
