@@ -2,8 +2,8 @@
 """Regenerate the alphabetical index at the end of a markdown document.
 
 Usage:
-    ./scripts/markdown-index.py docs/analysis-eddt-glossary.md
-    ./scripts/markdown-index.py docs/analysis-eddt-stakeholders.md
+    ./scripts/markdown-index.py docs/eddt-glossary.md
+    ./scripts/markdown-index.py docs/eddt-stakeholders.md
 
 Reads a markdown document with numbered ## sections containing ###
 entries, and replaces (or appends) an "## Alphabetical Index" section
@@ -17,11 +17,17 @@ Reference definitions are collected at the bottom:
 
 Works on any markdown document that follows the ## N. Section / ### Entry
 heading convention (e.g. glossaries, stakeholder registers).
+
+Section/entry headings inside fenced code blocks and HTML comments are
+skipped entirely (see the shared ``_markdown_shared`` module, which
+must live alongside this script).
 """
 
 import re
 import sys
 from pathlib import Path
+
+import _markdown_shared
 
 
 INDEX_HEADING = "## Alphabetical Index"
@@ -33,14 +39,6 @@ TERM_RE = re.compile(r"^### (.+)$")
 # an end marker fall back to "strip from heading to EOF" — matching
 # the previous behaviour — and gain the end marker on next write.
 GENERATED_END = "<!-- /Alphabetical Index -->"
-
-
-def heading_to_anchor(heading: str) -> str:
-    """Convert a markdown heading to a GitHub-compatible anchor."""
-    anchor = heading.lower()
-    anchor = re.sub(r"[^\w\s-]", "", anchor)  # strip punctuation
-    anchor = re.sub(r"\s+", "-", anchor.strip())
-    return anchor
 
 
 def short_ref(heading: str) -> str:
@@ -59,10 +57,18 @@ def short_ref(heading: str) -> str:
 
 
 def extract_terms(lines: list[str]) -> list[tuple[str, str]]:
-    """Return [(term_heading, section_name), ...] from the glossary body."""
+    """Return [(term_heading, section_name), ...] from the glossary body.
+
+    Skips fenced code blocks and HTML comments (see
+    ``_markdown_shared.real_line_flags``) — otherwise a
+    ``## N. Section`` / ``### Term`` pair buried inside either would be
+    picked up as a real glossary entry.
+    """
     terms = []
     current_section = ""
-    for line in lines:
+    for line, is_real in zip(lines, _markdown_shared.real_line_flags(lines)):
+        if not is_real:
+            continue
         sm = SECTION_RE.match(line)
         if sm:
             current_section = sm.group(1)
@@ -87,7 +93,7 @@ def build_index(terms: list[tuple[str, str]]) -> str:
     refs = []
     for heading, section in sorted_terms:
         ref = short_ref(heading)
-        anchor = heading_to_anchor(heading)
+        anchor = _markdown_shared.heading_to_anchor(heading)
         entries.append(f"- [{heading}][{ref}] -- {section}")
         refs.append(f'[{ref}]: #{anchor} "{heading}"')
 
@@ -113,27 +119,30 @@ def locate_existing_index(text: str) -> tuple[str, str, bool]:
     Block end is identified by ``GENERATED_END`` when present
     (authoritative). For legacy files without an end marker the block
     is treated as extending to EOF — matching the previous behaviour.
+    This "no end marker" fallback is a policy specific to this script
+    (unlike, say, refs-linkify.py's shape-based recovery), so it's
+    implemented locally on top of the shared
+    ``_markdown_shared.strip_marked_block``, which only handles the
+    well-formed start+end case.
     """
+    before, after, found = _markdown_shared.strip_marked_block(
+        text, INDEX_HEADING, GENERATED_END
+    )
+    if found:
+        # strip_marked_block consumes only the marker lines themselves;
+        # this script's contract additionally consumes at most one
+        # trailing newline after the end marker (not all of them).
+        if after.startswith("\n"):
+            after = after[1:]
+        return before, after, True
+
+    # No well-formed (start+end) block. Distinguish "no start marker at
+    # all" from "start marker present, no end marker" (legacy: treat
+    # from the heading to EOF as the block).
     idx = text.find(INDEX_HEADING)
     if idx < 0:
         return text, "", False
-
-    before = text[:idx]
-    tail = text[idx:]
-
-    end_pos = tail.find(GENERATED_END)
-    if end_pos >= 0:
-        # Consume the end marker line itself, and any single trailing
-        # newline that normally follows it.
-        end_pos += len(GENERATED_END)
-        if end_pos < len(tail) and tail[end_pos] == "\n":
-            end_pos += 1
-        after = tail[end_pos:]
-    else:
-        # Legacy: no end marker; treat from heading to EOF as the block.
-        after = ""
-
-    return before, after, True
+    return text[:idx], "", True
 
 
 def main() -> None:
@@ -173,8 +182,16 @@ def main() -> None:
 
     # Ensure file ends with exactly one trailing newline.
     output = output.rstrip() + "\n"
-    path.write_text(output)
-    print(f"  INDEX {path} ({len(terms)} terms)")
+
+    # No-op-if-unchanged: skip the write when the committed index is
+    # already up-to-date. Preserves mtime so the script is safe to
+    # invoke from build dependency chains without triggering spurious
+    # downstream rebuilds — matching markdown-toc.py/markdown-num.py's
+    # existing contract (this script previously had no such guard).
+    if _markdown_shared.write_if_changed(path, output, text):
+        print(f"  INDEX {path} ({len(terms)} terms)")
+    else:
+        print(f"  INDEX {path} (no changes, {len(terms)} terms)")
 
 
 if __name__ == "__main__":

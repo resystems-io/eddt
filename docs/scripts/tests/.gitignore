@@ -1,0 +1,2 @@
+# Generated PDFs from test runs (e.g. mermaid-showcase.pdf from test_mermaid.py)
+*.pdf

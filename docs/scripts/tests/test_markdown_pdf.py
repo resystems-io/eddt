@@ -42,6 +42,7 @@ Exits 0 on success, non-zero on any failed assertion.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -49,6 +50,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent
 MD_PDF = SCRIPTS / "markdown-pdf.py"
+
+# markdown-pdf.py imports the shared _markdown_shared module as a plain
+# sibling import (relying on a directly-executed script's own directory
+# being on sys.path[0]). Loading it programmatically via
+# spec_from_file_location below does not get that for free, so it must be
+# added explicitly here.
+sys.path.insert(0, str(SCRIPTS))
 
 
 def _load_module():
@@ -1057,6 +1065,144 @@ def test_title_strips_image_link_variant() -> None:
 
 
 # ----------------------------------------------------------------------
+# Title extraction is HTML-comment-aware
+# ----------------------------------------------------------------------
+
+
+def test_title_skips_commented_heading() -> None:
+    """Covers: R43 — A `# ...` heading inside a leading HTML comment
+    (e.g. commented-out rough notes) is not mistaken for the document
+    title; extract_title() returns the real title that follows the
+    comment."""
+    mod = _load_module()
+    md = (
+        "<!--\n\n# Rough Notes\n\nSome scratch content.\n\n-->\n\n"
+        "# Real Title\n\n## S\n"
+    )
+    title = mod.extract_title(md)
+    if title != "Real Title":
+        _fail(f"R43: commented heading mistaken for title: {title!r}")
+
+
+def test_title_found_after_multiple_comments() -> None:
+    """Covers: R44 — The real title is found correctly when preceded by
+    more than one comment block, reflecting the actual ha-spec.md
+    layout (a markdown-pdf: directive comment plus a separate
+    rough-notes comment before the title)."""
+    mod = _load_module()
+    md = (
+        "<!-- markdown-pdf:\nwatermark:\n  text: DRAFT\n-->\n\n"
+        "<!--\n\n# REWORK REQUIRED\n\nRough notes.\n\n-->\n\n"
+        "# High Availability — System Requirements Specification\n\n## S\n"
+    )
+    title = mod.extract_title(md)
+    if title != "High Availability — System Requirements Specification":
+        _fail(f"R44: wrong title found after multiple comments: {title!r}")
+
+
+def test_real_title_line_removed_from_body() -> None:
+    """Covers: R45 — The excision logic in main() (mirrored here via
+    _find_title_match, the same helper extract_title() uses) removes
+    exactly the real title line from the body, while a commented-out
+    `# ...` heading earlier in the document is left untouched. Guards
+    against the pre-fix regression where a missing re.MULTILINE made
+    the removal a silent no-op whenever anything preceded the title."""
+    mod = _load_module()
+    md = (
+        "<!--\n\n# Rough Notes\n\nScratch content.\n\n-->\n\n"
+        "# Real Title\n\nBody text.\n\n## S\n"
+    )
+    title_match = mod._find_title_match(md)
+    if not title_match:
+        _fail("R45: no title match found")
+    end = title_match.end()
+    while end < len(md) and md[end] == "\n":
+        end += 1
+    stripped = md[: title_match.start()] + md[end:]
+
+    if "# Real Title" in stripped:
+        _fail("R45: real title line was not removed from the body")
+    if "# Rough Notes" not in stripped:
+        _fail("R45: commented-out heading was incorrectly removed")
+    if "Body text." not in stripped:
+        _fail("R45: unrelated body content was lost during removal")
+
+
+def test_preamble_body_split_skips_commented_heading() -> None:
+    """Covers: R46 — extract_preamble_and_body() splits at the real
+    first ## heading, not one buried inside a leading HTML comment.
+    Direct regression guard for the bug that motivated this follow-up:
+    splitting at a commented-out '## ' line severs the comment mid-way,
+    so its closing --> ends up on the wrong side of the split and the
+    orphaned half is no longer recognised as a comment."""
+    mod = _load_module()
+    md = (
+        "# Real Title\n\n"
+        "<!--\n\n## Confinement\n\nScratch content.\n\n-->\n\n"
+        "## 1. Introduction\n\nReal body.\n"
+    )
+    preamble, body = mod.extract_preamble_and_body(md)
+
+    # The comment must close (its --> found) within the preamble, not
+    # dangle into the body half.
+    if "-->" not in preamble:
+        _fail("R46: comment's closing --> ended up on the wrong side of the split")
+    if "<!--" in body or "-->" in body:
+        _fail("R46: body contains a stray, unmatched comment delimiter")
+    if not body.startswith("## 1. Introduction"):
+        _fail(f"R46: body does not start at the real heading: {body[:40]!r}")
+    if "Confinement" in body:
+        _fail("R46: commented-out heading leaked into body")
+
+
+def test_full_pipeline_comment_content_not_rendered() -> None:
+    """Covers: R47 — end-to-end: title extraction, title-line removal,
+    preamble/body split, and md_to_html on both halves. Rough-notes
+    text inside a leading comment must not appear in either the
+    rendered preamble HTML or body HTML — the exact scenario hit live
+    in ha-spec.pdf (a comment severed by an old comment-blind
+    preamble/body split rendered as literal text)."""
+    mod = _load_module()
+    md = (
+        "<!--\n\n# REWORK REQUIRED\n\nRough notes that must stay hidden.\n\n"
+        "## Confinement\n\nMore rough notes.\n\n-->\n\n"
+        "# High Availability — System Requirements Specification\n\n"
+        "## 1. Introduction\n\nReal body text.\n"
+    )
+
+    title = mod.extract_title(md)
+    title_match = mod._find_title_match(md)
+    end = title_match.end()
+    while end < len(md) and md[end] == "\n":
+        end += 1
+    md_no_title = md[: title_match.start()] + md[end:]
+
+    preamble_md, body_md = mod.extract_preamble_and_body(md_no_title)
+    preamble_html, _, refs = mod.md_to_html(preamble_md, math=False)
+    body_html, _, _ = mod.md_to_html(body_md, math=False, references=refs)
+
+    if title != "High Availability — System Requirements Specification":
+        _fail(f"R47: wrong title extracted: {title!r}")
+
+    # The rough-notes text is expected to survive as literal text INSIDE a
+    # real, correctly-closed <!-- --> HTML comment in the rendered output
+    # (invisible when actually displayed) — that's success, not the bug.
+    # The bug is the text appearing OUTSIDE any comment, e.g. parsed into
+    # a real <h1>/<p> tag. So strip well-formed comments from the output
+    # before checking: nothing should be left over.
+    comment_re = re.compile(r"<!--.*?-->", re.DOTALL)
+    visible_preamble = comment_re.sub("", preamble_html)
+    visible_body = comment_re.sub("", body_html)
+    for leaked in ("REWORK REQUIRED", "Confinement", "Rough notes"):
+        if leaked in visible_preamble:
+            _fail(f"R47: {leaked!r} rendered as visible preamble content (outside any comment)")
+        if leaked in visible_body:
+            _fail(f"R47: {leaked!r} rendered as visible body content (outside any comment)")
+    if "Real body text." not in body_html:
+        _fail("R47: real body content missing from rendered body HTML")
+
+
+# ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
 
@@ -1075,6 +1221,16 @@ def main() -> None:
          test_inline_code_unaffected),
         ("R07 — long NATS-subject content preserved through both forms",
          test_nats_subject_content_preserved),
+        ("R43 — commented heading is not mistaken for the title",
+         test_title_skips_commented_heading),
+        ("R44 — real title found after multiple leading comments",
+         test_title_found_after_multiple_comments),
+        ("R45 — real title line removed from body; commented heading left alone",
+         test_real_title_line_removed_from_body),
+        ("R46 — preamble/body split skips a commented heading",
+         test_preamble_body_split_skips_commented_heading),
+        ("R47 — full pipeline: comment content not rendered in preamble or body",
+         test_full_pipeline_comment_content_not_rendered),
     ]
     for label, fn in tests:
         fn()

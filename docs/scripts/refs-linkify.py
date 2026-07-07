@@ -28,12 +28,18 @@ Identifier shape: `[A-Z]-(?:[A-Z]{2,4}-)?\\d{2,3}` — supports
 `X-nn`, `X-nnn`, `X-AB-nn`, `X-ABC-nnn`, `X-ABCD-nnn` shapes.
 
 Reference rewrites: every body-text occurrence of the identifier
-(outside fenced code blocks, outside link defs, and on lines that
-are not themselves definition sites) is rewritten to
+(outside fenced code blocks, outside HTML comments, outside link defs,
+and on lines that are not themselves definition sites) is rewritten to
 `[X-nn][x-nn]`. The reference-link-definition block at the foot of
 the file is regenerated each run, bracketed by start/end markers
 so it composes with adjacent generated blocks (markdown-toc,
 markdown-index).
+
+Definition scanning, reference rewriting, and used-identifier collection
+all skip fenced code blocks and HTML comments (see the shared
+``_markdown_shared`` module, which must live alongside this script) —
+a definition- or identifier-shaped line inside either is never treated
+as real.
 
 Idempotent. Run cleanly multiple times against the same file.
 
@@ -49,6 +55,8 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
+
+import _markdown_shared
 
 
 # ---------- Identifier shape ------------------------------------------------
@@ -222,15 +230,18 @@ def find_definitions(text: str) -> tuple[dict[str, Definition], list[tuple[str, 
     `duplicates` lists identifiers that matched more than once across
     any tiers — the caller should fail with a duplicate-definition
     error and report all locations.
+
+    Skips fenced code blocks and HTML comments (see
+    ``_markdown_shared.real_line_flags``) — otherwise a
+    heading/checklist/table definition-shaped line inside either would be
+    registered as a real definition.
     """
     found: dict[str, list[Definition]] = {}
-    in_code = False
+    lines = text.splitlines()
+    real = _markdown_shared.real_line_flags(lines)
 
-    for line_no, line in enumerate(text.splitlines(), start=1):
-        if line.lstrip().startswith("```") or line.lstrip().startswith("~~~"):
-            in_code = not in_code
-            continue
-        if in_code:
+    for line_no, (line, is_real) in enumerate(zip(lines, real), start=1):
+        if not is_real:
             continue
         if LINKDEF_RE.match(line):
             continue
@@ -409,7 +420,10 @@ def linkify_text(text: str, definitions: dict[str, Definition]) -> str:
     definition lines (whose lines are passed through unchanged at the
     body-rewrite stage; auto-anchor insertion is applied separately).
 
-    Skips fenced code blocks and link-definition lines.
+    Skips fenced code blocks, HTML comments (see
+    ``_markdown_shared.real_line_flags``), and link-definition lines. A
+    bare identifier inside a comment is left bare — rewriting it would
+    inject link syntax into text that's supposed to be completely inert.
 
     A heading line that is itself a tier-3 definition for an
     identifier is NOT rewritten for that identifier (the heading is
@@ -418,16 +432,12 @@ def linkify_text(text: str, definitions: dict[str, Definition]) -> str:
     identifier appearing in the same heading IS linkified.
     """
     lines = text.splitlines(keepends=True)
+    stripped_lines = [line.rstrip("\n") for line in lines]
+    real = _markdown_shared.real_line_flags(stripped_lines)
     out: list[str] = []
-    in_code = False
 
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code = not in_code
-            out.append(line)
-            continue
-        if in_code:
+    for line, is_real in zip(lines, real):
+        if not is_real:
             out.append(line)
             continue
         if LINKDEF_RE.match(line.rstrip("\n")):
@@ -505,15 +515,17 @@ def insert_definition_anchors(text: str, definitions: dict[str, Definition]) -> 
 # ---------- Reference block emission ----------------------------------------
 
 def collect_used_identifiers(text: str) -> set[str]:
-    """Return the set of identifiers referenced in body text."""
+    """Return the set of identifiers referenced in body text.
+
+    Skips fenced code blocks and HTML comments (see
+    ``_markdown_shared.real_line_flags``) — an identifier appearing
+    only inside a comment isn't a real reference and shouldn't cause a
+    reference-link definition to be emitted for it.
+    """
     used: set[str] = set()
-    in_code = False
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code = not in_code
-            continue
-        if in_code:
+    lines = text.splitlines()
+    for line, is_real in zip(lines, _markdown_shared.real_line_flags(lines)):
+        if not is_real:
             continue
         if LINKDEF_RE.match(line):
             continue
@@ -596,6 +608,19 @@ def locate_existing_block(text: str) -> tuple[str, str, bool]:
 
 
 def _strip_block(text: str, start: str, end: str) -> tuple[str, str, bool]:
+    """Split `text` around a start/end-marked block.
+
+    Delegates the well-formed (start-and-end-found) case to the shared
+    ``_markdown_shared.strip_marked_block``. If the start marker is
+    present but no end marker follows it, applies this script's own
+    shape-based recovery (consume trailing blank + reference-definition
+    lines) — a policy specific to refs-linkify's legacy block formats,
+    not shared with the other markdown-*.py scripts.
+    """
+    before, after, found = _markdown_shared.strip_marked_block(text, start, end)
+    if found:
+        return before, after, True
+
     lines = text.splitlines(keepends=True)
     start_idx = next(
         (i for i, ln in enumerate(lines) if ln.rstrip() == start),
@@ -603,18 +628,12 @@ def _strip_block(text: str, start: str, end: str) -> tuple[str, str, bool]:
     )
     if start_idx is None:
         return text, "", False
-    end_idx = None
-    for j in range(start_idx + 1, len(lines)):
-        if lines[j].rstrip() == end:
-            end_idx = j + 1
-            break
-    if end_idx is None:
-        # Shape-based fallback: consume blank + ref-def lines.
-        end_idx = start_idx + 1
-        while end_idx < len(lines) and (
-            lines[end_idx].strip() == "" or REF_DEF_RE.match(lines[end_idx])
-        ):
-            end_idx += 1
+    # Shape-based fallback: consume blank + ref-def lines.
+    end_idx = start_idx + 1
+    while end_idx < len(lines) and (
+        lines[end_idx].strip() == "" or REF_DEF_RE.match(lines[end_idx])
+    ):
+        end_idx += 1
     return "".join(lines[:start_idx]), "".join(lines[end_idx:]), True
 
 
@@ -683,12 +702,10 @@ def process_file(
         before, after, ok = locate_existing_block(text_after_linkify)
         if ok:
             new_text = (before.rstrip() + "\n" + after.lstrip()).rstrip() + "\n"
-            if new_text != text:
-                target.write_text(new_text)
+            if _markdown_shared.write_if_changed(target, new_text, text):
                 print(f"  REFS {target} (no references; legacy block stripped)")
                 return False
-        if text_after_linkify != text:
-            target.write_text(text_after_linkify)
+        if _markdown_shared.write_if_changed(target, text_after_linkify, text):
             return False
         print(f"  REFS {target} (no references; no changes)")
         return True
@@ -712,18 +729,17 @@ def process_file(
 
     n_def = sum(1 for u in used if u in definitions)
     n_unk = len(unknown)
-    if new_text == text:
+    if _markdown_shared.write_if_changed(target, new_text, text):
         print(
-            f"  REFS {target} (no changes, {n_def} resolved, {n_unk} unknown, "
+            f"  REFS {target} ({n_def} resolved, {n_unk} unknown, "
             f"{len(definitions)} in index)"
         )
-        return True
-    target.write_text(new_text)
+        return False
     print(
-        f"  REFS {target} ({n_def} resolved, {n_unk} unknown, "
+        f"  REFS {target} (no changes, {n_def} resolved, {n_unk} unknown, "
         f"{len(definitions)} in index)"
     )
-    return False
+    return True
 
 
 def main() -> None:

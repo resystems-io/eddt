@@ -1,0 +1,29 @@
+{
+  "theme": "neutral",
+  "fontFamily": "Helvetica, Arial, sans-serif",
+  "flowchart": {
+    "htmlLabels": false,
+    "useMaxWidth": true
+  },
+  "sequence": {
+    "useMaxWidth": true
+  },
+  "class": {
+    "useMaxWidth": true
+  },
+  "state": {
+    "useMaxWidth": true
+  },
+  "er": {
+    "useMaxWidth": true
+  },
+  "gantt": {
+    "useMaxWidth": true
+  },
+  "gitGraph": {
+    "useMaxWidth": true
+  },
+  "pie": {
+    "useMaxWidth": true
+  }
+}
