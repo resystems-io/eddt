@@ -36,6 +36,13 @@ SCRIPTS = HERE.parent
 SHOWCASE = HERE / "mermaid-showcase.md"
 MD_PDF = SCRIPTS / "markdown-pdf.py"
 
+# markdown-pdf.py imports the shared _markdown_shared module as a plain
+# sibling import (relying on a directly-executed script's own directory
+# being on sys.path[0]). Loading it programmatically via
+# spec_from_file_location below does not get that for free, so it must be
+# added explicitly here.
+sys.path.insert(0, str(SCRIPTS))
+
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("markdown_pdf", MD_PDF)
