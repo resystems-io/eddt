@@ -1784,16 +1784,11 @@ func TestTimeTimeRoundTrip(t *testing.T) {
 	}
 
 	reader.LoadRow(1, &got)
-	if !got.When.Equal(time.Unix(0, 0).UTC()) {
-		// time.Time{}.UnixNano() is a large negative number; writer stores UnixNano,
-		// reader reconstructs via time.Unix(0, nano). Zero time round-trips to epoch.
-		// The writer converts time.Time{} → UnixNano → arrow.Timestamp. The reader
-		// converts back via time.Unix(0, int64(v)). So the zero value round-trips to
-		// what time.Unix(0, time.Time{}.UnixNano()) produces.
-		expected := time.Unix(0, time.Time{}.UnixNano())
-		if !got.When.Equal(expected) {
-			t.Errorf("row1 When: got %v, want %v", got.When, expected)
-		}
+	if !got.When.IsZero() {
+		// The zero time.Time is outside the range of Timestamp_ns, so the
+		// writer stores it as null, and the reader maps null back to the
+		// zero time. The round trip is exact.
+		t.Errorf("row1 When: got %v, want the zero time", got.When)
 	}
 	if got.OptWhen != nil {
 		t.Errorf("row1 OptWhen: got %v, want nil", got.OptWhen)

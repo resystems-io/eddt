@@ -175,10 +175,11 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			fi.EltInfo = &innerCopy
 			// Clear method fields inherited from the inner *T FieldInfo: the outer
 			// **T is not directly marshallable. The template discriminant for **T is
-			// IsPointer+EltInfo (not MarshalMethod/ConvertMethod), so these must be
-			// empty to route to the correct EltInfo dereference path.
+			// IsPointer+EltInfo (not MarshalMethod/ConvertMethod/TimeExpr), so these
+			// must be empty to route to the correct EltInfo dereference path.
 			fi.MarshalMethod = ""
 			fi.ConvertMethod = ""
+			fi.TimeExpr = ""
 			fi.CastType = ""
 			return fi, nil
 		}
@@ -633,8 +634,10 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 
 	if pkgPath == "time" && typeName == "Time" {
 		goType := "time.Time"
+		timeExpr := "%s"
 		if isPointer {
 			goType = "*time.Time"
+			timeExpr = "*%s"
 		}
 		return FieldInfo{
 			Name:               name,
@@ -642,7 +645,7 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
-			ConvertMethod:      "UnixNano",
+			TimeExpr:           timeExpr,
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",
@@ -693,7 +696,7 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
-			ConvertMethod:      "AsTime().UnixNano",
+			TimeExpr:           "%s.AsTime()",
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",

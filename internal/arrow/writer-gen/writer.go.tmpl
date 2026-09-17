@@ -150,6 +150,16 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	}
 	{{- end}}
 	{{- end}}
+{{- else if $info.TimeExpr}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.(*array.TimestampBuilder).AppendNull()
+	} else {
+		{{- template "appendTimestamp" dict "Bldr" $bldr "Time" (printf $info.TimeExpr $var)}}
+	}
+	{{- else}}
+	{{- template "appendTimestamp" dict "Bldr" $bldr "Time" (printf $info.TimeExpr $var)}}
+	{{- end}}
 {{- else if $info.ConvertMethod}}
 	{{- if $info.IsPointer}}
 	if {{$var}} == nil {
@@ -178,4 +188,14 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}))
 	{{- end}}
 {{- end}}
+{{- end}}
+
+{{- define "appendTimestamp"}}
+	// Timestamp_ns cannot hold an instant before 1677-09-21 or after
+	// 2262-04-11, and the zero time.Time is one. Such instants are written as null.
+	if t := {{.Time}}; t.Before(time.Unix(0, math.MinInt64)) || t.After(time.Unix(0, math.MaxInt64)) {
+		{{.Bldr}}.(*array.TimestampBuilder).AppendNull()
+	} else {
+		{{.Bldr}}.(*array.TimestampBuilder).Append(arrow.Timestamp(t.UnixNano()))
+	}
 {{- end}}

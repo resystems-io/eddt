@@ -54,7 +54,8 @@ type FieldInfo struct {
 	IsFixedSizeList bool       // True if the field is a fixed-size array ([N]T)
 	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
 	MarshalMethod   string     // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
-	ConvertMethod   string     // Method to call on the value before casting (e.g. "UnixNano" for time.Time)
+	ConvertMethod   string     // Method to call on the value before casting (e.g. "AsDuration" for durationpb.Duration)
+	TimeExpr        string     // Sprintf-style expression yielding a time.Time from the field (e.g. "%s" or "%s.AsTime()"), set for Timestamp_ns mappings so the writer can range-check the instant
 	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
 	KeyInfo         *FieldInfo // Key info for maps
 
@@ -770,6 +771,34 @@ func HasUnmarshalFields(structs []StructInfo) bool {
 	var walk func(fi *FieldInfo) bool
 	walk = func(fi *FieldInfo) bool {
 		if fi.UnmarshalMethod != "" {
+			return true
+		}
+		if fi.EltInfo != nil && walk(fi.EltInfo) {
+			return true
+		}
+		if fi.KeyInfo != nil && walk(fi.KeyInfo) {
+			return true
+		}
+		return false
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			if walk(&structs[i].Fields[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasTimestampFields reports whether any field across all structs (recursively
+// through EltInfo/KeyInfo) has a non-empty TimeExpr, i.e. is written as a
+// Timestamp_ns. Writer-gen uses this to import the time and math packages the
+// range check in its template needs.
+func HasTimestampFields(structs []StructInfo) bool {
+	var walk func(fi *FieldInfo) bool
+	walk = func(fi *FieldInfo) bool {
+		if fi.TimeExpr != "" {
 			return true
 		}
 		if fi.EltInfo != nil && walk(fi.EltInfo) {

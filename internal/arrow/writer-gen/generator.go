@@ -96,11 +96,19 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 	}
 	structs, elidedSchemas := gencommon.PartitionByExistingSchemas(structs, existing, "Schema")
 
-	// Writer-gen always imports arrow, array, and memory.
+	// Writer-gen always imports arrow, array, and memory. A Timestamp_ns field
+	// also needs time and math for the range check the template emits.
 	reserved := map[string]bool{"arrow": true, "array": true, "memory": true}
+	timestamps := gencommon.HasTimestampFields(structs)
+	if timestamps {
+		reserved["math"], reserved["time"] = true, true
+	}
 	packageName, imports, err := gencommon.ResolveOutputContext(parsedPkgName, structs, outPkgNameOverride, pkgAliases, reserved)
 	if err != nil {
 		return err
+	}
+	if timestamps {
+		imports = gencommon.MergeImports(imports, []gencommon.ImportInfo{{Path: "math", Name: "math"}, {Path: "time", Name: "time"}})
 	}
 
 	data := templateData{
