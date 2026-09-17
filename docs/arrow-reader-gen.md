@@ -81,7 +81,9 @@ constructs elegantly back to Native Go:
 The generator seamlessly reverses standard library and Protobuf timestamp
 mappings:
 * `time.Duration`: Reads from Int64 (nanoseconds) back to `time.Duration`.
-* `time.Time`: Reads from `Timestamp_ns` (UTC) back to `time.Time`.
+* `time.Time`: Reads from `Timestamp_ns` (UTC) back to `time.Time`. A null,
+  which is how the writer stores an instant outside the column's range, reads
+  back as the zero `time.Time`.
 * `durationpb.Duration`: Reads from Int64 back to `*durationpb.Duration`.
 * `timestamppb.Timestamp`: Reads from `Timestamp_ns` back to
   `*timestamppb.Timestamp`.
