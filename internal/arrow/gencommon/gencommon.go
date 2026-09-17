@@ -55,6 +55,7 @@ type FieldInfo struct {
 	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
 	MarshalMethod   string     // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
 	ConvertMethod   string     // Method to call on the value before casting (e.g. "UnixNano" for time.Time)
+	ConvertExpr     string     // Sprintf-style expression template (e.g. "saturatingUnixNano(%s)") that replaces a plain ConvertMethod call in the writer template when the direct method call is not overflow-safe; takes precedence over ConvertMethod when set
 	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
 	KeyInfo         *FieldInfo // Key info for maps
 
@@ -770,6 +771,34 @@ func HasUnmarshalFields(structs []StructInfo) bool {
 	var walk func(fi *FieldInfo) bool
 	walk = func(fi *FieldInfo) bool {
 		if fi.UnmarshalMethod != "" {
+			return true
+		}
+		if fi.EltInfo != nil && walk(fi.EltInfo) {
+			return true
+		}
+		if fi.KeyInfo != nil && walk(fi.KeyInfo) {
+			return true
+		}
+		return false
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			if walk(&structs[i].Fields[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasSaturatingUnixNano reports whether any field across all structs
+// (recursively through EltInfo/KeyInfo) uses the saturatingUnixNano helper,
+// i.e. resolves a time.Time or timestamppb.Timestamp value. Writer-gen uses
+// this to decide whether to emit the shared helper function once per file.
+func HasSaturatingUnixNano(structs []StructInfo) bool {
+	var walk func(fi *FieldInfo) bool
+	walk = func(fi *FieldInfo) bool {
+		if fi.ConvertExpr != "" {
 			return true
 		}
 		if fi.EltInfo != nil && walk(fi.EltInfo) {

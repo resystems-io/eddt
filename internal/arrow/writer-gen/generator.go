@@ -51,11 +51,23 @@ func (g *Generator) Parse() (string, string, []gencommon.StructInfo, error) {
 
 // templateData is the data contract between Run and the writer template.
 type templateData struct {
-	PackageName   string
-	Version       string
-	Imports       []gencommon.ImportInfo
-	Structs       []gencommon.StructInfo
-	ElidedSchemas []gencommon.ElidedSchema
+	PackageName           string
+	Version               string
+	Imports               []gencommon.ImportInfo
+	Structs               []gencommon.StructInfo
+	ElidedSchemas         []gencommon.ElidedSchema
+	HasSaturatingUnixNano bool // true if any struct needs the shared saturatingUnixNano helper
+}
+
+// ensureImport appends imp to imports if no existing entry already imports
+// its path, returning the (possibly unmodified) slice.
+func ensureImport(imports []gencommon.ImportInfo, imp gencommon.ImportInfo) []gencommon.ImportInfo {
+	for _, existing := range imports {
+		if existing.Path == imp.Path {
+			return imports
+		}
+	}
+	return append(imports, imp)
 }
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
@@ -103,12 +115,22 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
+	// The saturatingUnixNano helper takes a time.Time parameter, so its
+	// presence needs the "time" import even for structs that only reference
+	// time.Time/timestamppb.Timestamp via method calls, which otherwise
+	// never require importing the package that declares the type.
+	hasSaturating := gencommon.HasSaturatingUnixNano(structs)
+	if hasSaturating {
+		imports = ensureImport(imports, gencommon.ImportInfo{Path: "time", Name: "time"})
+	}
+
 	data := templateData{
-		PackageName:   packageName,
-		Version:       g.Version,
-		Imports:       imports,
-		Structs:       structs,
-		ElidedSchemas: elidedSchemas,
+		PackageName:           packageName,
+		Version:               g.Version,
+		Imports:               imports,
+		Structs:               structs,
+		ElidedSchemas:         elidedSchemas,
+		HasSaturatingUnixNano: hasSaturating,
 	}
 
 	var buf bytes.Buffer

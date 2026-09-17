@@ -17,6 +17,27 @@ import (
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
+{{- if .HasSaturatingUnixNano}}
+
+// saturatingUnixNano returns t's Unix time in nanoseconds, saturating to the
+// minimum/maximum representable int64 instead of silently overflowing. The
+// time package documents t.UnixNano's result as undefined for a date before
+// 1678 or after 2262; a zero-value time.Time (year 1) falls in that
+// undefined range, so any field that can be left unset needs this guard
+// rather than a direct UnixNano call.
+func saturatingUnixNano(t time.Time) int64 {
+	const maxNanos = int64(1<<63 - 1)
+	const minNanos = -maxNanos - 1
+	switch sec := t.Unix(); {
+	case sec > maxNanos/int64(time.Second):
+		return maxNanos
+	case sec < minNanos/int64(time.Second):
+		return minNanos
+	default:
+		return t.UnixNano()
+	}
+}
+{{- end}}
 {{range .Structs}}
 // New{{.Name}}Schema returns the Apache Arrow schema for the {{.Name}} struct.
 func New{{.Name}}Schema() *arrow.Schema {
@@ -149,6 +170,16 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 		{{$bldr}}.({{$info.ArrowBuilder}}).Append(marshalData)
 	}
 	{{- end}}
+	{{- end}}
+{{- else if $info.ConvertExpr}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{printf $info.ConvertExpr $var}}))
+	}
+	{{- else}}
+	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{printf $info.ConvertExpr $var}}))
 	{{- end}}
 {{- else if $info.ConvertMethod}}
 	{{- if $info.IsPointer}}

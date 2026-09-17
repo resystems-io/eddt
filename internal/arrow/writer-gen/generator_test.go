@@ -1533,7 +1533,8 @@ type Event struct {
 				`{Name: "CreatedAt",`,
 				"TimestampBuilder",
 				"Timestamp_ns",
-				".AsTime().UnixNano()",
+				"saturatingUnixNano(",
+				".AsTime())",
 				"arrow.Timestamp(",
 				"AppendNull",
 			},
@@ -1541,6 +1542,7 @@ type Event struct {
 				"String()",
 				"StringBuilder",
 				"MarshalText",
+				".AsTime().UnixNano()",
 			},
 		},
 		{
@@ -1558,12 +1560,14 @@ type Event struct {
 			mustContain: []string{
 				`{Name: "CreatedAt",`,
 				"TimestampBuilder",
-				".AsTime().UnixNano()",
+				"saturatingUnixNano(",
+				".AsTime())",
 			},
 			mustNotContain: []string{
 				"String()",
 				"StringBuilder",
 				"AppendNull",
+				".AsTime().UnixNano()",
 			},
 		},
 	}

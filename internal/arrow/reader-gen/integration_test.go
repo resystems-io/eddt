@@ -1784,16 +1784,15 @@ func TestTimeTimeRoundTrip(t *testing.T) {
 	}
 
 	reader.LoadRow(1, &got)
-	if !got.When.Equal(time.Unix(0, 0).UTC()) {
-		// time.Time{}.UnixNano() is a large negative number; writer stores UnixNano,
-		// reader reconstructs via time.Unix(0, nano). Zero time round-trips to epoch.
-		// The writer converts time.Time{} → UnixNano → arrow.Timestamp. The reader
-		// converts back via time.Unix(0, int64(v)). So the zero value round-trips to
-		// what time.Unix(0, time.Time{}.UnixNano()) produces.
-		expected := time.Unix(0, time.Time{}.UnixNano())
-		if !got.When.Equal(expected) {
-			t.Errorf("row1 When: got %v, want %v", got.When, expected)
-		}
+	// time.Time{} (year 1) falls outside the range int64 nanoseconds since
+	// the Unix epoch can represent (time.Time.UnixNano documents this as
+	// undefined before 1678). The writer's saturatingUnixNano clamps to the
+	// minimum representable value rather than overflowing, so the zero value
+	// round-trips to that clamped minimum, not to itself or to the epoch.
+	const minNanos = int64(-1 << 63)
+	expected := time.Unix(0, minNanos)
+	if !got.When.Equal(expected) {
+		t.Errorf("row1 When: got %v, want %v", got.When, expected)
 	}
 	if got.OptWhen != nil {
 		t.Errorf("row1 OptWhen: got %v, want nil", got.OptWhen)

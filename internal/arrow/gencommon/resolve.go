@@ -636,6 +636,16 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 		if isPointer {
 			goType = "*time.Time"
 		}
+		// saturatingUnixNano takes time.Time by value; a *time.Time field
+		// needs an explicit dereference at the call site (the nil case is
+		// already handled by the writer template before this expression is
+		// used), whereas the timestamppb.Timestamp mapping below never needs
+		// this since AsTime() already returns time.Time by value regardless
+		// of whether the field itself is a pointer.
+		convertExpr := "saturatingUnixNano(%s)"
+		if isPointer {
+			convertExpr = "saturatingUnixNano(*%s)"
+		}
 		return FieldInfo{
 			Name:               name,
 			GoType:             goType,
@@ -643,6 +653,7 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
 			ConvertMethod:      "UnixNano",
+			ConvertExpr:        convertExpr,
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",
@@ -694,6 +705,7 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
 			ConvertMethod:      "AsTime().UnixNano",
+			ConvertExpr:        "saturatingUnixNano(%s.AsTime())",
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",
