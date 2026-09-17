@@ -75,10 +75,13 @@ The generator has out-of-the-box native mappings for specialized standard
 library and Protobuf timestamp types:
 * `time.Duration`: Mapped precisely to an Int64 column (nanoseconds) for
   lossless Parquet compatibility.
-* `time.Time`: Mapped to a `Timestamp_ns` (UTC) column.
+* `time.Time`: Mapped to a `Timestamp_ns` (UTC) column, saturating to the
+  minimum/maximum representable timestamp for a value outside the int64
+  nanosecond range instead of overflowing.
 * `durationpb.Duration`: Processed safely with saturation arithmetic into an
   Int64 column (nanoseconds).
-* `timestamppb.Timestamp`: Mapped to a `Timestamp_ns` (UTC) column.
+* `timestamppb.Timestamp`: Mapped to a `Timestamp_ns` (UTC) column, with the
+  same saturation as `time.Time`.
 
 ### Interface Fallbacks for External Types
 If a type originates from outside the provided input packages, the generator
@@ -237,8 +240,11 @@ func BuildEventRecord() {
 To keep the generated constraints tight and type-safe, some edge cases are
 intentionally unmapped:
 
-* `interface{}` / `any`: Rejected safely. Arrow mandates strict, predictable
-  static schemas which interfaces violate.
+* `interface{}` / `any`: Skipped with a warning, same as `func()`/`chan`/
+  `uintptr` below. Arrow mandates strict, predictable static schemas which
+  interfaces violate, so the field is dropped from the schema rather than
+  causing generation to fail. Generation of every other field on the struct
+  still succeeds.
 * `func()`, `chan`, `uintptr`: Cannot conceptually map to scalable columnar
   data, so they are silently skipped.
 * **Unexported Fields**: If generating into a different target package
@@ -247,6 +253,14 @@ intentionally unmapped:
 * **Pointer Embedded Structs**: E.g., `type T struct { *Base }` are currently
   skipped with a warning, while value-embedded structs naturally flatten their
   promoted properties.
+* **time.Time and timestamppb.Timestamp Range**: Both map to a `Timestamp_ns`
+  column, so any value outside the ~1678-2262 range representable by int64
+  nanoseconds since the Unix epoch — including a zero-value `time.Time`, Go's
+  normal zero value for an unset field — saturates to the minimum or maximum
+  representable timestamp instead of silently wrapping to a nonsense date.
+  `time.Duration` and `durationpb.Duration` do not need this: a `time.Duration`
+  is already stored as int64 nanoseconds directly, and `durationpb.Duration`
+  saturates internally via its own `AsDuration()`.
 
 ## Summary
 

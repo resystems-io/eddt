@@ -242,8 +242,14 @@ func ReadEventRecord(record arrow.RecordBatch) {
 
 ## Assumptions and Limitations
 
-* `interface{}` / `any`: Rejected safely as Arrow requires strict schema
-  definitions.
+* `interface{}` / `any`: Skipped with a warning, as Arrow requires strict
+  schema definitions. The field is simply absent from the generated reader;
+  generation of every other field still succeeds.
+* **fmt.Stringer Fields Are Write-Only**: A field whose only fallback match is
+  `fmt.Stringer` writes cleanly (see arrow-writer-gen.md), but has no inverse
+  to reconstruct the Go value from a string, so arrow-reader-gen warns at
+  generation time and omits the field from `LoadRow` entirely. It always comes
+  back at its zero value.
 * **Schema Evolution / Missing Columns**: If the Arrow Record is missing a
   column that the Go struct defines, `NewXxxArrowReader` initialization
   gracefully succeeds, but the `LoadRow` bypasses that field, leaving it at its
