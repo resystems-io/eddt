@@ -81,9 +81,11 @@ constructs elegantly back to Native Go:
 The generator seamlessly reverses standard library and Protobuf timestamp
 mappings:
 * `time.Duration`: Reads from Int64 (nanoseconds) back to `time.Duration`.
-* `time.Time`: Reads from `Timestamp_ns` (UTC) back to `time.Time`.
+* `time.Time`: Reads from `Timestamp_us` (UTC) back to a `time.Time` in UTC. A null,
+  which is how the writer stores an instant outside the column's range, reads
+  back as the zero `time.Time`.
 * `durationpb.Duration`: Reads from Int64 back to `*durationpb.Duration`.
-* `timestamppb.Timestamp`: Reads from `Timestamp_ns` back to
+* `timestamppb.Timestamp`: Reads from `Timestamp_us` back to
   `*timestamppb.Timestamp`.
 
 ### Interface Fallbacks and Error Accumulation
@@ -92,12 +94,22 @@ For types outside provided packages, it looks for standard unmarshalers:
    `UnmarshalText`.
 2. `encoding.BinaryUnmarshaler`: Reads from `Binary` and populates via
    `UnmarshalBinary`.
+3. A named slice, map or array with none of these methods is read through
+   its underlying type, and the generated file imports its package.
+
+A type with a `String` method and neither unmarshaler, a protoc enum for
+example, is write-only. The writer stores its name, nothing can turn the
+name back into the value, so the reader skips the field, at any depth,
+with a warning at generation time. A record that needs the value back in
+Go carries an integer field next to the enum, which round-trips.
 
 **Note on Unmarshal Safety:** Since `LoadRow` is infallible but unmarshal
 payload contents might be corrupt, generated readers transparently accumulate
 slice-based `ReadError` entries (which trace the affected row, field path, and
-underlying error) while leaving the target Go field at its zero value. You can
-check these safely after processing a batch via `.Errors()`.
+underlying error) while leaving the target Go field at its zero value. A list
+element is reported as `Field[index]` and a map value as `Field[key]`. You can
+check these safely after processing a batch via `.Errors()`, and a slice you
+keep from it survives `.ResetErrors()`.
 
 ## Generator Workflow Architecture
 
@@ -246,8 +258,9 @@ func ReadEventRecord(record arrow.RecordBatch) {
   definitions.
 * **Schema Evolution / Missing Columns**: If the Arrow Record is missing a
   column that the Go struct defines, `NewXxxArrowReader` initialization
-  gracefully succeeds, but the `LoadRow` bypasses that field, leaving it at its
-  zero or previous initialized value.
+  gracefully succeeds, and `LoadRow` sets that field to its zero value, so a
+  struct reused across rows never carries a value over from a record that
+  had the column.
 * **Invalid Payload Errors**: The loader does not panic on `UnmarshalText` /
   `UnmarshalBinary` failures; it resets the field and buffers the error in
   `.Errors()`.

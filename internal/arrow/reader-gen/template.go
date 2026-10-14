@@ -23,8 +23,9 @@ import (
 // Design:
 //   - Validate-at-init (R5): NewXxxArrowReader performs all type assertions. If a column
 //     exists but has the wrong type, it returns an error. Once init succeeds, LoadRow is infallible.
-//   - Missing columns (R11/E5): If a column isn't found in the schema, the field stays nil.
-//     LoadRow wraps each read in `if col != nil`, so missing columns are silently skipped.
+//   - Missing columns (R11/E5): If a column isn't found in the schema, LoadRow sets the
+//     field to its zero value, so a struct reused across rows and files never carries a
+//     value from a file that had the column into one that does not.
 //   - Null handling (R10): For non-pointer value types, IsNull(i) writes the zero-value
 //     expression to prevent dirty reads when reusing the output struct.
 //   - Column lookup by name (R4): schema.FieldIndices supports arbitrary column ordering.
@@ -56,5 +57,6 @@ type templateData struct {
 	Imports            []gencommon.ImportInfo
 	Structs            []gencommon.StructInfo
 	HasUnmarshalFields bool
+	DeclareReadError   bool // false when a companion file in the package already declares ReadError
 	ElidedSchemas      []gencommon.ElidedSchema
 }

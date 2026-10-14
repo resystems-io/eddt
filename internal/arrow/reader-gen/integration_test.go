@@ -1779,21 +1779,18 @@ func TestTimeTimeRoundTrip(t *testing.T) {
 	if !got.When.Equal(r1.When) {
 		t.Errorf("row0 When: got %v, want %v", got.When, r1.When)
 	}
+	if got.When.Location() != time.UTC {
+		t.Errorf("row0 When location: got %v, want UTC, the zone the column declares", got.When.Location())
+	}
 	if got.OptWhen == nil || !got.OptWhen.Equal(*r1.OptWhen) {
 		t.Errorf("row0 OptWhen: got %v, want %v", got.OptWhen, r1.OptWhen)
 	}
 
 	reader.LoadRow(1, &got)
-	if !got.When.Equal(time.Unix(0, 0).UTC()) {
-		// time.Time{}.UnixNano() is a large negative number; writer stores UnixNano,
-		// reader reconstructs via time.Unix(0, nano). Zero time round-trips to epoch.
-		// The writer converts time.Time{} → UnixNano → arrow.Timestamp. The reader
-		// converts back via time.Unix(0, int64(v)). So the zero value round-trips to
-		// what time.Unix(0, time.Time{}.UnixNano()) produces.
-		expected := time.Unix(0, time.Time{}.UnixNano())
-		if !got.When.Equal(expected) {
-			t.Errorf("row1 When: got %v, want %v", got.When, expected)
-		}
+	if !got.When.IsZero() {
+		// A microsecond column holds the zero time.Time, so it round-trips
+		// exactly: the writer stores the instant, the reader rebuilds it.
+		t.Errorf("row1 When: got %v, want the zero time", got.When)
 	}
 	if got.OptWhen != nil {
 		t.Errorf("row1 OptWhen: got %v, want nil", got.OptWhen)
@@ -2243,6 +2240,413 @@ func TestUnmarshalErrorAccumulation(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestUnmarshalErrorAccumulation")
 	})
 
+	t.Run("unmarshal-error-in-element-zeroes-it", func(t *testing.T) {
+		// A failed unmarshal of a list element or a map value must leave the
+		// zero value behind, also when the target struct is reused across
+		// rows and already holds the previous row's element there.
+		goCode := `package dummy
+
+import "net/netip"
+
+type AddrRows struct {
+	Addrs  []netip.Addr
+	ByName map[string]netip.Addr
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"AddrRows"})
+
+		testCode := `package dummy
+
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestUnmarshalErrorInElementZeroesIt(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	bldr := array.NewRecordBuilder(pool, NewAddrRowsSchema())
+	defer bldr.Release()
+	addrs := bldr.Field(0).(*array.ListBuilder)
+	byName := bldr.Field(1).(*array.MapBuilder)
+	for _, row := range [][]string{{"10.0.0.1", "10.0.0.2"}, {"10.0.0.9", "not-an-ip"}} {
+		addrs.Append(true)
+		for _, a := range row {
+			addrs.ValueBuilder().(*array.StringBuilder).Append(a)
+		}
+		byName.Append(true)
+		byName.KeyBuilder().(*array.StringBuilder).Append("a")
+		byName.ItemBuilder().(*array.StringBuilder).Append(row[1])
+	}
+	rec := bldr.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewAddrRowsArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewAddrRowsArrowReader: %v", err)
+	}
+	var got AddrRows
+	reader.LoadRow(0, &got)
+	reader.LoadRow(1, &got)
+
+	errs := reader.Errors()
+	if len(errs) != 2 || errs[0].Field != "Addrs[1]" || errs[1].Field != "ByName[a]" {
+		t.Fatalf("errors = %v, want one for Addrs[1] and one for ByName[a]", errs)
+	}
+	held := errs
+	reader.ResetErrors()
+	reader.LoadRow(1, &got)
+	if held[0].Field != "Addrs[1]" || len(reader.Errors()) != 2 {
+		t.Errorf("after ResetErrors the held slice reads %v, want it untouched, and the new errors are %v", held, reader.Errors())
+	}
+	if got.Addrs[0] != netip.MustParseAddr("10.0.0.9") {
+		t.Errorf("Addrs[0] = %v, want 10.0.0.9", got.Addrs[0])
+	}
+	if got.Addrs[1] != (netip.Addr{}) {
+		t.Errorf("Addrs[1] = %v after a failed unmarshal over a reused struct, want the zero value", got.Addrs[1])
+	}
+	if v, ok := got.ByName["a"]; !ok || v != (netip.Addr{}) {
+		t.Errorf("ByName[a] = %v (present %v) after a failed unmarshal, want the zero value under the key", v, ok)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestUnmarshalErrorInElementZeroesIt")
+	})
+
+	t.Run("unmarshal-error-in-struct-element-reports-the-row", func(t *testing.T) {
+		// An element that is itself a struct is loaded through the nested
+		// reader with an offset into the child array. The error it reports
+		// must still carry the row of the record, not that offset.
+		goCode := `package dummy
+
+import "net/netip"
+
+type Holder struct {
+	Addr netip.Addr
+}
+
+type Rows struct {
+	Items []Holder
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Rows"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestUnmarshalErrorInStructElementReportsTheRow(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	bldr := array.NewRecordBuilder(pool, NewRowsSchema())
+	defer bldr.Release()
+	items := bldr.Field(0).(*array.ListBuilder)
+	holder := items.ValueBuilder().(*array.StructBuilder)
+	addr := holder.FieldBuilder(0).(*array.StringBuilder)
+	for _, row := range [][]string{{"10.0.0.1"}, {"10.0.0.2", "not-an-ip"}} {
+		items.Append(true)
+		for _, a := range row {
+			holder.Append(true)
+			addr.Append(a)
+		}
+	}
+	rec := bldr.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewRowsArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewRowsArrowReader: %v", err)
+	}
+	var got Rows
+	reader.LoadRow(0, &got)
+	reader.LoadRow(1, &got)
+	errs := reader.Errors()
+	if len(errs) != 1 || errs[0].Row != 1 || errs[0].Field != "Items[1].Addr" {
+		t.Fatalf("errors = %v, want one at row 1 for Items[1].Addr", errs)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestUnmarshalErrorInStructElementReportsTheRow")
+	})
+
+	t.Run("pointer-elements-round-trip", func(t *testing.T) {
+		// Pointers to scalars, to times and to unmarshalers as list, array
+		// and map elements: nil elements become nulls and come back nil, and
+		// the array's element field is nullable so Parquet keeps the null.
+		goCode := `package dummy
+
+import (
+	"net/netip"
+	"time"
+)
+
+type PtrElems struct {
+	Ints   []*int64
+	Times  []*time.Time
+	Addrs  []*netip.Addr
+	Fixed  [2]*int64
+	ByName map[string]*int64
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"PtrElems"})
+
+		testCode := `package dummy
+
+import (
+	"net/netip"
+	"testing"
+	"time"
+
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestPointerElementsRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	one, two := int64(1), int64(2)
+	when := time.Date(2026, 3, 4, 5, 6, 7, 8000, time.UTC)
+	addr := netip.MustParseAddr("10.0.0.1")
+	in := PtrElems{
+		Ints:   []*int64{&one, nil, &two},
+		Times:  []*time.Time{&when, nil},
+		Addrs:  []*netip.Addr{nil, &addr},
+		Fixed:  [2]*int64{nil, &two},
+		ByName: map[string]*int64{"set": &one, "nil": nil},
+	}
+
+	fixedField := NewPtrElemsSchema().Field(3)
+	if !fixedField.Type.(*arrow.FixedSizeListType).ElemField().Nullable {
+		t.Fatalf("Fixed element field is not nullable, a nil element could not be a null")
+	}
+
+	writer := NewPtrElemsArrowWriter(pool)
+	defer writer.Release()
+	writer.Append(&in)
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewPtrElemsArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewPtrElemsArrowReader: %v", err)
+	}
+	var got PtrElems
+	reader.LoadRow(0, &got)
+	if errs := reader.Errors(); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	if len(got.Ints) != 3 || *got.Ints[0] != 1 || got.Ints[1] != nil || *got.Ints[2] != 2 {
+		t.Errorf("Ints = %v, want [1 nil 2]", got.Ints)
+	}
+	if len(got.Times) != 2 || !got.Times[0].Equal(when) || got.Times[1] != nil {
+		t.Errorf("Times = %v, want [%v nil]", got.Times, when)
+	}
+	if len(got.Addrs) != 2 || got.Addrs[0] != nil || *got.Addrs[1] != addr {
+		t.Errorf("Addrs = %v, want [nil %v]", got.Addrs, addr)
+	}
+	if got.Fixed[0] != nil || got.Fixed[1] == nil || *got.Fixed[1] != 2 {
+		t.Errorf("Fixed = %v, want [nil 2]", got.Fixed)
+	}
+	if v := got.ByName["set"]; v == nil || *v != 1 {
+		t.Errorf("ByName[set] = %v, want 1", v)
+	}
+	if v, ok := got.ByName["nil"]; !ok || v != nil {
+		t.Errorf("ByName[nil] = %v (present %v), want a present nil", v, ok)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestPointerElementsRoundTrip")
+	})
+
+	t.Run("list-of-maps-round-trip", func(t *testing.T) {
+		goCode := `package dummy
+
+type MapRows struct {
+	Maps  []map[string]int64
+	Deep  []map[string][]int64
+	Fixed [2]map[string]int64
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"MapRows"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestListOfMapsRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	in := MapRows{
+		Maps:  []map[string]int64{{"a": 1, "b": 2}, {}, nil},
+		Deep:  []map[string][]int64{{"x": {1, 2}, "nil": nil}},
+		Fixed: [2]map[string]int64{{"k": 3}, nil},
+	}
+	writer := NewMapRowsArrowWriter(pool)
+	defer writer.Release()
+	writer.Append(&in)
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewMapRowsArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewMapRowsArrowReader: %v", err)
+	}
+	var got MapRows
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, in) {
+		t.Errorf("got %+v, want %+v", got, in)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestListOfMapsRoundTrip")
+	})
+
+	t.Run("nil-byte-slice-is-null", func(t *testing.T) {
+		// A nil []byte is a null, an empty one is an empty value, like every
+		// other slice kind. At the top level, as a list element, behind a
+		// pointer and for a named byte type.
+		goCode := `package dummy
+
+type Blob []byte
+
+type Bytes struct {
+	Payload []byte
+	Chunks  [][]byte
+	PBytes  *[]byte
+	Named   Blob
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Bytes"})
+
+		testCode := `package dummy
+
+import (
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestNilByteSliceIsNull(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	empty := []byte{}
+	writer := NewBytesArrowWriter(pool)
+	defer writer.Release()
+	writer.Append(&Bytes{})
+	writer.Append(&Bytes{Payload: empty, Chunks: [][]byte{nil, empty}, PBytes: &empty, Named: Blob{}})
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+
+	for i, name := range []string{"Payload", "PBytes", "Named"} {
+		col := rec.Column(rec.Schema().FieldIndices(name)[0])
+		if !col.IsNull(0) {
+			t.Errorf("row 0 %s: nil was not written as null", name)
+		}
+		if col.IsNull(1) {
+			t.Errorf("row 1 %s: empty was written as null", name)
+		}
+		_ = i
+	}
+	chunks := rec.Column(rec.Schema().FieldIndices("Chunks")[0]).(*array.List).ListValues()
+	if !chunks.IsNull(0) || chunks.IsNull(1) {
+		t.Errorf("Chunks elements: nil should be null and empty should not, got %v %v", chunks.IsNull(0), chunks.IsNull(1))
+	}
+
+	reader, err := NewBytesArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewBytesArrowReader: %v", err)
+	}
+	var got Bytes
+	reader.LoadRow(0, &got)
+	if got.Payload != nil || got.PBytes != nil || got.Named != nil || got.Chunks != nil {
+		t.Errorf("row 0 read back non-nil: %+v", got)
+	}
+	reader.LoadRow(1, &got)
+	if got.Payload == nil || got.PBytes == nil || got.Named == nil || len(got.Chunks) != 2 || got.Chunks[0] != nil {
+		t.Errorf("row 1 read back wrong: %+v", got)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestNilByteSliceIsNull")
+	})
+
+	t.Run("external-named-slice-round-trip", func(t *testing.T) {
+		// sort.IntSlice and sort.StringSlice are named slices from a package
+		// the generator has not loaded, with no marshal methods, so they
+		// resolve through their underlying type.
+		goCode := `package dummy
+
+import "sort"
+
+type Sorted struct {
+	Ints  sort.IntSlice
+	Strs  sort.StringSlice
+	PInts *sort.IntSlice
+}
+`
+		tmpDir := setupIntegrationTest(t, goCode, []string{"Sorted"})
+
+		testCode := `package dummy
+
+import (
+	"reflect"
+	"sort"
+	"testing"
+
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestExternalNamedSliceRoundTrip(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	ints := sort.IntSlice{3, 1, 2}
+	in := Sorted{Ints: ints, Strs: sort.StringSlice{"b", "a"}, PInts: &ints}
+	writer := NewSortedArrowWriter(pool)
+	defer writer.Release()
+	writer.Append(&in)
+	writer.Append(&Sorted{})
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+
+	reader, err := NewSortedArrowReader(rec)
+	if err != nil {
+		t.Fatalf("NewSortedArrowReader: %v", err)
+	}
+	var got Sorted
+	reader.LoadRow(0, &got)
+	if !reflect.DeepEqual(got, in) {
+		t.Errorf("row 0: got %+v, want %+v", got, in)
+	}
+	reader.LoadRow(1, &got)
+	if got.Ints != nil || got.Strs != nil || got.PInts != nil {
+		t.Errorf("row 1: got %+v, want all nil", got)
+	}
+}
+`
+		runInnerTest(t, tmpDir, testCode, "TestExternalNamedSliceRoundTrip")
+	})
+
 	t.Run("list-of-text-marshaler-round-trip", func(t *testing.T) {
 		goCode := `package dummy
 
@@ -2406,7 +2810,7 @@ func TestNullElementsInConvertList(t *testing.T) {
 
 	// Build an Arrow record manually with a null element inside a list.
 	schema := arrow.NewSchema([]arrow.Field{
-		{Name: "Timestamps", Type: arrow.ListOf(arrow.FixedWidthTypes.Timestamp_ns), Nullable: true},
+		{Name: "Timestamps", Type: arrow.ListOf(arrow.FixedWidthTypes.Timestamp_us), Nullable: true},
 	}, nil)
 
 	bldr := array.NewRecordBuilder(pool, schema)
@@ -2419,9 +2823,9 @@ func TestNullElementsInConvertList(t *testing.T) {
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	lb.Append(true)
-	vb.Append(arrow.Timestamp(t1.UnixNano()))
+	vb.Append(arrow.Timestamp(t1.UnixMicro()))
 	vb.AppendNull()
-	vb.Append(arrow.Timestamp(t2.UnixNano()))
+	vb.Append(arrow.Timestamp(t2.UnixMicro()))
 
 	// Row 1: list with [null]
 	lb.Append(true)
@@ -3108,16 +3512,16 @@ func TestMissingColumns(t *testing.T) {
 		t.Errorf("Score: got %f, want 0 (zero-init)", got.Score)
 	}
 
-	// Key assertion: "untouched" semantics.
-	// Pre-populate Score with a sentinel value. LoadRow must NOT overwrite it
-	// because the column is missing (skip), unlike a null column (which writes zero).
+	// Key assertion: a missing column zeroes the field. Pre-populate Score
+	// with a sentinel, as a struct reused across rows would carry, and check
+	// LoadRow does not let it through.
 	got.Score = 99.9
 	reader.LoadRow(0, &got)
 	if got.ID != 42 {
 		t.Errorf("ID after reload: got %d, want 42", got.ID)
 	}
-	if got.Score != 99.9 {
-		t.Errorf("Score should be untouched (99.9), got %f — missing column must skip, not zero", got.Score)
+	if got.Score != 0 {
+		t.Errorf("Score should be zero for a missing column, got %f", got.Score)
 	}
 }
 `

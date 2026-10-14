@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"strings"
+	"unicode"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -17,6 +18,42 @@ func pkgPathOf(obj types.Object) string {
 		return obj.Pkg().Path()
 	}
 	return ""
+}
+
+// pkgNameOf returns the name of the package that defines obj, or "" if obj
+// has no associated package.
+func pkgNameOf(obj types.Object) string {
+	if obj.Pkg() != nil {
+		return obj.Pkg().Name()
+	}
+	return ""
+}
+
+// unwrapExternalNamed resolves a named slice, map or array type from a
+// package the generator has not loaded the way a local named container is
+// resolved: through its underlying type, keeping the named type's name and
+// package for the generated Go code. It returns false for any other type.
+func unwrapExternalNamed(pkg *packages.Package, allPkgs []*packages.Package, name string, typ types.Type, isPointer bool, queue *[]structRef, processed map[string]bool) (FieldInfo, bool, error) {
+	named, ok := typ.(*types.Named)
+	if !ok || named.Obj().Pkg() == nil {
+		return FieldInfo{}, false, nil
+	}
+	switch named.Underlying().(type) {
+	case *types.Slice, *types.Map, *types.Array:
+	default:
+		return FieldInfo{}, false, nil
+	}
+	fi, err := fieldInfoFromType(pkg, allPkgs, name, named.Underlying(), isPointer, queue, processed)
+	if err != nil {
+		return FieldInfo{}, true, fmt.Errorf("external named type %s: %w", named.Obj().Name(), err)
+	}
+	fi.GoType = named.Obj().Name()
+	if isPointer {
+		fi.GoType = "*" + fi.GoType
+	}
+	fi.TypePkgPath = named.Obj().Pkg().Path()
+	fi.TypePkgName = named.Obj().Pkg().Name()
+	return fi, true, nil
 }
 
 // arrowArrayType derives the concrete Arrow array type from the builder type
@@ -38,8 +75,12 @@ func unmarshalForMarshal(method string) string {
 	}
 }
 
-// zeroExprForCast returns the Go zero-value expression for a given cast type.
-func zeroExprForCast(castType string) string {
+// zeroExprForCast returns the Go zero-value expression for a given cast type,
+// or nil when the field is a pointer to it.
+func zeroExprForCast(castType string, isPointer bool) string {
+	if isPointer {
+		return "nil"
+	}
 	switch castType {
 	case "string":
 		return `""`
@@ -99,10 +140,14 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 						return fi, nil
 					}
 				}
-				// External type: fall back to marshal method detection.
+				// External type: fall back to marshal method detection, then
+				// to the underlying type of a named container.
 				method := detectMarshalMethod(typ)
 				if method != "" {
 					return buildMarshalFieldInfo(name, typ, method, true), nil
+				}
+				if fi, ok, err := unwrapExternalNamed(pkg, allPkgs, name, typ, true, queue, processed); ok {
+					return fi, err
 				}
 				return FieldInfo{}, fmt.Errorf("external type *%s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 			}
@@ -146,8 +191,8 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			if err != nil {
 				return FieldInfo{}, fmt.Errorf("map key %w", err)
 			}
-			if keyInfo.IsStruct {
-				return FieldInfo{}, fmt.Errorf("map key type must not be a struct")
+			if err := checkMapKey(keyInfo); err != nil {
+				return FieldInfo{}, err
 			}
 			valInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", mapType.Value, queue, processed)
 			if err != nil {
@@ -175,10 +220,11 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			fi.EltInfo = &innerCopy
 			// Clear method fields inherited from the inner *T FieldInfo: the outer
 			// **T is not directly marshallable. The template discriminant for **T is
-			// IsPointer+EltInfo (not MarshalMethod/ConvertMethod), so these must be
-			// empty to route to the correct EltInfo dereference path.
+			// IsPointer+EltInfo (not MarshalMethod/ConvertMethod/TimeExpr), so these
+			// must be empty to route to the correct EltInfo dereference path.
 			fi.MarshalMethod = ""
 			fi.ConvertMethod = ""
+			fi.TimeExpr = ""
 			fi.CastType = ""
 			return fi, nil
 		}
@@ -191,6 +237,9 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			lit, ok := t.Len.(*ast.BasicLit)
 			if !ok || lit.Kind != token.INT {
 				return FieldInfo{}, fmt.Errorf("fixed-size array length must be an integer literal")
+			}
+			if lit.Value == "0" {
+				return FieldInfo{}, fmt.Errorf("zero-length arrays are not supported, Arrow rejects a fixed-size list of size 0")
 			}
 
 			// []byte special case does not apply to [N]byte — treat as fixed-size list of uint8.
@@ -221,8 +270,8 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key %w", err)
 		}
-		if keyInfo.IsStruct {
-			return FieldInfo{}, fmt.Errorf("struct maps keys are not supported")
+		if err := checkMapKey(keyInfo); err != nil {
+			return FieldInfo{}, err
 		}
 
 		valInfo, err := fieldInfoFromExpr(pkg, allPkgs, "", t.Value, queue, processed)
@@ -277,12 +326,16 @@ func fieldInfoFromExpr(pkg *packages.Package, allPkgs []*packages.Package, name 
 			}
 		}
 
-		// External type not in any loaded package: fall back to marshal method detection.
+		// External type not in any loaded package: fall back to marshal method
+		// detection, then to the underlying type of a named container.
 		method := detectMarshalMethod(typ)
-		if method == "" {
-			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
+		if method != "" {
+			return buildMarshalFieldInfo(name, typ, method, false), nil
 		}
-		return buildMarshalFieldInfo(name, typ, method, false), nil
+		if fi, ok, err := unwrapExternalNamed(pkg, allPkgs, name, typ, false, queue, processed); ok {
+			return fi, err
+		}
+		return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", typ)
 	}
 
 	return FieldInfo{}, fmt.Errorf("unsupported AST expression type: %T", expr)
@@ -295,6 +348,14 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 	// Check for struct reference or named primitive
 	obj := pkg.TypesInfo.ObjectOf(ident)
 	if obj != nil {
+		// An alias declared in a package is another spelling of a type, so
+		// resolve that type. Taking the alias by its own name would look for a
+		// struct declaration that does not exist and emit helpers nobody
+		// generates. The universe aliases byte, rune and any keep the paths
+		// below.
+		if tn, ok := obj.(*types.TypeName); ok && tn.IsAlias() && obj.Pkg() != nil {
+			return fieldInfoFromType(pkg, allPkgs, name, types.Unalias(obj.Type()), isPointer, queue, processed)
+		}
 		if _, ok := obj.Type().Underlying().(*types.Struct); ok {
 			structPkgPath := pkg.PkgPath
 			structPkgName := pkg.Name
@@ -323,8 +384,9 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 					IsPointer:      isPointer,
 					ArrowArrayType: arrowArrayType(arrowBuilder),
 					ValueMethod:    "Value",
-					ZeroExpr:       zeroExprForCast(castType),
+					ZeroExpr:       zeroExprForCast(castType, isPointer),
 					TypePkgPath:    pkgPathOf(obj),
+					TypePkgName:    pkgNameOf(obj),
 				}, nil
 			}
 		}
@@ -343,6 +405,7 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 				fi.GoType = "*" + fi.GoType
 			}
 			fi.TypePkgPath = pkgPathOf(obj)
+			fi.TypePkgName = pkgNameOf(obj)
 			return fi, nil
 		}
 	}
@@ -370,7 +433,7 @@ func fieldInfoFromIdent(pkg *packages.Package, allPkgs []*packages.Package, name
 		IsPointer:      isPointer,
 		ArrowArrayType: arrowArrayType(arrowBuilder),
 		ValueMethod:    "Value",
-		ZeroExpr:       zeroExprForCast(castType),
+		ZeroExpr:       zeroExprForCast(castType, isPointer),
 	}, nil
 }
 
@@ -464,6 +527,17 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			return fi, nil
 		}
 
+		// A generic instantiation met here, as the field of another
+		// instantiation or the element of a named container, must be expanded
+		// the same way as one met in the syntax tree. Resolving it by the
+		// generic's bare name would visit the uninstantiated declaration,
+		// whose type parameters resolve to nothing, and lose every field.
+		if args := t.TypeArgs(); args != nil && args.Len() > 0 {
+			if _, isStruct := t.Underlying().(*types.Struct); isStruct {
+				return fieldInfoFromGenericInstantiation(name, t, isPointer, queue, processed)
+			}
+		}
+
 		switch u := t.Underlying().(type) {
 		case *types.Struct:
 			if t.Obj().Pkg() != nil {
@@ -480,6 +554,15 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 			return FieldInfo{}, fmt.Errorf("external type %s does not implement TextMarshaler, Stringer, or BinaryMarshaler", t)
 
 		case *types.Basic:
+			// A named basic from a package the generator has not loaded keeps
+			// the rule of the AST path: a marshal method wins over the
+			// underlying type, so other.Level with a String method is a
+			// write-only string here as it is as a top-level field.
+			if t.Obj().Pkg() != nil && FindPkgByPath(allPkgs, t.Obj().Pkg().Path()) == nil {
+				if method := detectMarshalMethod(t); method != "" {
+					return buildMarshalFieldInfo(name, t, method, isPointer), nil
+				}
+			}
 			// Build from the underlying type for Arrow metadata, then overlay the
 			// named type's own name so the reader emits T(x) not underlying(x).
 			fi, err := fieldInfoFromBasic(name, u, isPointer)
@@ -494,6 +577,7 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 					fi.GoType = namedName
 				}
 				fi.TypePkgPath = t.Obj().Pkg().Path()
+				fi.TypePkgName = t.Obj().Pkg().Name()
 			}
 			return fi, nil
 
@@ -529,8 +613,8 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("map key: %w", err)
 		}
-		if keyInfo.IsStruct {
-			return FieldInfo{}, fmt.Errorf("struct map keys are not supported")
+		if err := checkMapKey(keyInfo); err != nil {
+			return FieldInfo{}, err
 		}
 
 		valInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
@@ -541,6 +625,9 @@ func fieldInfoFromType(pkg *packages.Package, allPkgs []*packages.Package, name 
 		return buildMapFieldInfo(name, keyInfo, valInfo, isPointer), nil
 
 	case *types.Array:
+		if t.Len() == 0 {
+			return FieldInfo{}, fmt.Errorf("zero-length arrays are not supported, Arrow rejects a fixed-size list of size 0")
+		}
 		eltInfo, err := fieldInfoFromType(pkg, allPkgs, "", t.Elem(), false, queue, processed)
 		if err != nil {
 			return FieldInfo{}, fmt.Errorf("array element: %w", err)
@@ -586,7 +673,10 @@ func fieldInfoFromBasic(name string, basic *types.Basic, isPointer bool) (FieldI
 		return FieldInfo{}, fmt.Errorf("unsupported basic type: %s", basic.Name())
 	}
 
-	goType := castType
+	// The Go type keeps the spelling of the source, int stays int while the
+	// column stores int64, so the reader converts back to a type the
+	// element is assignable to.
+	goType := basic.Name()
 	if isPointer {
 		goType = "*" + goType
 	}
@@ -595,7 +685,7 @@ func fieldInfoFromBasic(name string, basic *types.Basic, isPointer bool) (FieldI
 		ArrowBuilder: arrowBuilder, CastType: castType, IsPointer: isPointer,
 		ArrowArrayType: arrowArrayType(arrowBuilder),
 		ValueMethod:    "Value",
-		ZeroExpr:       zeroExprForCast(castType),
+		ZeroExpr:       zeroExprForCast(castType, isPointer),
 	}, nil
 }
 
@@ -613,8 +703,10 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 
 	if pkgPath == "time" && typeName == "Duration" {
 		goType := "time.Duration"
+		zeroExpr := "0"
 		if isPointer {
 			goType = "*time.Duration"
+			zeroExpr = "nil"
 		}
 		return FieldInfo{
 			Name:               name,
@@ -627,28 +719,32 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 			ValueMethod:        "Value",
 			ConvertBackExpr:    "time.Duration(%s)",
 			ConvertBackImports: []string{"time"},
-			ZeroExpr:           "0",
+			ZeroExpr:           zeroExpr,
 		}, true
 	}
 
 	if pkgPath == "time" && typeName == "Time" {
 		goType := "time.Time"
+		timeExpr := "%s"
+		zeroExpr := "time.Time{}"
 		if isPointer {
 			goType = "*time.Time"
+			timeExpr = "*%s"
+			zeroExpr = "nil"
 		}
 		return FieldInfo{
 			Name:               name,
 			GoType:             goType,
-			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowType:          "arrow.FixedWidthTypes.Timestamp_us",
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
-			ConvertMethod:      "UnixNano",
+			TimeExpr:           timeExpr,
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",
-			ConvertBackExpr:    "time.Unix(0, int64(%s))",
+			ConvertBackExpr:    "time.UnixMicro(int64(%s)).UTC()",
 			ConvertBackImports: []string{"time"},
-			ZeroExpr:           "time.Time{}",
+			ZeroExpr:           zeroExpr,
 		}, true
 	}
 
@@ -690,14 +786,14 @@ func resolveWellKnownType(name string, named *types.Named, isPointer bool) (Fiel
 		return FieldInfo{
 			Name:               name,
 			GoType:             goType,
-			ArrowType:          "arrow.FixedWidthTypes.Timestamp_ns",
+			ArrowType:          "arrow.FixedWidthTypes.Timestamp_us",
 			ArrowBuilder:       "*array.TimestampBuilder",
 			CastType:           "arrow.Timestamp",
-			ConvertMethod:      "AsTime().UnixNano",
+			TimeExpr:           "%s.AsTime()",
 			IsPointer:          isPointer,
 			ArrowArrayType:     "*array.Timestamp",
 			ValueMethod:        "Value",
-			ConvertBackExpr:    "timestamppb.New(time.Unix(0, int64(%s)))",
+			ConvertBackExpr:    "timestamppb.New(time.UnixMicro(int64(%s)))",
 			ConvertBackIsPtr:   true,
 			ConvertBackImports: []string{"time", "google.golang.org/protobuf/types/known/timestamppb"},
 			ZeroExpr:           zeroExpr,
@@ -731,6 +827,17 @@ func detectMarshalMethod(typ types.Type) string {
 		return "MarshalBinary"
 	}
 	return ""
+}
+
+// checkMapKey rejects a map key the generated code cannot append or read
+// back. Only a basic type, or a named type over one, works as a key: a
+// struct, pointer, array, marshaled or time key produces code that does not
+// compile.
+func checkMapKey(key FieldInfo) error {
+	if key.IsStruct || key.IsPointer || key.IsList || key.IsMap || key.IsFixedSizeList || key.MarshalMethod != "" || key.TimeExpr != "" || key.ConvertMethod != "" {
+		return fmt.Errorf("map key type %s is not supported, a key must be a basic type", key.GoType)
+	}
+	return nil
 }
 
 // marshalMethodArrowType returns the Arrow type and builder for a given marshal method.
@@ -824,15 +931,22 @@ func buildMapFieldInfo(name string, keyInfo, valInfo FieldInfo, isPointer bool) 
 }
 
 // buildFixedArrayFieldInfo constructs a FieldInfo for a fixed-size array from its resolved element.
+// An element that can be nil (a pointer, a slice or a map) is appended as a
+// null, so the element field must be nullable. Any other element is never
+// null, and the schema says so.
 func buildFixedArrayFieldInfo(name string, lenStr string, eltInfo FieldInfo, isPointer bool) FieldInfo {
 	goType := fmt.Sprintf("[%s]%s", lenStr, eltInfo.GoType)
 	if isPointer {
 		goType = "*" + goType
 	}
+	arrowType := fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltArrowType(eltInfo))
+	if eltInfo.IsPointer || eltInfo.IsList || eltInfo.IsMap {
+		arrowType = fmt.Sprintf("arrow.FixedSizeListOf(%s, %s)", lenStr, eltArrowType(eltInfo))
+	}
 	return FieldInfo{
 		Name:            name,
 		GoType:          goType,
-		ArrowType:       fmt.Sprintf("arrow.FixedSizeListOfNonNullable(%s, %s)", lenStr, eltArrowType(eltInfo)),
+		ArrowType:       arrowType,
 		ArrowBuilder:    "*array.FixedSizeListBuilder",
 		IsFixedSizeList: true,
 		FixedSizeLen:    lenStr,
@@ -945,6 +1059,10 @@ func derivedInstanceName(named *types.Named) string {
 }
 
 // prettyTypeArg returns a Go-identifier-safe string for a single type argument.
+// A type argument that is itself an instantiation carries its own arguments,
+// so Pair[string, Pair[int32, int32]] and Pair[string, Pair[string, string]]
+// derive different names, and a slice, array or map argument spells out its
+// shape instead of producing brackets the compiler rejects.
 func prettyTypeArg(t types.Type) string {
 	switch u := t.(type) {
 	case *types.Basic:
@@ -952,10 +1070,32 @@ func prettyTypeArg(t types.Type) string {
 	case *types.Pointer:
 		return "Ptr" + prettyTypeArg(u.Elem())
 	case *types.Named:
+		if args := u.TypeArgs(); args != nil && args.Len() > 0 {
+			return derivedInstanceName(u)
+		}
 		return u.Obj().Name()
+	case *types.Alias:
+		return prettyTypeArg(types.Unalias(u))
+	case *types.Slice:
+		return "SliceOf" + prettyTypeArg(u.Elem())
+	case *types.Array:
+		return fmt.Sprintf("Array%dOf%s", u.Len(), prettyTypeArg(u.Elem()))
+	case *types.Map:
+		return "MapOf" + prettyTypeArg(u.Key()) + "To" + prettyTypeArg(u.Elem())
 	default:
-		return strings.ReplaceAll(t.String(), ".", "_")
+		return identifierSafe(t.String())
 	}
+}
+
+// identifierSafe replaces every rune that cannot appear in a Go identifier
+// with an underscore.
+func identifierSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return '_'
+	}, s)
 }
 
 // capitalize returns s with the first byte uppercased (ASCII-only; sufficient for Go type names).
@@ -967,6 +1107,10 @@ func capitalize(s string) string {
 }
 
 // buildMarshalFieldInfo constructs a FieldInfo for an external type resolved via marshal method.
+// The unmarshal inverse is recorded only when the type actually declares it,
+// so a type with MarshalText and no UnmarshalText is written and, like a
+// Stringer, skipped by the reader instead of getting a call that does not
+// compile.
 func buildMarshalFieldInfo(name string, typ types.Type, method string, isPointer bool) FieldInfo {
 	shortType, importPath := marshalGoTypeInfo(typ)
 	goType := shortType
@@ -977,8 +1121,12 @@ func buildMarshalFieldInfo(name string, typ types.Type, method string, isPointer
 	if isPointer {
 		zeroExpr = "nil"
 	}
+	unmarshal := unmarshalForMarshal(method)
+	if unmarshal != "" && !hasMethod(typ, unmarshal) {
+		unmarshal = ""
+	}
 	var unmarshalImports []string
-	if importPath != "" && unmarshalForMarshal(method) != "" {
+	if importPath != "" && unmarshal != "" {
 		unmarshalImports = []string{importPath}
 	}
 	arrowType, arrowBuilder := marshalMethodArrowType(method)
@@ -991,8 +1139,19 @@ func buildMarshalFieldInfo(name string, typ types.Type, method string, isPointer
 		IsPointer:        isPointer,
 		ArrowArrayType:   arrowArrayType(arrowBuilder),
 		ValueMethod:      "Value",
-		UnmarshalMethod:  unmarshalForMarshal(method),
+		UnmarshalMethod:  unmarshal,
 		ZeroExpr:         zeroExpr,
 		UnmarshalImports: unmarshalImports,
 	}
+}
+
+// hasMethod reports whether the pointer method set of typ has a method
+// with the given name. Struct fields are addressable, so the pointer set is
+// the one the generated code can call.
+func hasMethod(typ types.Type, name string) bool {
+	checkType := typ
+	if _, isPtr := typ.(*types.Pointer); !isPtr {
+		checkType = types.NewPointer(typ)
+	}
+	return types.NewMethodSet(checkType).Lookup(nil, name) != nil
 }

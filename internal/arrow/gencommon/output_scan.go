@@ -101,6 +101,40 @@ func ScanOutputPackageSchemas(dir, excludePath, funcSuffix string) (map[string]s
 	return result, nil
 }
 
+// ScanOutputPackageTypes returns the base name of the file in dir, other than
+// the file at excludePath, that declares a top-level type with the given
+// name, or "" when no companion file does. Reader-gen uses it to declare
+// ReadError once per package rather than once per generated file.
+func ScanOutputPackageTypes(dir, excludePath, typeName string) (string, error) {
+	excludeBase := filepath.Base(excludePath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || e.Name() == excludeBase {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+		if err != nil || file == nil {
+			continue
+		}
+		for _, decl := range file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == typeName {
+					return e.Name(), nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
 // PartitionByExistingSchemas splits structs into those whose generated helper
 // function must still be declared (kept) and those whose function is already
 // present in a companion file (elided).

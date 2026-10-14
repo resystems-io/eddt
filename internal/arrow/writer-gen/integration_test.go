@@ -2942,6 +2942,210 @@ func TestNullableCompoundWriter(t *testing.T) {
 		runInnerTest(t, tmpDir, testCode, "TestNullableCompoundWriter")
 	})
 
+	t.Run("marshal-errors", func(t *testing.T) {
+		// A type from outside the input packages whose MarshalText or
+		// MarshalBinary can fail. The field is written as null and the
+		// error reaches Errors with the row and the field path.
+		tmpDir := arrowtest.SetupModule(t, `package dummy
+
+import "dummy/fallible"
+
+type Inner struct {
+	Code fallible.Code
+}
+
+type Rec struct {
+	ID    int32
+	Code  fallible.Code
+	PCode *fallible.Code
+	Codes []fallible.Code
+	ByKey map[string]fallible.Code
+	Inner  Inner
+	PIn    *Inner
+	Inners []Inner
+	PIns   []*Inner
+	ByName map[string]Inner
+	Inner2 Inner
+	PPCode **fallible.Code
+	Blob   fallible.Blob
+}
+`)
+		fallibleDir := filepath.Join(tmpDir, "fallible")
+		if err := os.MkdirAll(fallibleDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		fallibleCode := `package fallible
+
+import "errors"
+
+var ErrNegative = errors.New("negative code")
+
+// Code marshals to its decimal text and refuses a negative value.
+type Code int
+
+func (c Code) MarshalText() ([]byte, error) {
+	if c < 0 {
+		return nil, ErrNegative
+	}
+	return []byte{byte('0' + c)}, nil
+}
+
+// Blob marshals to its bytes and refuses an empty value.
+type Blob []byte
+
+func (b Blob) MarshalBinary() ([]byte, error) {
+	if len(b) == 0 {
+		return nil, errors.New("empty blob")
+	}
+	return b, nil
+}
+`
+		if err := os.WriteFile(filepath.Join(fallibleDir, "fallible.go"), []byte(fallibleCode), 0644); err != nil {
+			t.Fatal(err)
+		}
+		outPath := filepath.Join(tmpDir, "dummy_arrow_writer.go")
+		g := NewGenerator([]string{tmpDir}, []string{"Rec"}, outPath, false, nil)
+		if err := g.Run(""); err != nil {
+			t.Fatalf("Generator.Run() failed: %v", err)
+		}
+
+		testCode := `package dummy
+
+import (
+	"errors"
+	"testing"
+
+	"dummy/fallible"
+
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func TestMarshalErrors(t *testing.T) {
+	pool := memory.NewCheckedAllocator(memory.NewGoAllocator())
+	defer pool.AssertSize(t, 0)
+
+	writer := NewRecArrowWriter(pool)
+	defer writer.Release()
+
+	good := fallible.Code(3)
+	bad := fallible.Code(-1)
+	pbad := &bad
+	writer.Append(&Rec{ID: 1, Code: 1, PCode: &good, Codes: []fallible.Code{1, 2}, ByKey: map[string]fallible.Code{"a": 1}, Inner: Inner{Code: 1}, PIn: &Inner{Code: 1}, Inners: []Inner{{Code: 1}}, PIns: []*Inner{{Code: 1}, nil}, ByName: map[string]Inner{"a": {Code: 1}}, Inner2: Inner{Code: 1}, Blob: fallible.Blob{1}})
+	writer.Append(&Rec{ID: 2, Code: bad, PCode: &bad, Codes: []fallible.Code{1, bad}, ByKey: map[string]fallible.Code{"k": bad}, Inner: Inner{Code: bad}, PIn: &Inner{Code: bad}, Inners: []Inner{{Code: 1}, {Code: bad}}, PIns: []*Inner{nil, {Code: bad}}, ByName: map[string]Inner{"n": {Code: bad}}, Inner2: Inner{Code: bad}, PPCode: &pbad, Blob: fallible.Blob{}})
+	if len(writer.Errors()) != 12 {
+		t.Fatalf("Errors() = %v, want 12 entries", writer.Errors())
+	}
+	want := map[string]bool{"Code": true, "PCode": true, "Codes[1]": true, "ByKey[k]": true, "Inner.Code": true, "PIn.Code": true, "Inners[1].Code": true, "PIns[1].Code": true, "ByName[n].Code": true, "Inner2.Code": true, "PPCode": true, "Blob": true}
+	for _, e := range writer.Errors() {
+		if e.Row != 1 {
+			t.Errorf("%v: row = %d, want 1", e, e.Row)
+		}
+		if !want[e.Field] {
+			t.Errorf("unexpected field path %q", e.Field)
+		}
+		delete(want, e.Field)
+		if e.Field != "Blob" && !errors.Is(e, fallible.ErrNegative) {
+			t.Errorf("%v: Unwrap does not reach ErrNegative", e)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("paths not reported: %v", want)
+	}
+
+	rec := writer.NewRecordBatch()
+	defer rec.Release()
+	if rec.NumRows() != 2 {
+		t.Fatalf("NumRows = %d, want 2", rec.NumRows())
+	}
+	code := rec.Column(1).(*array.String)
+	if code.IsNull(0) || code.Value(0) != "1" || !code.IsNull(1) {
+		t.Errorf("Code column = %v, want [\"1\", null]", code)
+	}
+	codes := rec.Column(3).(*array.List)
+	if codes.ListValues().(*array.String).NullN() != 1 {
+		t.Errorf("Codes elements = %v, want one null", codes.ListValues())
+	}
+	blob := rec.Column(12).(*array.Binary)
+	if !blob.IsNull(1) {
+		t.Errorf("Blob column = %v, want null in row 1", blob)
+	}
+
+	kept := writer.Errors()
+	writer.ResetErrors()
+	if len(writer.Errors()) != 0 || len(kept) != 12 {
+		t.Errorf("after ResetErrors: Errors() has %d entries, kept slice has %d, want 0 and 12", len(writer.Errors()), len(kept))
+	}
+
+	// Row numbering restarts with the next record batch.
+	writer.Append(&Rec{ID: 3, Code: bad, Blob: fallible.Blob{1}})
+	if errs := writer.Errors(); len(errs) != 1 || errs[0].Row != 0 || errs[0].Error() != "row 0 field Code: negative code" {
+		t.Errorf("second batch Errors() = %v, want one entry at row 0 for Code", errs)
+	}
+	rec2 := writer.NewRecordBatch()
+	rec2.Release()
+}
+`
+		arrowtest.RunInnerTest(t, tmpDir, testCode, "TestMarshalErrors", arrowtest.ArrowDep)
+	})
+
+	t.Run("marshal-errors-flat", func(t *testing.T) {
+		// A fallible field outside any container: the sink exists, fmt is
+		// not imported, the file compiles.
+		tmpDir, outPath := setupIntegrationTest(t, `package dummy
+
+import "net/netip"
+
+type Flat struct {
+	Addr netip.Addr
+}
+`, []string{"Flat"}, "")
+		outBytes, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read generated: %v", err)
+		}
+		if strings.Contains(string(outBytes), `"fmt"`) {
+			t.Errorf("generated writer imports fmt without an element error path")
+		}
+		if !strings.Contains(string(outBytes), "func (w *FlatArrowWriter) Errors() []WriteError") {
+			t.Errorf("generated writer has no Errors method")
+		}
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+		runCmd(t, tmpDir, "go", "vet", ".")
+	})
+
+	t.Run("marshal-errors-struct-list", func(t *testing.T) {
+		// A fallible field next to a list of structs whose own fields cannot
+		// fail: the list loop still needs its index for the error path of
+		// the nested appender, and the file needs fmt for it.
+		tmpDir, outPath := setupIntegrationTest(t, `package dummy
+
+import "net/netip"
+
+type Item struct {
+	N int32
+}
+
+type Holder struct {
+	Addr  netip.Addr
+	Items []Item
+	Fixed [2]Item
+	ByKey map[string]Item
+}
+`, []string{"Holder"}, "")
+		outBytes, err := os.ReadFile(outPath)
+		if err != nil {
+			t.Fatalf("read generated: %v", err)
+		}
+		if !strings.Contains(string(outBytes), `"fmt"`) {
+			t.Errorf("generated writer does not import fmt for the element error paths")
+		}
+		runCmd(t, tmpDir, "go", "get", arrowtest.ArrowDep)
+		runCmd(t, tmpDir, "go", "mod", "tidy")
+		runCmd(t, tmpDir, "go", "vet", ".")
+	})
+
 	t.Run("skipped-pointer-to-fixed-array", func(t *testing.T) {
 		tmpDir, _ := setupIntegrationTest(t, `package dummy
 

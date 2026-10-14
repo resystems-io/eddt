@@ -27,6 +27,8 @@ func TemplateFuncs() template.FuncMap {
 			}
 			return m
 		},
-		"add": func(a, b int) int { return a + b },
+		"add":       func(a, b int) int { return a + b },
+		"needsPath": func(fi *FieldInfo) bool { return FieldNeedsErrorPath(fi) },
+		"usesSink":  func(fields []FieldInfo) bool { return FieldsUseErrorSink(fields) },
 	}
 }

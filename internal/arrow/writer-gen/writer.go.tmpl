@@ -17,6 +17,45 @@ import (
 	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{- end}}
 )
+{{- if .DeclareWriteError}}
+
+// WriteError describes a field whose MarshalText or MarshalBinary call
+// failed during Append. The column holds null for that field.
+type WriteError struct {
+	Row   int    // Row index within the current record batch
+	Field string // Field path, for example "Addr", "Peers[2]" or "Outer.Inner"
+	Err   error  // The error the marshal method returned
+}
+
+func (e WriteError) Error() string {
+	return "row " + itoa(e.Row) + " field " + e.Field + ": " + e.Err.Error()
+}
+
+func (e WriteError) Unwrap() error { return e.Err }
+
+// itoa formats a row index without importing strconv or fmt.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+{{- end}}
 {{range .Structs}}
 // New{{.Name}}Schema returns the Apache Arrow schema for the {{.Name}} struct.
 func New{{.Name}}Schema() *arrow.Schema {
@@ -33,6 +72,9 @@ func New{{.Name}}Schema() *arrow.Schema {
 // {{.Name}}ArrowWriter is a strongly-typed Apache Arrow append writer for {{.Name}}.
 type {{.Name}}ArrowWriter struct {
 	b *array.RecordBuilder
+{{- if $.HasMarshalErrors}}
+	errs []WriteError
+{{- end}}
 }
 
 // New{{.Name}}ArrowWriter creates a new Arrow append writer for {{.Name}}.
@@ -50,17 +92,51 @@ func (w *{{.Name}}ArrowWriter) Release() {
 	}
 }
 
+{{- if $.HasMarshalErrors}}
+// Append appends a row of {{.Name}} directly into the Arrow buffers. A field
+// whose marshal method fails is written as null and reported through Errors.
+func (w *{{.Name}}ArrowWriter) Append(row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
+{{- if usesSink .Fields}}
+	rowIdx := w.b.Field(0).Len()
+	errs := &w.errs
+{{- end}}
+{{- template "appendFields" dict "Fields" .Fields "Bldr" "w.b.Field" "Qualifier" .Qualifier "Errs" "errs" "Row" "rowIdx"}}
+}
+
+// Errors returns marshal errors accumulated since the last ResetErrors call.
+func (w *{{.Name}}ArrowWriter) Errors() []WriteError { return w.errs }
+
+// ResetErrors clears accumulated marshal errors. A slice obtained from
+// Errors before the reset keeps its contents.
+func (w *{{.Name}}ArrowWriter) ResetErrors() { w.errs = nil }
+
+// Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
+// This is used for writing nested structs. A marshal error inside the struct
+// leaves that field null and is dropped, append{{.Name}}Struct keeps it.
+func Append{{.Name}}Struct(b *array.StructBuilder, row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
+	var dropped []WriteError
+	append{{.Name}}Struct(b, row, &dropped, 0)
+}
+
+// append{{.Name}}Struct appends a row of {{.Name}} into an existing StructBuilder
+// and records marshal errors into errs with the given row index.
+func append{{.Name}}Struct(b *array.StructBuilder, row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}, errs *[]WriteError, rowIdx int) {
+	b.Append(true)
+{{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "Qualifier" .Qualifier "Errs" "errs" "Row" "rowIdx"}}
+}
+{{- else}}
 // Append appends a row of {{.Name}} directly into the Arrow buffers.
 func (w *{{.Name}}ArrowWriter) Append(row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
-{{- template "appendFields" dict "Fields" .Fields "Bldr" "w.b.Field" "Qualifier" .Qualifier}}
+{{- template "appendFields" dict "Fields" .Fields "Bldr" "w.b.Field" "Qualifier" .Qualifier "Errs" "" "Row" ""}}
 }
 
 // Append{{.Name}}Struct appends a row of {{.Name}} directly into an existing StructBuilder.
 // This is used for writing nested structs.
 func Append{{.Name}}Struct(b *array.StructBuilder, row *{{if .GoTypeExpr}}{{.GoTypeExpr}}{{else}}{{.Qualifier}}{{.Name}}{{end}}) {
 	b.Append(true)
-{{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "Qualifier" .Qualifier}}
+{{- template "appendFields" dict "Fields" .Fields "Bldr" "b.FieldBuilder" "Qualifier" .Qualifier "Errs" "" "Row" ""}}
 }
+{{- end}}
 
 // NewRecordBatch creates a new Arrow RecordBatch from the accumulated builder data.
 func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
@@ -70,25 +146,34 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 {{- define "appendFields" -}}
 {{- range $i, $field := .Fields}}
 {{- $bldrExpr := printf "%s(%d)" $.Bldr $i -}}
-{{- template "appendValue" dict "Info" $field "Var" (printf "row.%s" $field.Name) "BldrExpr" $bldrExpr "Depth" 0}}
+{{- template "appendValue" dict "Info" $field "Var" (printf "row.%s" $field.Name) "BldrExpr" $bldrExpr "Depth" 0 "Errs" $.Errs "Row" $.Row "Path" (printf "%q" $field.Name)}}
 {{- end}}
 {{- end}}
 
+{{/* appendValue emits the append code for one value. Errs is the Go
+     expression of the *[]WriteError sink, empty when the file has no
+     fallible marshal field, and Path is a Go string expression naming the
+     value, evaluated only on error. */}}
 {{- define "appendValue" -}}
 {{- $info := .Info -}}
 {{- $var := .Var -}}
 {{- $bldr := .BldrExpr -}}
 {{- $d := .Depth -}}
+{{- $errs := .Errs -}}
+{{- $row := .Row -}}
+{{- $path := .Path -}}
 {{- $vn := printf "v%d" $d -}}
 {{- if $info.IsStruct}}
 	{{- if $info.IsPointer}}
 	if {{$var}} == nil {
 		{{$bldr}}.(*array.StructBuilder).AppendNull()
 	} else {
-		Append{{$info.StructName}}Struct({{$bldr}}.(*array.StructBuilder), {{$var}})
+		{{- template "appendStruct" dict "Info" $info "Var" $var "Bldr" $bldr "Depth" $d "Errs" $errs "Row" $row "Path" $path}}
 	}
 	{{- else}}
-	Append{{$info.StructName}}Struct({{$bldr}}.(*array.StructBuilder), &{{$var}})
+	{
+		{{- template "appendStruct" dict "Info" $info "Var" (printf "&%s" $var) "Bldr" $bldr "Depth" $d "Errs" $errs "Row" $row "Path" $path}}
+	}
 	{{- end}}
 {{- else if $info.IsList}}
 	if {{$var}} == nil {
@@ -96,16 +181,16 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	} else {
 		{{$bldr}}.(*array.ListBuilder).Append(true)
 		{{$vn}}Bldr := {{$bldr}}.(*array.ListBuilder).ValueBuilder()
-		for _, {{$vn}} := range {{if $info.IsPointer}}*{{end}}{{$var}} {
-			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1)}}
+		for {{if and $errs (needsPath $info.EltInfo)}}i{{$d}}{{else}}_{{end}}, {{$vn}} := range {{if $info.IsPointer}}*{{end}}{{$var}} {
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1) "Errs" $errs "Row" $row "Path" (printf "fmt.Sprintf(\"%%s[%%d]\", %s, i%d)" $path $d)}}
 		}
 	}
 {{- else if $info.IsFixedSizeList}}
 	{
 		{{$bldr}}.(*array.FixedSizeListBuilder).Append(true)
 		{{$vn}}Bldr := {{$bldr}}.(*array.FixedSizeListBuilder).ValueBuilder()
-		for _, {{$vn}} := range {{$var}} {
-			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1)}}
+		for {{if and $errs (needsPath $info.EltInfo)}}i{{$d}}{{else}}_{{end}}, {{$vn}} := range {{$var}} {
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" (printf "%sBldr" $vn) "Depth" (add $d 1) "Errs" $errs "Row" $row "Path" (printf "fmt.Sprintf(\"%%s[%%d]\", %s, i%d)" $path $d)}}
 		}
 	}
 {{- else if $info.IsMap}}
@@ -117,7 +202,7 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 		{{$vn}}ValBldr := {{$bldr}}.(*array.MapBuilder).ItemBuilder()
 		for {{$vn}}K, {{$vn}}V := range {{if $info.IsPointer}}*{{end}}{{$var}} {
 			{{$vn}}KeyBldr.({{$info.KeyInfo.ArrowBuilder}}).Append({{$info.KeyInfo.CastType}}({{$vn}}K))
-			{{- template "appendValue" dict "Info" $info.EltInfo "Var" (printf "%sV" $vn) "BldrExpr" (printf "%sValBldr" $vn) "Depth" (add $d 1)}}
+			{{- template "appendValue" dict "Info" $info.EltInfo "Var" (printf "%sV" $vn) "BldrExpr" (printf "%sValBldr" $vn) "Depth" (add $d 1) "Errs" $errs "Row" $row "Path" (printf "fmt.Sprintf(\"%%s[%%v]\", %s, %sK)" $path $vn)}}
 		}
 	}
 {{- else if $info.MarshalMethod}}
@@ -125,30 +210,30 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	if {{$var}} == nil {
 		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
 	} else {
-	{{- if eq $info.MarshalMethod "MarshalText"}}
-		marshalData, _ := {{$var}}.MarshalText()
-		{{$bldr}}.({{$info.ArrowBuilder}}).Append(string(marshalData))
-	{{- else if eq $info.MarshalMethod "String"}}
+	{{- if eq $info.MarshalMethod "String"}}
 		{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$var}}.String())
-	{{- else if eq $info.MarshalMethod "MarshalBinary"}}
-		marshalData, _ := {{$var}}.MarshalBinary()
-		{{$bldr}}.({{$info.ArrowBuilder}}).Append(marshalData)
+	{{- else}}
+		{{- template "appendMarshal" dict "Info" $info "Var" $var "Bldr" $bldr "Errs" $errs "Row" $row "Path" $path}}
 	{{- end}}
 	}
 	{{- else}}
-	{{- if eq $info.MarshalMethod "MarshalText"}}
-	{
-		marshalData, _ := {{$var}}.MarshalText()
-		{{$bldr}}.({{$info.ArrowBuilder}}).Append(string(marshalData))
-	}
-	{{- else if eq $info.MarshalMethod "String"}}
+	{{- if eq $info.MarshalMethod "String"}}
 	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$var}}.String())
-	{{- else if eq $info.MarshalMethod "MarshalBinary"}}
+	{{- else}}
 	{
-		marshalData, _ := {{$var}}.MarshalBinary()
-		{{$bldr}}.({{$info.ArrowBuilder}}).Append(marshalData)
+		{{- template "appendMarshal" dict "Info" $info "Var" $var "Bldr" $bldr "Errs" $errs "Row" $row "Path" $path}}
 	}
 	{{- end}}
+	{{- end}}
+{{- else if $info.TimeExpr}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil {
+		{{$bldr}}.(*array.TimestampBuilder).AppendNull()
+	} else {
+		{{- template "appendTimestamp" dict "Bldr" $bldr "Time" (printf $info.TimeExpr $var)}}
+	}
+	{{- else}}
+	{{- template "appendTimestamp" dict "Bldr" $bldr "Time" (printf $info.TimeExpr $var)}}
 	{{- end}}
 {{- else if $info.ConvertMethod}}
 	{{- if $info.IsPointer}}
@@ -160,12 +245,26 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	{{- else}}
 	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}.{{$info.ConvertMethod}}()))
 	{{- end}}
+{{- else if eq $info.CastType "[]byte"}}
+	{{- if $info.IsPointer}}
+	if {{$var}} == nil || *{{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append([]byte(*{{$var}}))
+	}
+	{{- else}}
+	if {{$var}} == nil {
+		{{$bldr}}.({{$info.ArrowBuilder}}).AppendNull()
+	} else {
+		{{$bldr}}.({{$info.ArrowBuilder}}).Append([]byte({{$var}}))
+	}
+	{{- end}}
 {{- else if and $info.IsPointer $info.EltInfo (not $info.IsList) (not $info.IsMap) (not $info.IsStruct) (not $info.IsFixedSizeList)}}
 	if {{$var}} == nil {
 		{{$bldr}}.({{$info.EltInfo.ArrowBuilder}}).AppendNull()
 	} else {
 		{{$vn}} := *{{$var}}
-		{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" $bldr "Depth" (add $d 1)}}
+		{{- template "appendValue" dict "Info" $info.EltInfo "Var" $vn "BldrExpr" $bldr "Depth" (add $d 1) "Errs" $errs "Row" $row "Path" $path}}
 	}
 {{- else}}
 	{{- if $info.IsPointer}}
@@ -178,4 +277,47 @@ func (w *{{.Name}}ArrowWriter) NewRecordBatch() arrow.RecordBatch {
 	{{$bldr}}.({{$info.ArrowBuilder}}).Append({{$info.CastType}}({{$var}}))
 	{{- end}}
 {{- end}}
+{{- end}}
+
+{{/* appendStruct calls the nested struct's appender. With an error sink
+     the entries it adds are prefixed with this field's path. */}}
+{{- define "appendStruct"}}
+{{- if .Errs}}
+		n{{.Depth}} := len(*{{.Errs}})
+		append{{.Info.StructName}}Struct({{.Bldr}}.(*array.StructBuilder), {{.Var}}, {{.Errs}}, {{.Row}})
+		for k := n{{.Depth}}; k < len(*{{.Errs}}); k++ {
+			(*{{.Errs}})[k].Field = {{.Path}} + "." + (*{{.Errs}})[k].Field
+		}
+{{- else}}
+		Append{{.Info.StructName}}Struct({{.Bldr}}.(*array.StructBuilder), {{.Var}})
+{{- end}}
+{{- end}}
+
+{{/* appendMarshal writes a MarshalText or MarshalBinary result. With an
+     error sink a failure writes null and records a WriteError. */}}
+{{- define "appendMarshal"}}
+{{- $conv := "string" -}}
+{{- if eq .Info.MarshalMethod "MarshalBinary"}}{{$conv = ""}}{{end}}
+{{- if .Errs}}
+		marshalData, err := {{.Var}}.{{.Info.MarshalMethod}}()
+		if err != nil {
+			{{.Bldr}}.({{.Info.ArrowBuilder}}).AppendNull()
+			*{{.Errs}} = append(*{{.Errs}}, WriteError{Row: {{.Row}}, Field: {{.Path}}, Err: err})
+		} else {
+			{{.Bldr}}.({{.Info.ArrowBuilder}}).Append({{$conv}}(marshalData))
+		}
+{{- else}}
+		marshalData, _ := {{.Var}}.{{.Info.MarshalMethod}}()
+		{{.Bldr}}.({{.Info.ArrowBuilder}}).Append({{$conv}}(marshalData))
+{{- end}}
+{{- end}}
+
+{{- define "appendTimestamp"}}
+	// Timestamp_us holds roughly 292,000 years either side of 1970, the zero
+	// time.Time included. An instant outside that is written as null.
+	if t := {{.Time}}; t.Before(time.UnixMicro(math.MinInt64)) || t.After(time.UnixMicro(math.MaxInt64)) {
+		{{.Bldr}}.(*array.TimestampBuilder).AppendNull()
+	} else {
+		{{.Bldr}}.(*array.TimestampBuilder).Append(arrow.Timestamp(t.UnixMicro()))
+	}
 {{- end}}

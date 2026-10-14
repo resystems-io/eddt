@@ -54,7 +54,8 @@ type FieldInfo struct {
 	IsFixedSizeList bool       // True if the field is a fixed-size array ([N]T)
 	FixedSizeLen    string     // The array length as a string literal (e.g. "4")
 	MarshalMethod   string     // Serialization method for external types: "MarshalText", "String", "MarshalBinary", or ""
-	ConvertMethod   string     // Method to call on the value before casting (e.g. "UnixNano" for time.Time)
+	ConvertMethod   string     // Method to call on the value before casting (e.g. "AsDuration" for durationpb.Duration)
+	TimeExpr        string     // Sprintf-style expression yielding a time.Time from the field (e.g. "%s" or "%s.AsTime()"), set for the timestamp mappings so the writer can range-check the instant
 	EltInfo         *FieldInfo // Element info for lists, fixed-size-lists, and map values (recursive)
 	KeyInfo         *FieldInfo // Key info for maps
 
@@ -63,7 +64,7 @@ type FieldInfo struct {
 	ArrowArrayType     string   // Concrete Arrow array type for downcast (e.g., "*array.Int32", "*array.List")
 	ValueMethod        string   // Extraction method on the array type: "Value" for leaf types, "" for containers
 	UnmarshalMethod    string   // Reciprocal of MarshalMethod: "UnmarshalText", "UnmarshalBinary", or "" (Stringer has no inverse)
-	ConvertBackExpr    string   // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.Unix(0, int64(%s))")
+	ConvertBackExpr    string   // Template snippet for the inverse of ConvertMethod (e.g., "time.Duration(%s)", "time.UnixMicro(int64(%s))")
 	ConvertBackIsPtr   bool     // True if ConvertBackExpr returns a pointer (e.g. durationpb.New → *durationpb.Duration)
 	ConvertBackImports []string // Import paths needed by ConvertBackExpr (e.g. ["time"])
 	UnmarshalImports   []string // Import paths needed by UnmarshalMethod (e.g., ["net/netip"])
@@ -72,6 +73,7 @@ type FieldInfo struct {
 	// Cross-package qualification fields — populated by ResolveOutputContext.
 
 	TypePkgPath     string // Import path of the package defining this named type (non-struct); empty for bare primitives and well-known types
+	TypePkgName     string // Name of that package, used to qualify the type when the package contributes no struct and so is not in the import map
 	QualifiedGoType string // Fully-qualified GoType for reader templates; equals GoType when no qualification is needed
 }
 
@@ -394,7 +396,83 @@ func Parse(inputPkgs, targetStructs []string, verbose bool) (string, string, []S
 		}
 	}
 
+	if err := checkRecursion(results); err != nil {
+		return "", "", nil, err
+	}
+
 	return parsedPkgName, parsedPkgPath, results, nil
+}
+
+// checkRecursion returns an error when a struct refers to itself through its
+// fields, directly or by way of other structs. An Arrow schema cannot
+// describe a recursive type, and the generated schema constructor would call
+// itself until the stack overflows.
+func checkRecursion(structs []StructInfo) error {
+	refs := map[string][]string{}
+	for _, si := range structs {
+		var walk func(fi *FieldInfo)
+		walk = func(fi *FieldInfo) {
+			if fi.IsStruct && fi.StructName != "" {
+				refs[si.Name] = append(refs[si.Name], fi.StructName)
+			}
+			if fi.EltInfo != nil {
+				walk(fi.EltInfo)
+			}
+			if fi.KeyInfo != nil {
+				walk(fi.KeyInfo)
+			}
+		}
+		for i := range si.Fields {
+			walk(&si.Fields[i])
+		}
+	}
+
+	const (
+		unvisited = iota
+		visiting
+		done
+	)
+	state := map[string]int{}
+	var path []string
+	var visit func(name string) error
+	visit = func(name string) error {
+		switch state[name] {
+		case visiting:
+			return fmt.Errorf("struct %s refers to itself through %s, and an Arrow schema cannot be recursive", name, strings.Join(append(path, name), " -> "))
+		case done:
+			return nil
+		}
+		state[name] = visiting
+		path = append(path, name)
+		for _, next := range refs[name] {
+			if err := visit(next); err != nil {
+				return err
+			}
+		}
+		path = path[:len(path)-1]
+		state[name] = done
+		return nil
+	}
+	for _, si := range structs {
+		if err := visit(si.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckEmpty returns an error when a struct ends up with no fields, either
+// because it declares none or because every field was skipped. Parquet
+// cannot store a struct without children, and the reader the generators emit
+// for one does not compile. Both generators call it before templating, so
+// Parse itself stays usable for inspecting a struct that resolves to nothing.
+func CheckEmpty(structs []StructInfo) error {
+	for _, si := range structs {
+		if len(si.Fields) == 0 {
+			return fmt.Errorf("struct %s has no field the generators can map, and Parquet cannot store a struct without fields", si.Name)
+		}
+	}
+	return nil
 }
 
 // resolveEmbeddedFields resolves an embedded struct field and returns its
@@ -469,7 +547,9 @@ func resolveEmbeddedFields(pkg *packages.Package, allPkgs []*packages.Package, f
 	var fields []FieldInfo
 	for _, embField := range structType.Fields.List {
 		if len(embField.Names) == 0 {
-			// Nested embedding — skip (depth-1 flattening only).
+			// Only one level of embedding is flattened. Say so, otherwise the
+			// fields promoted through this inner embedding go missing silently.
+			warnf("Warning: Skipping the fields %s promotes into %s: only one level of embedding is flattened\n", types.ExprString(embField.Type), structName)
 			continue
 		}
 
@@ -617,6 +697,25 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 		}
 	}
 
+	// A generic instantiation names its type arguments in the Go type
+	// expression the generated code uses, so the package of every type
+	// argument has to be imported as well, not only the packages that
+	// contribute structs.
+	for _, si := range structs {
+		if si.instantiatedType == nil {
+			continue
+		}
+		for _, p := range typeArgPackages(si.instantiatedType) {
+			if _, exists := importMap[p.Path()]; exists {
+				continue
+			}
+			alias := resolveAlias(p.Path())
+			if p.Name() != packageName || alias != "" {
+				importMap[p.Path()] = ImportInfo{Path: p.Path(), Name: p.Name(), Alias: alias}
+			}
+		}
+	}
+
 	// Convert import map to a sorted slice for deterministic output.
 	imports := make([]ImportInfo, 0, len(importMap))
 	for _, imp := range importMap {
@@ -691,7 +790,7 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 	// Compute QualifiedGoType on all fields (recursively).
 	for i := range structs {
 		for j := range structs[i].Fields {
-			setQualifiedGoTypes(&structs[i].Fields[j], importMap, goTypeExprs)
+			setQualifiedGoTypes(&structs[i].Fields[j], importMap, goTypeExprs, packageName)
 		}
 	}
 
@@ -699,6 +798,46 @@ func ResolveOutputContext(parsedPkgName string, structs []StructInfo, outPkgOver
 	FilterUnexportedFields(structs, packageName)
 
 	return packageName, imports, nil
+}
+
+// typeArgPackages returns the packages named by the type arguments of an
+// instantiation, looking through pointers, slices, arrays, maps, aliases and
+// nested instantiations, in first-seen order.
+func typeArgPackages(named *types.Named) []*types.Package {
+	var pkgs []*types.Package
+	seen := map[*types.Package]bool{}
+	var walk func(t types.Type)
+	walk = func(t types.Type) {
+		switch u := t.(type) {
+		case *types.Named:
+			if p := u.Obj().Pkg(); p != nil && !seen[p] {
+				seen[p] = true
+				pkgs = append(pkgs, p)
+			}
+			if args := u.TypeArgs(); args != nil {
+				for i := 0; i < args.Len(); i++ {
+					walk(args.At(i))
+				}
+			}
+		case *types.Alias:
+			walk(types.Unalias(u))
+		case *types.Pointer:
+			walk(u.Elem())
+		case *types.Slice:
+			walk(u.Elem())
+		case *types.Array:
+			walk(u.Elem())
+		case *types.Map:
+			walk(u.Key())
+			walk(u.Elem())
+		}
+	}
+	if args := named.TypeArgs(); args != nil {
+		for i := 0; i < args.Len(); i++ {
+			walk(args.At(i))
+		}
+	}
+	return pkgs
 }
 
 // CollectConvertBackImports walks all struct fields (recursively through
@@ -764,12 +903,138 @@ func CollectUnmarshalImports(structs []StructInfo) []ImportInfo {
 	return result
 }
 
+// CollectTypePkgImports walks all struct fields (recursively through
+// EltInfo/KeyInfo) and returns the packages of named non-struct types that
+// the generated reader names and that are not the output package. A package
+// that also contributes a struct is imported already, MergeImports drops
+// the duplicate.
+func CollectTypePkgImports(structs []StructInfo, packageName string) []ImportInfo {
+	seen := map[string]bool{}
+	var result []ImportInfo
+	var walk func(fi *FieldInfo)
+	walk = func(fi *FieldInfo) {
+		if fi.TypePkgPath != "" && fi.TypePkgName != "" && fi.TypePkgName != packageName && !seen[fi.TypePkgPath] {
+			seen[fi.TypePkgPath] = true
+			result = append(result, ImportInfo{Path: fi.TypePkgPath, Name: fi.TypePkgName})
+		}
+		if fi.EltInfo != nil {
+			walk(fi.EltInfo)
+		}
+		if fi.KeyInfo != nil {
+			walk(fi.KeyInfo)
+		}
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			walk(&structs[i].Fields[j])
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	return result
+}
+
 // HasUnmarshalFields reports whether any field across all structs (recursively
 // through EltInfo/KeyInfo) has a non-empty UnmarshalMethod.
 func HasUnmarshalFields(structs []StructInfo) bool {
 	var walk func(fi *FieldInfo) bool
 	walk = func(fi *FieldInfo) bool {
 		if fi.UnmarshalMethod != "" {
+			return true
+		}
+		if fi.EltInfo != nil && walk(fi.EltInfo) {
+			return true
+		}
+		if fi.KeyInfo != nil && walk(fi.KeyInfo) {
+			return true
+		}
+		return false
+	}
+	for i := range structs {
+		for j := range structs[i].Fields {
+			if walk(&structs[i].Fields[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FieldHasFallibleMarshal reports whether fi, or an element or key under
+// it, is written through MarshalText or MarshalBinary, the two marshal
+// methods that can return an error. String cannot fail. Struct fields are
+// not followed, their own appender records their errors.
+func FieldHasFallibleMarshal(fi *FieldInfo) bool {
+	if fi.MarshalMethod == "MarshalText" || fi.MarshalMethod == "MarshalBinary" {
+		return true
+	}
+	if fi.EltInfo != nil && FieldHasFallibleMarshal(fi.EltInfo) {
+		return true
+	}
+	if fi.KeyInfo != nil && FieldHasFallibleMarshal(fi.KeyInfo) {
+		return true
+	}
+	return false
+}
+
+// HasFallibleMarshalFields reports whether any field across all structs can
+// fail to marshal, see FieldHasFallibleMarshal. Writer-gen uses this to emit
+// the error sink and the WriteError type.
+func HasFallibleMarshalFields(structs []StructInfo) bool {
+	for i := range structs {
+		for j := range structs[i].Fields {
+			if FieldHasFallibleMarshal(&structs[i].Fields[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FieldNeedsErrorPath reports whether the writer template names fi in an
+// error path: fi can fail to marshal, or fi is a struct whose appender
+// receives the sink and whose errors are prefixed with fi's path, or an
+// element under fi is one of those.
+func FieldNeedsErrorPath(fi *FieldInfo) bool {
+	if fi.IsStruct || FieldHasFallibleMarshal(fi) {
+		return true
+	}
+	return fi.EltInfo != nil && FieldNeedsErrorPath(fi.EltInfo)
+}
+
+// FieldsUseErrorSink reports whether the appender for these fields refers
+// to the error sink and the row index at all, see FieldNeedsErrorPath.
+func FieldsUseErrorSink(fields []FieldInfo) bool {
+	for i := range fields {
+		if FieldNeedsErrorPath(&fields[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasElementErrorPaths reports whether a list, array or map element across
+// all structs needs an error path, which the template spells with
+// fmt.Sprintf, so writer-gen imports fmt.
+func HasElementErrorPaths(structs []StructInfo) bool {
+	for i := range structs {
+		for j := range structs[i].Fields {
+			fi := &structs[i].Fields[j]
+			if fi.EltInfo != nil && FieldNeedsErrorPath(fi.EltInfo) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasTimestampFields reports whether any field across all structs (recursively
+// through EltInfo/KeyInfo) has a non-empty TimeExpr, i.e. is written as a
+// timestamp column. Writer-gen uses this to import the time and math packages the
+// range check in its template needs.
+func HasTimestampFields(structs []StructInfo) bool {
+	var walk func(fi *FieldInfo) bool
+	walk = func(fi *FieldInfo) bool {
+		if fi.TimeExpr != "" {
 			return true
 		}
 		if fi.EltInfo != nil && walk(fi.EltInfo) {
@@ -808,22 +1073,31 @@ func setStructQualifiers(fi *FieldInfo, qualifiers map[string]string) {
 // and all its children (EltInfo, KeyInfo). It uses the importMap to qualify
 // named non-struct types, StructQualifier for regular struct types, and
 // goTypeExprs for generic struct instantiations (e.g. "FieldDelta[int32]").
-func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo, goTypeExprs map[string]string) {
+func setQualifiedGoTypes(fi *FieldInfo, importMap map[string]ImportInfo, goTypeExprs map[string]string, packageName string) {
 	// Recurse children first so their QualifiedGoType is available for composition.
 	if fi.EltInfo != nil {
-		setQualifiedGoTypes(fi.EltInfo, importMap, goTypeExprs)
+		setQualifiedGoTypes(fi.EltInfo, importMap, goTypeExprs, packageName)
 	}
 	if fi.KeyInfo != nil {
-		setQualifiedGoTypes(fi.KeyInfo, importMap, goTypeExprs)
+		setQualifiedGoTypes(fi.KeyInfo, importMap, goTypeExprs, packageName)
 	}
 
-	// Named non-struct type with a known package — qualify via importMap.
+	// Named non-struct type with a known package: qualify via importMap, or
+	// by the package's own name when the package contributes no struct and
+	// so is absent from the map. The reader imports such a package through
+	// CollectTypePkgImports. A named container from the output package falls
+	// through to the composition below, the unnamed type is assignable.
 	if fi.TypePkgPath != "" {
+		qualifier := ""
 		if imp, ok := importMap[fi.TypePkgPath]; ok {
-			qualifier := imp.Name
+			qualifier = imp.Name
 			if imp.Alias != "" {
 				qualifier = imp.Alias
 			}
+		} else if fi.TypePkgName != "" && fi.TypePkgName != packageName {
+			qualifier = fi.TypePkgName
+		}
+		if qualifier != "" {
 			// Strip any leading "*" from GoType, qualify, then re-add.
 			base := fi.GoType
 			prefix := ""

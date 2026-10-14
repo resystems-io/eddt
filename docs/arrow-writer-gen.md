@@ -75,10 +75,16 @@ The generator has out-of-the-box native mappings for specialized standard
 library and Protobuf timestamp types:
 * `time.Duration`: Mapped precisely to an Int64 column (nanoseconds) for
   lossless Parquet compatibility.
-* `time.Time`: Mapped to a `Timestamp_ns` (UTC) column.
+* `time.Time`: Mapped to a `Timestamp_us` (UTC) column. Microseconds hold
+  roughly 292,000 years either side of 1970, so every instant a clock or a
+  protobuf message can carry fits, the zero `time.Time` included, and an
+  unset field reads back as the zero `time.Time`. Digits below a microsecond
+  are dropped. An instant outside even that range is written as null rather
+  than as a wrapped value.
 * `durationpb.Duration`: Processed safely with saturation arithmetic into an
   Int64 column (nanoseconds).
-* `timestamppb.Timestamp`: Mapped to a `Timestamp_ns` (UTC) column.
+* `timestamppb.Timestamp`: Mapped to a `Timestamp_us` (UTC) column, with the
+  same range and null rule as `time.Time`.
 
 ### Interface Fallbacks for External Types
 If a type originates from outside the provided input packages, the generator
@@ -86,6 +92,29 @@ elegantly falls back to standard interfaces in the following priority:
 1. `encoding.TextMarshaler`: Mapped to a `String` column.
 2. `fmt.Stringer`: Mapped to a `String` column.
 3. `encoding.BinaryMarshaler`: Mapped to a `Binary` column.
+4. A named slice, map or array with none of these methods, `sort.IntSlice`
+   for example, is unwrapped to its underlying type the way a named
+   container from an input package is. Its elements follow the same rules,
+   so an element type from that package with a `String` method is still
+   written as a string.
+
+**Stringer types are write-only.** A type whose only method of the three
+is `String`, every enum protoc generates for example, is written as its
+name in a string column. Nothing in Go can turn that name back into the
+value, so the reader skips the field with a warning, see the reader
+manual. The column still reads well in DuckDB and any other consumer of
+the lake. A record that needs the enum back in Go carries a second field
+with the integer value, `StateCode int32` next to `State pb.State`.
+
+**Marshal errors.** `MarshalText` and `MarshalBinary` can fail. When a
+struct holds such a field anywhere, the writer gains `Errors()` and
+`ResetErrors()`, the package gains a `WriteError` type, and a failing field
+is written as null while `Errors()` records the row within the current
+record batch, the field path and the returned error. The path names a list
+element as `Peers[2]`, a map value as `ByKey[k]` and a nested struct field
+as `Outer.Inner`. A slice taken from `Errors()` keeps its contents across
+`ResetErrors()`. The exported `Append<Name>Struct` helper has no sink and
+drops the error, the nulls stay.
 
 ## Generator Workflow Architecture
 

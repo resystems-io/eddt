@@ -56,6 +56,12 @@ type templateData struct {
 	Imports       []gencommon.ImportInfo
 	Structs       []gencommon.StructInfo
 	ElidedSchemas []gencommon.ElidedSchema
+	// HasMarshalErrors turns on the error sink: a field written through
+	// MarshalText or MarshalBinary exists somewhere in Structs.
+	HasMarshalErrors bool
+	// DeclareWriteError is true when no companion file in the output
+	// package declares the WriteError type yet.
+	DeclareWriteError bool
 }
 
 // Run executes the full generation pipeline: parse -> apply template -> write to file.
@@ -103,12 +109,38 @@ func (g *Generator) Run(outPkgNameOverride string) error {
 		return err
 	}
 
+	// A struct with no field left after unexported fields of a foreign
+	// package are dropped would emit a schema Parquet refuses.
+	if err := gencommon.CheckEmpty(structs); err != nil {
+		return err
+	}
+
+	// A timestamp field needs time and math for the range check the
+	// template emits. MergeImports skips a path that is already imported.
+	if gencommon.HasTimestampFields(structs) {
+		imports = gencommon.MergeImports(imports, []gencommon.ImportInfo{{Path: "math", Name: "math"}, {Path: "time", Name: "time"}})
+	}
+
+	// A marshal method that can fail gives the writer an error sink. An
+	// element error path spells its index with fmt. WriteError is one type
+	// per package, a second writer file in the same package reuses it.
+	hasMarshalErrors := gencommon.HasFallibleMarshalFields(structs)
+	if hasMarshalErrors && gencommon.HasElementErrorPaths(structs) {
+		imports = gencommon.MergeImports(imports, []gencommon.ImportInfo{{Path: "fmt", Name: "fmt"}})
+	}
+	declaredIn, err := gencommon.ScanOutputPackageTypes(filepath.Dir(g.OutPath), g.OutPath, "WriteError")
+	if err != nil {
+		return fmt.Errorf("scanning output package for WriteError: %w", err)
+	}
+
 	data := templateData{
-		PackageName:   packageName,
-		Version:       g.Version,
-		Imports:       imports,
-		Structs:       structs,
-		ElidedSchemas: elidedSchemas,
+		PackageName:       packageName,
+		Version:           g.Version,
+		Imports:           imports,
+		Structs:           structs,
+		ElidedSchemas:     elidedSchemas,
+		HasMarshalErrors:  hasMarshalErrors,
+		DeclareWriteError: hasMarshalErrors && declaredIn == "",
 	}
 
 	var buf bytes.Buffer

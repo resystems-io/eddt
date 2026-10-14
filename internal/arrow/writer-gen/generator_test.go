@@ -551,6 +551,25 @@ type Event struct {
 			},
 		},
 		{
+			name: "nil-byte-slice-is-null",
+			goCode: `package mypkg
+
+type Payload struct {
+	Data []byte
+}
+`,
+			targetStruct: "Payload",
+			mustContain: []string{
+				`{Name: "Data",`,
+				"if row.Data == nil {",
+				"AppendNull",
+				"Append([]byte(row.Data))",
+			},
+			mustNotContain: []string{
+				"ListBuilder",
+			},
+		},
+		{
 			name: "time-time-as-timestamp",
 			goCode: `package mypkg
 
@@ -565,9 +584,10 @@ type Event struct {
 			mustContain: []string{
 				`{Name: "CreatedAt",`,
 				"TimestampBuilder",
-				"Timestamp_ns",
-				".UnixNano()",
-				"arrow.Timestamp(",
+				"Timestamp_us",
+				"t := row.CreatedAt; t.Before(time.UnixMicro(math.MinInt64))",
+				"arrow.Timestamp(t.UnixMicro())",
+				"AppendNull",
 			},
 			mustNotContain: []string{
 				"MarshalText",
@@ -590,7 +610,7 @@ type Event struct {
 			mustContain: []string{
 				`{Name: "DeletedAt",`,
 				"TimestampBuilder",
-				".UnixNano()",
+				"t := *row.DeletedAt; t.Before(time.UnixMicro(math.MinInt64))",
 				"AppendNull",
 			},
 			mustNotContain: []string{
@@ -763,26 +783,6 @@ type Device struct {
 				"row.serial",
 				`{Name: "name",`,
 				`{Name: "serial",`,
-			},
-		},
-		{
-			name: "cross-package-all-unexported",
-			goCode: `package mypkg
-
-type Secret struct {
-	name   string
-	value  int32
-}
-`,
-			targetStruct: "Secret",
-			pkgOverride:  "outpkg",
-			mustContain: []string{
-				"NewSecretSchema",
-				"NewSecretArrowWriter",
-			},
-			mustNotContain: []string{
-				"row.name",
-				"row.value",
 			},
 		},
 		{
@@ -1532,8 +1532,8 @@ type Event struct {
 			mustContain: []string{
 				`{Name: "CreatedAt",`,
 				"TimestampBuilder",
-				"Timestamp_ns",
-				".AsTime().UnixNano()",
+				"Timestamp_us",
+				"t := row.CreatedAt.AsTime(); t.Before(time.UnixMicro(math.MinInt64))",
 				"arrow.Timestamp(",
 				"AppendNull",
 			},
@@ -1558,12 +1558,12 @@ type Event struct {
 			mustContain: []string{
 				`{Name: "CreatedAt",`,
 				"TimestampBuilder",
-				".AsTime().UnixNano()",
+				"t := row.CreatedAt.AsTime(); t.Before(time.UnixMicro(math.MinInt64))",
+				"AppendNull",
 			},
 			mustNotContain: []string{
 				"String()",
 				"StringBuilder",
-				"AppendNull",
 			},
 		},
 	}
@@ -1727,5 +1727,39 @@ type Target struct {
 				}
 			}
 		})
+	}
+}
+
+// TestGenerator_RunRefusesAStructLeftWithoutFields covers a struct from
+// another package whose every field is unexported: the output package
+// cannot reach any of them, so after they are dropped nothing is left to
+// map, and generation stops with an error instead of emitting a schema
+// Parquet would refuse.
+func TestGenerator_RunRefusesAStructLeftWithoutFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	goCode := `package mypkg
+
+type Secret struct {
+	name  string
+	value int32
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "model.go"), []byte(goCode), 0644); err != nil {
+		t.Fatalf("write model.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module mypkg\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	outPath := filepath.Join(tmpDir, "out_writer.go")
+	g := NewGenerator([]string{tmpDir}, []string{"Secret"}, outPath, false, nil)
+	err := g.Run("outpkg")
+	if err == nil {
+		t.Fatal("Run() succeeded for a struct with no reachable field, want an error")
+	}
+	if want := "struct Secret has no field the generators can map"; !strings.Contains(err.Error(), want) {
+		t.Errorf("Run() error = %q, want it to contain %q", err, want)
+	}
+	if _, statErr := os.Stat(outPath); statErr == nil {
+		t.Error("Run() wrote an output file for a struct it refused")
 	}
 }

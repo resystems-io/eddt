@@ -33,9 +33,49 @@ type Snapshot struct {
 }
 `
 
+// fixtureNestedGenericCode instantiates generics with other instantiations,
+// with a slice, with a type from another package, and through a named slice,
+// the shapes that reach the generator through the type checker rather than
+// the syntax tree.
+const fixtureNestedGenericCode = `package model
+
+import "net/netip"
+
+type Pair[K, V any] struct {
+	Key   K
+	Value V
+}
+
+type List[T any] struct {
+	Items []T
+}
+
+type Item struct {
+	N int64
+}
+
+type PairList []Pair[string, int64]
+
+type Record struct {
+	Nested Pair[string, List[Item]]
+	A      Pair[string, Pair[int32, int32]]
+	B      Pair[string, Pair[string, string]]
+	S      Pair[[]int32, int32]
+	Named  PairList
+	Ext    Pair[netip.Addr, int32]
+}
+`
+
 // writeGenericFixture creates a temp module with the generic fixture and
 // returns the module directory. The module is rooted at tmpDir.
 func writeGenericFixture(t *testing.T) string {
+	t.Helper()
+	return writeModelFixture(t, fixtureGenericCode)
+}
+
+// writeModelFixture creates a temp module holding code as package model and
+// returns the package directory.
+func writeModelFixture(t *testing.T, code string) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 
@@ -43,7 +83,7 @@ func writeGenericFixture(t *testing.T) string {
 	if err := os.MkdirAll(modDir, 0755); err != nil {
 		t.Fatalf("mkdir model: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(modDir, "model.go"), []byte(fixtureGenericCode), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(modDir, "model.go"), []byte(code), 0644); err != nil {
 		t.Fatalf("write model.go: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module example.com/genericsfix\n\ngo 1.25.0\n"), 0644); err != nil {
@@ -242,4 +282,92 @@ func structNames(structs []StructInfo) []string {
 		names[i] = si.Name
 	}
 	return names
+}
+
+// TestParse_GenericField_NestedAndCompositeArgs verifies the instantiations
+// that reach the generator through the type checker: a generic nested inside
+// a generic keeps the inner fields, two instantiations that differ only in
+// their inner arguments get distinct names, a slice type argument yields a
+// valid identifier, a named slice of an instantiation resolves its element,
+// and a type argument from another package gets that package imported.
+func TestParse_GenericField_NestedAndCompositeArgs(t *testing.T) {
+	modDir := writeModelFixture(t, fixtureNestedGenericCode)
+
+	pkgName, _, structs, err := Parse([]string{modDir}, []string{"Record"}, false)
+	if err != nil {
+		t.Fatalf("Parse() returned error: %v", err)
+	}
+	byName := map[string]*StructInfo{}
+	for i := range structs {
+		byName[structs[i].Name] = &structs[i]
+	}
+	record := byName["Record"]
+	if record == nil {
+		t.Fatal("Record not found in Parse() results")
+	}
+	fields := map[string]FieldInfo{}
+	for _, f := range record.Fields {
+		fields[f.Name] = f
+	}
+
+	wantStruct := map[string]string{
+		"Nested": "Pair_String_List_Item",
+		"A":      "Pair_String_Pair_Int32_Int32",
+		"B":      "Pair_String_Pair_String_String",
+		"S":      "Pair_SliceOfInt32_Int32",
+		"Ext":    "Pair_Addr_Int32",
+	}
+	for field, want := range wantStruct {
+		f, ok := fields[field]
+		if !ok {
+			t.Errorf("Record.%s missing from the parsed fields", field)
+			continue
+		}
+		if !f.IsStruct || f.StructName != want {
+			t.Errorf("Record.%s: StructName = %q (IsStruct %v), want %q", field, f.StructName, f.IsStruct, want)
+		}
+		if byName[want] == nil {
+			t.Errorf("no StructInfo named %q in the results", want)
+		}
+	}
+
+	if named, ok := fields["Named"]; !ok || !named.IsList || named.EltInfo == nil || !named.EltInfo.IsStruct || named.EltInfo.StructName != "Pair_String_Int64" {
+		t.Errorf("Record.Named = %+v, want a list of Pair_String_Int64", fields["Named"])
+	}
+	if byName["Pair_String_Int64"] == nil {
+		t.Error("no StructInfo named Pair_String_Int64 in the results")
+	}
+
+	if inner := byName["List_Item"]; inner == nil || len(inner.Fields) != 1 || !inner.Fields[0].IsList || inner.Fields[0].EltInfo.StructName != "Item" {
+		t.Errorf("List_Item = %+v, want one field Items holding a list of Item", inner)
+	}
+	if inner := byName["Pair_String_List_Item"]; inner == nil || len(inner.Fields) != 2 || inner.Fields[1].StructName != "List_Item" {
+		t.Errorf("Pair_String_List_Item = %+v, want Key and a Value of List_Item", inner)
+	}
+	if s := byName["Pair_SliceOfInt32_Int32"]; s == nil || len(s.Fields) != 2 || !s.Fields[0].IsList {
+		t.Errorf("Pair_SliceOfInt32_Int32 = %+v, want a list Key and a Value", s)
+	}
+	if ext := byName["Pair_Addr_Int32"]; ext == nil || len(ext.Fields) != 2 || ext.Fields[0].MarshalMethod != "MarshalText" {
+		t.Errorf("Pair_Addr_Int32 = %+v, want a Key resolved through MarshalText", ext)
+	}
+
+	_, imports, err := ResolveOutputContext(pkgName, structs, "", nil, map[string]bool{})
+	if err != nil {
+		t.Fatalf("ResolveOutputContext: %v", err)
+	}
+	var netipImported bool
+	for _, imp := range imports {
+		if imp.Path == "net/netip" {
+			netipImported = true
+		}
+	}
+	if !netipImported {
+		t.Errorf("imports = %v, want net/netip for the type argument of Ext", imports)
+	}
+	if got := byName["Pair_Addr_Int32"].GoTypeExpr; got != "Pair[netip.Addr, int32]" {
+		t.Errorf("Pair_Addr_Int32.GoTypeExpr = %q, want the qualified instantiation", got)
+	}
+	if got := byName["Pair_String_List_Item"].GoTypeExpr; got != "Pair[string, List[Item]]" {
+		t.Errorf("Pair_String_List_Item.GoTypeExpr = %q", got)
+	}
 }

@@ -62,9 +62,9 @@ when each item is completed.
 | `map[K]struct`                      | `MapOf(K, Struct)`       |                                              |
 | Named primitive (`type X int`)      | Underlying Arrow type    | Cast to underlying                           |
 | `time.Duration`                     | `Int64`                  | Stored as nanoseconds via `int64(d)`         |
-| `time.Time`                         | `Timestamp_ns` (UTC)     | Stored via `arrow.Timestamp(t.UnixNano())`   |
+| `time.Time`                         | `Timestamp_us` (UTC)     | Microseconds, null outside the range         |
 | `durationpb.Duration`               | `Int64`                  | Via `int64(d.AsDuration())` — nanoseconds    |
-| `timestamppb.Timestamp`             | `Timestamp_ns` (UTC)     | Via `arrow.Timestamp(t.AsTime().UnixNano())` |
+| `timestamppb.Timestamp`             | `Timestamp_us` (UTC)     | Via `AsTime()`, null outside the range       |
 | External type (`MarshalText`)       | `String`                 | e.g. `netip.Addr`                            |
 | External type (`String()`)          | `String`                 | e.g. `url.URL`                               |
 | External type (`MarshalBinary`)     | `Binary`                 |                                              |
@@ -412,3 +412,4 @@ Record completed items here with date (check git blame for the git commit).
 | 2026-05-15 | S6   | Generic struct instantiation support: `*ast.IndexExpr` handling, `derivedInstanceName`, `GoTypeExpr`, named-type-over-primitive fix in `fieldInfoFromType`                                                                                                                                                                                           |
 | 2026-05-26 | S7   | Pointer-wrapped compound types: `*[]T` (nullable list), `*map[K]V` (nullable map), `**T` (outer-nullable scalar pointer). Three new inner-expression branches in `fieldInfoFromExpr` `*ast.StarExpr` handler; range-dereference fixes in writer template; `**T` branch before scalar `else`. Unsupported shapes (`*[N]T`, `**struct`) warn and skip. |
 | 2026-06-18 | S8   | Grouped field declarations (`A, B T`) emit every name; `gencommon` field-resolution loops iterate `field.Names` (was `Names[0]`). Restores fields dropped from the schema/Parquet (e.g. `SequenceRange.End`).                                                                                                                                        |
+| 2026-09-17 | D3   | `time.Time` and `timestamppb.Timestamp` move from `Timestamp_ns` to `Timestamp_us`. Microseconds hold about 292,000 years either way, so the zero `time.Time` and the whole protobuf range fit, where `UnixNano` wrapped outside 1677 to 2262. Anything outside even that is written as null. New `FieldInfo.TimeExpr`, `appendTimestamp` template.  |

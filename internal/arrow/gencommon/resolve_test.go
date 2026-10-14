@@ -111,9 +111,12 @@ func TestZeroExprForCast(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.castType, func(t *testing.T) {
-			got := zeroExprForCast(tt.castType)
+			got := zeroExprForCast(tt.castType, false)
 			if got != tt.expected {
-				t.Errorf("zeroExprForCast(%q) = %q, want %q", tt.castType, got, tt.expected)
+				t.Errorf("zeroExprForCast(%q, false) = %q, want %q", tt.castType, got, tt.expected)
+			}
+			if got := zeroExprForCast(tt.castType, true); got != "nil" {
+				t.Errorf("zeroExprForCast(%q, true) = %q, want nil", tt.castType, got)
 			}
 		})
 	}
@@ -207,7 +210,7 @@ type ReaderFieldsStruct struct {
 		{"ID", "*array.Int32", "Value", "", "", false, "0"},
 		{"Name", "*array.String", "Value", "", "", false, `""`},
 		{"Valid", "*array.Boolean", "Value", "", "", false, "false"},
-		{"OptID", "*array.Int32", "Value", "", "", false, "0"},
+		{"OptID", "*array.Int32", "Value", "", "", false, "nil"},
 		{"Tags", "*array.List", "", "", "", false, "nil"},
 		{"Scores", "*array.Map", "", "", "", false, "nil"},
 		{"Matrix", "*array.FixedSizeList", "", "", "", false, "[3]int32{}"},
@@ -215,7 +218,7 @@ type ReaderFieldsStruct struct {
 		{"Inner", "*array.Struct", "", "", "", false, "Inner{}"},
 		{"OptInner", "*array.Struct", "", "", "", false, "nil"},
 		{"Elapsed", "*array.Int64", "Value", "", "time.Duration(%s)", false, "0"},
-		{"Birthday", "*array.Timestamp", "Value", "", "time.Unix(0, int64(%s))", false, "time.Time{}"},
+		{"Birthday", "*array.Timestamp", "Value", "", "time.UnixMicro(int64(%s)).UTC()", false, "time.Time{}"},
 		{"Addr", "*array.String", "Value", "UnmarshalText", "", false, "netip.Addr{}"},
 		{"OptAddr", "*array.String", "Value", "UnmarshalText", "", false, "nil"},
 	}
